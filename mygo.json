@@ -1,0 +1,13 @@
+{
+  "name": "Nextcloud-MyGo",
+  "identifier": "com.yuanzhe.nextcloud-mygo",
+  "version": "0.1.0",
+  "copyright": "Copyright (C) 2026 YuanZhe",
+  "main": "./cmd/nextcloud-mygo",
+  "out": "build",
+  "i18n": {
+    "dir": "locales",
+    "source": "en"
+  },
+  "description": "Nextcloud file sync with network-aware endpoint switching"
+}

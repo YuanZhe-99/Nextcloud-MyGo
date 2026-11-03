@@ -1,0 +1,18 @@
+/build/
+/.mygo/
+mygo_windows_*.syso
+/.dev/
+# Backend build trees (CMake) and package staging
+/backend/out/
+/out/
+/packaging/*/staging/
+# Stray build outputs at the repository root
+/nextcloud-mygo
+/nextcloud-mygo.exe
+/nextcloud-mygo-syncd
+/nextcloud-mygo-syncd.exe
+# Signing material never lives in the repository
+*.p12
+*.pfx
+*.key
+*.pem
