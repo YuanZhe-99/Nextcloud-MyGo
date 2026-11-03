@@ -1,8 +1,8 @@
 # 上游契约
 
-Nextcloud-MyGo 依赖上游的哪些行为，以及每一点核对到什么程度。在 M0 固定发行版之前，下列 Nextcloud Desktop
-要点是 2026-11-03 从 `master` 分支和 `latest` 文档中阅读得出的，没有构建或运行任何东西；M0 会对照固定的提交
-逐条复核，并把“已阅读”替换为实际结果。
+Nextcloud-MyGo 依赖上游的哪些行为，以及每一点核对到什么程度。Nextcloud-MyGo 跟随各上游的最新发行版，
+因此上游每次变化都要重新核对每一点。下列 Nextcloud Desktop 要点是 2026-11-03 从 `master` 分支和 `latest`
+文档中阅读得出的，没有构建或运行任何东西；M0 会对照最新发行版逐条复核，并把“已阅读”替换为实际结果。
 
 ## Nextcloud Desktop
 

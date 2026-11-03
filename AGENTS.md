@@ -37,7 +37,7 @@ about to change, verify against the code, then fix the docs in the same commit.
 | What is implemented and verified per platform and architecture | `doc/en-us/platform-notes.md` |
 | Environment, commands, dev loop | `doc/en-us/development.md` |
 | English→Chinese terminology | `doc/en-us/translation-guide.md` |
-| Past releases and pinned upstream versions | `doc/en-us/version-history.md` |
+| Past releases and the upstream versions they used | `doc/en-us/version-history.md` |
 | Per-package and per-module roles | `doc/en-us/functions/INDEX.md` |
 
 New concept docs (architecture, the IPC protocol, endpoints and switching, scheduling, file
@@ -134,12 +134,13 @@ order, and a stale comment leads to a wrong change.
   implementation details private.
 - Do not over-defend: validate at true boundaries — the Named Pipe, server responses, files and
   databases read from disk, OS callbacks — and trust internal callers.
-- Use the pinned language versions idiomatically: Go 1.27 (generics where they remove
-  duplication); C++ at the standard the pinned Nextcloud Desktop uses, Qt idioms where Qt objects
+- Use the current language versions idiomatically: the latest Go (generics where they remove
+  duplication); C++ at the standard the current Nextcloud Desktop release uses, Qt idioms where Qt objects
   are involved (parent ownership, signals and slots, `QPointer` for objects that may go away).
 - Name concisely; reuse existing helpers and conventions; when removing code, remove it completely.
 
-**Upstream code.** Keep the Nextcloud Desktop snapshot unmodified under `third_party/nextcloud/`;
+**Upstream code.** Keep the Nextcloud Desktop snapshot (the latest release) unmodified under
+`third_party/nextcloud/`;
 every change to it is a small, explained patch in `patches/nextcloud/`, listed with its order and
 hash in `build-lock.json`. Do not rename, reformat or reorganize upstream code. Prefer adapting in
 `backend/` over patching.
@@ -165,7 +166,7 @@ Other conventions:
   IDs, epochs, hashes or internal paths in the main interface; Diagnostics may show them.
 - Interface strings go through the ARB catalogs; `go tool mygo i18n check` must pass.
 - The product name is **Nextcloud-MyGo** everywhere (window, tray, About, installer, shortcuts,
-  release material) and its icon is the Nextcloud icon taken from the pinned upstream, with the
+  release material) and its icon is the Nextcloud icon taken from the current upstream release, with the
   source path recorded in `doc/en-us/third-party.md`.
 
 ## Behavior contract
@@ -209,13 +210,23 @@ Do not change these without the user explicitly deciding to. `PLAN.md` §3 lists
 
 ## Upstream versions
 
-M0 pins Nextcloud Desktop (release tag and exact commit), Qt, QtKeychain, the TLS backend, SQLite,
-the MSVC / Windows SDK / CMake / Ninja toolchain and the test servers in `build-lock.json`. Every
-change set checks the pins against the latest upstream releases: the latest MyGo tag
-(`go list -m -versions github.com/egoist/mygo`), and the latest Nextcloud Desktop release of the
-pinned line. Moving Nextcloud Desktop re-runs, before anything else, the URL, credential, quiescent
-boundary, deletion-protection and journal-compatibility checks of `PLAN.md` §16.5, and re-applies
-every patch. Add a `version-history.md` line naming the versions; record "checked, unchanged" too.
+**Go, MyGo and Nextcloud are never pinned: they always follow their latest stable release.** Every
+change set checks and moves to:
+
+- the latest Go release (the `go` line in `go.mod`; `https://go.dev/dl/?mode=json`);
+- the latest MyGo tag (`go list -m -versions github.com/egoist/mygo`), migrating the UI code per
+  `.agents/skills/mygo-maintenance`;
+- the latest Nextcloud Desktop release tag (`git ls-remote --tags https://github.com/nextcloud/desktop`)
+  for the snapshot in `third_party/nextcloud/`, and the latest Nextcloud server release (plus the
+  previous supported major) for the test servers.
+
+`build-lock.json` is a record, not a pin: it states what each build actually used (tags, commits,
+patch hashes, and the Qt / QtKeychain / TLS / SQLite / MSVC / Windows SDK / CMake / Ninja
+combination M0 chooses). Moving Nextcloud Desktop re-applies every patch and re-runs, before
+anything else, the URL, credential, quiescent-boundary, deletion-protection and
+journal-compatibility checks of `PLAN.md` §16.5; a release waits until they pass, it does not fall
+back to an older upstream. Add a `version-history.md` line naming the versions; record "checked,
+unchanged" too.
 
 ## Verification
 
@@ -233,7 +244,7 @@ go run ./tools/checkdocs
   the first backend code. Both the upstream test build and the service build must run; "no tests
   executed" is never reported as a pass.
 - Run against a real Nextcloud test instance when a change touches sync, login, endpoints or
-  switching; the server version(s) are in `build-lock.json`. Keys and app passwords are set by the
+  switching, at the latest server release; record the version used. Keys and app passwords are set by the
   user in their own terminal, never committed.
 - Run the real Go ↔ C++ pipe when a change touches the protocol. Inspect the native app
   (screenshots) when a change touches layout.
@@ -252,7 +263,7 @@ confirms pushing. When the user confirms:
 
 1. Set the version in `internal/version/version.go` and `mygo.json` (and SyncD's version source
    once it exists).
-2. Bring the upstreams to their latest versions and re-run verification.
+2. Bring Go, MyGo and Nextcloud to their latest releases and re-run verification.
 3. Commit, including the `doc/en-us/version-history.md` entry (and its mirror).
 4. Create an annotated tag `vX.Y.Z`.
 5. Push **the commit first**, then the tag, to `origin` and `github`.

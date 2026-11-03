@@ -20,5 +20,5 @@ Go and native dependencies with their license texts.
 
 | Component | License | Used for |
 |---|---|---|
-| Nextcloud Desktop (pinned in M0) | GPL-2.0-or-later and other file-level licenses | sync engine, application icon |
-| Qt, QtKeychain, TLS backend, SQLite | recorded when pinned in M0 | runtime of SyncD |
+| Nextcloud Desktop (latest release) | GPL-2.0-or-later and other file-level licenses | sync engine, application icon |
+| Qt, QtKeychain, TLS backend, SQLite | recorded when chosen in M0 | runtime of SyncD |

@@ -2,11 +2,11 @@
 
 ## Requirements
 
-- Go 1.27.3 (`go.mod`; an older Go downloads it automatically). MyGo is a Go tool dependency
-  (`go tool mygo …`).
+- The latest Go release, named in `go.mod` (an older Go downloads it automatically). MyGo is a Go
+  tool dependency (`go tool mygo …`) at its latest tag.
 - Windows: Visual Studio 2026 (or its Build Tools) with the C++ tools for ARM64 and x64 and the
-  Windows SDK; CMake and Ninja. M0 pins the exact versions, together with Qt and the other native
-  dependencies, in `build-lock.json`.
+  Windows SDK; CMake and Ninja. M0 chooses their versions, together with Qt and the other native
+  dependencies, and `build-lock.json` records what each build used.
 
 ## Commands
 

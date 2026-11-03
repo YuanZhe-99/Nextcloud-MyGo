@@ -14,15 +14,18 @@ Nextcloud-MyGo 是一款 Windows 桌面 Nextcloud 文件同步客户端。它在
 | [platform-notes.md](platform-notes.md) | 各平台已实现与已验证的内容 |
 | [development.md](development.md) | 环境、命令、开发流程 |
 | [translation-guide.md](translation-guide.md) | 镜像规则与术语表 |
-| [version-history.md](version-history.md) | 各版本及其固定的上游版本 |
+| [version-history.md](version-history.md) | 各版本及其实际使用的上游版本 |
 | [functions/INDEX.md](functions/INDEX.md) | 各包与各模块的职责和关键声明 |
 
-## 固定版本
+## 上游版本
 
-| 组件 | 版本 | 依据 |
+Go、MyGo 与 Nextcloud 不固定版本，始终跟随各自最新的稳定发行版。下表为上次检查（2026-11-03）时的最新版本；
+`build-lock.json` 记录每次构建实际使用的版本。
+
+| 组件 | 策略 | 上次检查时的最新版本 |
 |---|---|---|
-| Go | 1.27.3 | `go.mod` |
-| MyGo | v0.7.4 | `go.mod` |
-| Nextcloud Desktop | 在 M0 选定（发行标签与提交） | `build-lock.json` |
-| Qt、QtKeychain、TLS 后端、SQLite | 在 M0 选定 | `build-lock.json` |
-| MSVC、Windows SDK、CMake、Ninja | 在 M0 选定 | `build-lock.json` |
+| Go | 最新发行版 | 1.27.3 |
+| MyGo | 最新标签 | v0.7.4 |
+| Nextcloud Desktop | 最新发行标签 | v35.0.2 |
+| Qt、QtKeychain、TLS 后端、SQLite | 在 M0 选定组合并记录 | 尚未选定 |
+| MSVC、Windows SDK、CMake、Ninja | 在 M0 选定组合并记录 | 尚未选定 |

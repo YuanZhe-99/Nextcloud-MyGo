@@ -16,15 +16,19 @@ Windows 11 on x64 and native ARM64.
 | [platform-notes.md](platform-notes.md) | What is implemented and verified on each platform |
 | [development.md](development.md) | Environment, commands, the dev loop |
 | [translation-guide.md](translation-guide.md) | Mirror rules and the glossary |
-| [version-history.md](version-history.md) | Releases and the upstream versions they pin |
+| [version-history.md](version-history.md) | Releases and the upstream versions they used |
 | [functions/INDEX.md](functions/INDEX.md) | Per-package and per-module roles and key declarations |
 
-## Pinned versions
+## Upstream versions
 
-| Component | Version | Source of truth |
+Go, MyGo and Nextcloud are not pinned: they always follow their latest stable release. The table
+shows the latest release at the last check (2026-11-03); `build-lock.json` records what each build
+actually used.
+
+| Component | Policy | Latest at last check |
 |---|---|---|
-| Go | 1.27.3 | `go.mod` |
-| MyGo | v0.7.4 | `go.mod` |
-| Nextcloud Desktop | chosen in M0 (release tag and commit) | `build-lock.json` |
-| Qt, QtKeychain, TLS backend, SQLite | chosen in M0 | `build-lock.json` |
-| MSVC, Windows SDK, CMake, Ninja | chosen in M0 | `build-lock.json` |
+| Go | latest release | 1.27.3 |
+| MyGo | latest tag | v0.7.4 |
+| Nextcloud Desktop | latest release tag | v35.0.2 |
+| Qt, QtKeychain, TLS backend, SQLite | combination chosen in M0, recorded | not chosen yet |
+| MSVC, Windows SDK, CMake, Ninja | combination chosen in M0, recorded | not chosen yet |

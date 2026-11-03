@@ -1,9 +1,10 @@
 # Upstream contracts
 
-What Nextcloud-MyGo relies on from its upstreams, and how far each point has been checked. Until
-M0 pins a release, the Nextcloud Desktop points below were read from the `master` branch and the
+What Nextcloud-MyGo relies on from its upstreams, and how far each point has been checked.
+Nextcloud-MyGo follows the latest release of each upstream, so every point is re-checked when that
+upstream moves. The Nextcloud Desktop points below were read from the `master` branch and the
 `latest` documentation on 2026-11-03, without building or running anything; M0 re-checks each one
-against the pinned commit and replaces "read" with the result.
+against the latest release and replaces "read" with the result.
 
 ## Nextcloud Desktop
 

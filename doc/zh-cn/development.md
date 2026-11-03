@@ -2,9 +2,10 @@
 
 ## 环境要求
 
-- Go 1.27.3（`go.mod`；较旧的 Go 会自动下载它）。MyGo 是 Go 工具依赖（`go tool mygo …`）。
+- `go.mod` 中写明的最新 Go 发行版（较旧的 Go 会自动下载它）。MyGo 是 Go 工具依赖（`go tool mygo …`），
+  使用其最新标签。
 - Windows：Visual Studio 2026（或其 Build Tools），含 ARM64 与 x64 的 C++ 工具及 Windows SDK；CMake 与
-  Ninja。M0 会把确切版本连同 Qt 及其他原生依赖固定在 `build-lock.json` 中。
+  Ninja。M0 选定它们以及 Qt 和其他原生依赖的版本，`build-lock.json` 记录每次构建实际使用的版本。
 
 ## 命令
 
