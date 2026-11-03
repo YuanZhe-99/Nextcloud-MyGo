@@ -33,6 +33,7 @@ about to change, verify against the code, then fix the docs in the same commit.
 |---|---|
 | Design, algorithms, IPC contract, milestones, acceptance (while the plan is active) | `PLAN.md` |
 | Interface screens, wording and design tokens (reference for the MyGo UI) | `design/` |
+| The interface: pages, setup, Settings, tray, closing, updates, languages, the Mock | `doc/en-us/gui.md` |
 | Verified upstream contracts (Nextcloud Desktop, Nextcloud server APIs, Qt, MyGo) and quirks | `doc/en-us/upstream.md` |
 | Reused third-party code, licenses and obligations | `doc/en-us/third-party.md` |
 | What is implemented and verified per platform and architecture | `doc/en-us/platform-notes.md` |

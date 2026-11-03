@@ -5,5 +5,9 @@
 
 | 包 / 模块 | 职责 | 先读 |
 |---|---|---|
+| `cmd/nextcloud-mygo` | 界面程序：单实例、托盘、窗口，SyncD 完成前连接 Mock | `main` |
+| `internal/gui` | 窗口、页面、首次设置、设置、托盘、更新（[gui.md](../gui.md)） | `App`、`App.view`、`App.do`、`Prefs`、`overallOf` |
+| `internal/syncd` | 界面视角下与 SyncD 的契约，以及 Mock | `Client`、`Snapshot`、`Mock` |
+| `locales` | 界面字符串（en、zh-Hans）及生成的访问函数 | `en.json`、`In` |
 | `internal/version` | 产品版本 | `Version`、`Older` |
 | `tools/checkdocs` | 文档镜像检查 | `main` |

@@ -22,6 +22,19 @@ go run ./tools/checkdocs           # doc/en-us and doc/zh-cn mirror each other
 
 The SyncD build and test commands for x64 and ARM64 are added here with the first backend code.
 
+## Running the interface
+
+```bash
+go run ./cmd/nextcloud-mygo                                  # sample data
+NEXTCLOUD_MYGO_FRESH=1 go run ./cmd/nextcloud-mygo           # first run: setup
+NEXTCLOUD_MYGO_PROFILE=dev go run ./cmd/nextcloud-mygo       # a separate instance
+SCREENSHOT_DIR=/tmp/shots go test ./internal/gui             # every page as PNG
+go tool mygo generate                                        # after editing locales/*.json
+```
+
+Until SyncD exists the interface runs against `syncd.Mock`: nothing touches files, the network
+or the browser, and every page says it shows sample data.
+
 ## Testing principles
 
 Tests protect product contracts and error-prone logic, preferably table-driven; every fixed bug

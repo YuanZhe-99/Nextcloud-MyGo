@@ -9,6 +9,7 @@ Nextcloud-MyGo 是一款 Windows 桌面 Nextcloud 文件同步客户端。它在
 
 | 文档 | 内容 |
 |---|---|
+| [gui.md](gui.md) | 界面：页面、首次设置、设置、托盘、关闭、更新、语言 |
 | [upstream.md](upstream.md) | 上游契约与特殊行为：Nextcloud Desktop、Nextcloud 服务器 API、Qt、MyGo |
 | [third-party.md](third-party.md) | 复用的代码与依赖、许可证与义务 |
 | [platform-notes.md](platform-notes.md) | 各平台已实现与已验证的内容 |

@@ -8,8 +8,9 @@ account reachable through several trusted addresses of the same server — publi
 safe, automatic switching between them, without rebuilding the sync database or re-transferring
 unchanged files. It runs natively on Windows 11 x64 and ARM64.
 
-> **Status:** planning and scaffold. Nothing here is ready for use yet. See [PLAN.md](PLAN.md)
-> (in Chinese) and the [platform notes](doc/en-us/platform-notes.md).
+> **Status:** early development. The interface runs on Windows 11 against sample data; the sync
+> service (SyncD) is not built yet, so nothing syncs. See [PLAN.md](PLAN.md) (in Chinese) and the
+> [platform notes](doc/en-us/platform-notes.md).
 
 ## Features
 

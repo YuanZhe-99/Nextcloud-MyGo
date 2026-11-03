@@ -21,6 +21,18 @@ go run ./tools/checkdocs           # doc/en-us and doc/zh-cn mirror each other
 
 x64 与 ARM64 的 SyncD 构建和测试命令随第一批后端代码加入此处。
 
+## 运行界面
+
+```bash
+go run ./cmd/nextcloud-mygo                                  # sample data
+NEXTCLOUD_MYGO_FRESH=1 go run ./cmd/nextcloud-mygo           # first run: setup
+NEXTCLOUD_MYGO_PROFILE=dev go run ./cmd/nextcloud-mygo       # a separate instance
+SCREENSHOT_DIR=/tmp/shots go test ./internal/gui             # every page as PNG
+go tool mygo generate                                        # after editing locales/*.json
+```
+
+在 SyncD 完成之前，界面连接 `syncd.Mock`：不会触及文件、网络或浏览器，每个页面都会注明显示的是示例数据。
+
 ## 测试原则
 
 测试保护产品契约和容易出错的逻辑，优先表驱动；每个修复的缺陷都有回归测试，且每个测试注明它覆盖的不变量或

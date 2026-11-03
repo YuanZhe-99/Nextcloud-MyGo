@@ -11,6 +11,7 @@ Windows 11 on x64 and native ARM64.
 
 | Document | Covers |
 |---|---|
+| [gui.md](gui.md) | The interface: pages, setup, Settings, tray, closing, updates, languages |
 | [upstream.md](upstream.md) | Upstream contracts and quirks: Nextcloud Desktop, Nextcloud server APIs, Qt, MyGo |
 | [third-party.md](third-party.md) | Reused code and dependencies, licenses and obligations |
 | [platform-notes.md](platform-notes.md) | What is implemented and verified on each platform |
