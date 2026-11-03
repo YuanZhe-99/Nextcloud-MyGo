@@ -58,6 +58,13 @@ Two kinds of agents work here, following `PLAN.md` §17–§19:
   leave room for them from M1, and M6 delivers them.
 - The **frontend agent** owns the MyGo UI: the Go module at the repository root (`cmd/`,
   `internal/`, `locales/`, `resources/`), its layout and its choice of Native or Web UI.
+- The interface exists and runs against `syncd.Mock` (`doc/en-us/gui.md`). What it expects of
+  SyncD is `internal/syncd`: the `Client` methods and the snapshot types, a draft of `PLAN.md`
+  §13 written from the interface's side. B02 turns it into `protocol/` and replaces the Mock with
+  the Named Pipe client; where the protocol has to differ, change `internal/syncd` and the
+  views in the same change set. The Mock's tests encode invariants SyncD must keep too (a
+  folder's own pause survives Resume all, a decision is answered once, an update waits for a
+  safe point).
 - `protocol/` is the only interface between them. A change to a method, event, error or field
   meaning updates the schemas, examples and fixtures, both sides' contract tests and the protocol
   version in one change set; neither side reaches past it.
