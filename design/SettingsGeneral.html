@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Settings, general</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:#0069A6}a:hover{color:#00507F}
+button,input,select{font:inherit}
+</style>
+</helmet>
+<div style="width: 1280px; height: 800px; box-sizing: border-box; background: #E9EEF3; font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif; color: #1B1D21; font-size: 14px; position: relative; overflow: hidden">
+  <div aria-hidden="true" style="position: absolute; left: 0; top: 0; width: 1280px; height: 800px; display: flex; padding: 40px 8px 8px 0; box-sizing: border-box">
+    <div style="width: 232px; padding: 4px 12px; box-sizing: border-box; display: flex; flex-direction: column; gap: 10px"><div style="height: 48px; border-radius: 8px; background: rgba(255,255,255,0.55)"></div><div style="height: 30px; border-radius: 6px; background: rgba(255,255,255,0.9)"></div><div style="height: 30px; border-radius: 6px; background: rgba(255,255,255,0.4)"></div><div style="height: 30px; border-radius: 6px; background: rgba(255,255,255,0.4)"></div></div>
+    <div style="flex: 1; background: #FFFFFF; border: 1px solid #DCE2E8; border-radius: 8px"></div>
+  </div>
+  <div aria-hidden="true" style="position: absolute; left: 0; top: 0; width: 1280px; height: 800px; background: rgba(20,26,34,0.42)"></div>
+  <section role="dialog" aria-labelledby="sett" style="position: absolute; left: 64px; top: 48px; width: 1152px; height: 720px; background: #FFFFFF; border-radius: 10px; box-shadow: 0 18px 48px rgba(10,16,24,0.3); display: flex; flex-direction: column; overflow: hidden">
+    <header style="height: 52px; display: flex; align-items: center; padding: 0 12px 0 20px; border-bottom: 1px solid #E3E8EE; flex-shrink: 0">
+      <h1 id="sett" style="margin: 0; font-size: 16px; font-weight: 600; flex: 1">Settings</h1>
+      <button aria-label="Close settings" style="width: 36px; height: 36px; border: 0; border-radius: 6px; background: transparent; color: #1B1D21; display: flex; align-items: center; justify-content: center"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M1 1l12 12M13 1L1 13" stroke="currentColor" stroke-width="1.5"></path></svg></button>
+    </header>
+    <div style="flex: 1; display: flex; min-height: 0">
+      <nav aria-label="Settings sections" style="width: 248px; flex-shrink: 0; background: #F6F8FA; border-right: 1px solid #E3E8EE; padding: 14px 12px; box-sizing: border-box; display: flex; flex-direction: column; gap: 2px">
+        <label style="display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border: 1px solid #C9D1DA; border-radius: 6px; background: #FFFFFF; margin-bottom: 12px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4A5260" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path></svg><input aria-label="Search settings" placeholder="Search settings" style="border: 0; outline: none; flex: 1; min-width: 0; background: transparent; color: #1B1D21"></label>
+        <span style="font-size: 12px; font-weight: 600; color: #4A5260; padding: 6px 10px 4px">Preferences</span>
+        <a href="SettingsGeneral.html" aria-current="page" style="height: 34px; padding: 0 10px; border-radius: 6px; background: #E3F1FA; color: #00507F; font-weight: 600; text-decoration: none; display: flex; align-items: center">General</a>
+        <a href="SettingsGeneral.html" style="height: 34px; padding: 0 10px; border-radius: 6px; color: #1B1D21; text-decoration: none; display: flex; align-items: center">Notifications</a>
+        <span style="font-size: 12px; font-weight: 600; color: #4A5260; padding: 12px 10px 4px">Sync</span>
+        <a href="SettingsGeneral.html" style="height: 34px; padding: 0 10px; border-radius: 6px; color: #1B1D21; text-decoration: none; display: flex; align-items: center">Sync and storage</a>
+        <a href="SettingsGeneral.html" style="height: 34px; padding: 0 10px; border-radius: 6px; color: #1B1D21; text-decoration: none; display: flex; align-items: center">Network</a>
+        <span style="font-size: 12px; font-weight: 600; color: #4A5260; padding: 12px 10px 4px">Nextcloud MyGo</span>
+        <a href="SettingsUpdates.html" style="height: 34px; padding: 0 10px; border-radius: 6px; color: #1B1D21; text-decoration: none; display: flex; align-items: center; gap: 8px"><span style="flex: 1">About &amp; updates</span><span style="width: 8px; height: 8px; border-radius: 4px; background: #0072B5"></span></a>
+        <a href="SettingsGeneral.html" style="height: 34px; padding: 0 10px; border-radius: 6px; color: #1B1D21; text-decoration: none; display: flex; align-items: center">Diagnostics</a>
+      </nav>
+      <div style="flex: 1; min-width: 0; padding: 28px 40px; display: flex; flex-direction: column; gap: 22px">
+        <div style="display: flex; flex-direction: column; gap: 4px; max-width: 720px">
+          <h2 style="margin: 0; font-size: 22px; font-weight: 600">General</h2>
+          <span style="color: #4A5260">How Nextcloud MyGo looks, starts and closes.</span>
+        </div>
+        <section aria-labelledby="look" style="display: flex; flex-direction: column; gap: 8px; max-width: 720px">
+          <h3 id="look" style="margin: 0; font-size: 13px; font-weight: 600; color: #4A5260">Language and look</h3>
+          <div style="border: 1px solid #DCE2E8; border-radius: 8px; overflow: hidden">
+            <div style="display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-bottom: 1px solid #EEF2F6">
+              <span style="width: 32px; height: 32px; border-radius: 7px; background: #EEF2F6; display: flex; align-items: center; justify-content: center; flex-shrink: 0"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1B1D21" stroke-width="1.8" aria-hidden="true"><path d="M4 5h9M8.5 3v2M6 5c1 4 4 7 7 8M11 5c-1 4-4 7-7 8M13 21l4-9 4 9M14.5 18h5"></path></svg></span>
+              <span style="flex: 1; display: flex; flex-direction: column"><span style="font-weight: 600">Language</span><span style="font-size: 13px; color: #4A5260">Used everywhere in the app and its notifications.</span></span>
+              <select aria-label="Language" style="height: 32px; min-width: 160px; border: 1px solid #C9D1DA; border-radius: 6px; background: #FFFFFF; color: #1B1D21; padding: 0 8px"><option>Follow Windows</option><option>English</option><option>简体中文</option><option>繁體中文</option><option>日本語</option></select>
+            </div>
+            <div style="display: flex; align-items: center; gap: 14px; padding: 12px 16px">
+              <span style="width: 32px; height: 32px; border-radius: 7px; background: #EEF2F6; display: flex; align-items: center; justify-content: center; flex-shrink: 0"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1B1D21" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M12 4a8 8 0 0 1 0 16z" fill="#1B1D21"></path></svg></span>
+              <span style="flex: 1; display: flex; flex-direction: column"><span style="font-weight: 600">Appearance</span><span style="font-size: 13px; color: #4A5260">Light, dark, or the same as Windows.</span></span>
+              <div role="radiogroup" aria-label="Appearance" style="display: flex; padding: 2px; border-radius: 8px; background: #EEF2F6">
+                <button role="radio" aria-checked="true" style="height: 28px; padding: 0 12px; border: 0; border-radius: 6px; background: #FFFFFF; box-shadow: 0 1px 2px rgba(20,30,45,0.12); color: #1B1D21; font-weight: 600">System</button>
+                <button role="radio" aria-checked="false" style="height: 28px; padding: 0 12px; border: 0; border-radius: 6px; background: transparent; color: #4A5260">Light</button>
+                <button role="radio" aria-checked="false" style="height: 28px; padding: 0 12px; border: 0; border-radius: 6px; background: transparent; color: #4A5260">Dark</button>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section aria-labelledby="start" style="display: flex; flex-direction: column; gap: 8px; max-width: 720px">
+          <h3 id="start" style="margin: 0; font-size: 13px; font-weight: 600; color: #4A5260">Start and close</h3>
+          <div style="border: 1px solid #DCE2E8; border-radius: 8px; overflow: hidden">
+            <div style="display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-bottom: 1px solid #EEF2F6">
+              <span style="width: 32px; height: 32px; border-radius: 7px; background: #EEF2F6; display: flex; align-items: center; justify-content: center; flex-shrink: 0"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1B1D21" stroke-width="1.8" aria-hidden="true"><path d="M12 3v9M6.3 7.3a8 8 0 1 0 11.4 0"></path></svg></span>
+              <span style="flex: 1; display: flex; flex-direction: column"><span style="font-weight: 600">Open at sign-in</span><span style="font-size: 13px; color: #4A5260">Starts syncing as soon as you sign in to Windows.</span></span>
+              <button role="switch" aria-checked="true" aria-label="Open at sign-in" style="width: 44px; height: 22px; border-radius: 11px; border: 0; background: #0072B5; position: relative; padding: 0"><span style="position: absolute; right: 3px; top: 3px; width: 16px; height: 16px; border-radius: 8px; background: #FFFFFF"></span></button>
+            </div>
+            <div style="display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-bottom: 1px solid #EEF2F6">
+              <span style="width: 32px; height: 32px; border-radius: 7px; background: #EEF2F6; display: flex; align-items: center; justify-content: center; flex-shrink: 0"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1B1D21" stroke-width="1.8" aria-hidden="true"><path d="M3 17h18M7 14h2M11 14h2"></path><rect x="3" y="5" width="18" height="15" rx="2"></rect></svg></span>
+              <span style="flex: 1; display: flex; flex-direction: column"><span style="font-weight: 600">Start in the tray</span><span style="font-size: 13px; color: #4A5260">When opened at sign-in, show no window, only the tray icon.</span></span>
+              <button role="switch" aria-checked="true" aria-label="Start in the tray" style="width: 44px; height: 22px; border-radius: 11px; border: 0; background: #0072B5; position: relative; padding: 0"><span style="position: absolute; right: 3px; top: 3px; width: 16px; height: 16px; border-radius: 8px; background: #FFFFFF"></span></button>
+            </div>
+            <div style="display: flex; align-items: center; gap: 14px; padding: 12px 16px">
+              <span style="width: 32px; height: 32px; border-radius: 7px; background: #EEF2F6; display: flex; align-items: center; justify-content: center; flex-shrink: 0"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1B1D21" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M14 9l4 4M18 9l-4 4"></path></svg></span>
+              <span style="flex: 1; display: flex; flex-direction: column"><span style="font-weight: 600">The close button</span><span style="font-size: 13px; color: #4A5260">Either way, your files keep syncing. To stop syncing, use Quit and stop syncing in the tray.</span></span>
+              <select aria-label="The close button" style="height: 32px; min-width: 200px; border: 1px solid #C9D1DA; border-radius: 6px; background: #FFFFFF; color: #1B1D21; padding: 0 8px"><option>Keeps it in the tray</option><option>Closes the window</option></select>
+            </div>
+          </div>
+        </section>
+        <section aria-labelledby="setup" style="display: flex; flex-direction: column; gap: 8px; max-width: 720px">
+          <h3 id="setup" style="margin: 0; font-size: 13px; font-weight: 600; color: #4A5260">Setup</h3>
+          <div style="border: 1px solid #DCE2E8; border-radius: 8px; display: flex; align-items: center; gap: 14px; padding: 12px 16px">
+            <span style="width: 32px; height: 32px; border-radius: 7px; background: #EEF2F6; display: flex; align-items: center; justify-content: center; flex-shrink: 0"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1B1D21" stroke-width="1.8" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></span>
+            <span style="flex: 1; display: flex; flex-direction: column"><span style="font-weight: 600">Add another account</span><span style="font-size: 13px; color: #4A5260">Runs the setup again for another Nextcloud account.</span></span>
+            <a href="SetupWelcome.html" style="height: 32px; padding: 0 14px; border-radius: 6px; border: 1px solid #C9D1DA; color: #1B1D21; text-decoration: none; display: flex; align-items: center">Add account</a>
+          </div>
+        </section>
+      </div>
+    </div>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

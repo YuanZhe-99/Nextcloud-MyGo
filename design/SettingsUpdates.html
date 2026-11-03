@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Settings, about and updates</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:#0069A6}a:hover{color:#00507F}
+button,input,select{font:inherit}
+</style>
+</helmet>
+<div style="width: 1280px; height: 800px; box-sizing: border-box; background: #E9EEF3; font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif; color: #1B1D21; font-size: 14px; position: relative; overflow: hidden">
+  <div aria-hidden="true" style="position: absolute; left: 0; top: 0; width: 1280px; height: 800px; display: flex; padding: 40px 8px 8px 0; box-sizing: border-box">
+    <div style="width: 232px; padding: 4px 12px; box-sizing: border-box; display: flex; flex-direction: column; gap: 10px"><div style="height: 48px; border-radius: 8px; background: rgba(255,255,255,0.55)"></div><div style="height: 30px; border-radius: 6px; background: rgba(255,255,255,0.9)"></div><div style="height: 30px; border-radius: 6px; background: rgba(255,255,255,0.4)"></div><div style="height: 30px; border-radius: 6px; background: rgba(255,255,255,0.4)"></div></div>
+    <div style="flex: 1; background: #FFFFFF; border: 1px solid #DCE2E8; border-radius: 8px"></div>
+  </div>
+  <div aria-hidden="true" style="position: absolute; left: 0; top: 0; width: 1280px; height: 800px; background: rgba(20,26,34,0.42)"></div>
+  <section role="dialog" aria-labelledby="sett" style="position: absolute; left: 64px; top: 48px; width: 1152px; height: 720px; background: #FFFFFF; border-radius: 10px; box-shadow: 0 18px 48px rgba(10,16,24,0.3); display: flex; flex-direction: column; overflow: hidden">
+    <header style="height: 52px; display: flex; align-items: center; padding: 0 12px 0 20px; border-bottom: 1px solid #E3E8EE; flex-shrink: 0">
+      <h1 id="sett" style="margin: 0; font-size: 16px; font-weight: 600; flex: 1">Settings</h1>
+      <button aria-label="Close settings" style="width: 36px; height: 36px; border: 0; border-radius: 6px; background: transparent; color: #1B1D21; display: flex; align-items: center; justify-content: center"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M1 1l12 12M13 1L1 13" stroke="currentColor" stroke-width="1.5"></path></svg></button>
+    </header>
+    <div style="flex: 1; display: flex; min-height: 0">
+      <nav aria-label="Settings sections" style="width: 248px; flex-shrink: 0; background: #F6F8FA; border-right: 1px solid #E3E8EE; padding: 14px 12px; box-sizing: border-box; display: flex; flex-direction: column; gap: 2px">
+        <label style="display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border: 1px solid #C9D1DA; border-radius: 6px; background: #FFFFFF; margin-bottom: 12px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4A5260" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path></svg><input aria-label="Search settings" placeholder="Search settings" style="border: 0; outline: none; flex: 1; min-width: 0; background: transparent; color: #1B1D21"></label>
+        <span style="font-size: 12px; font-weight: 600; color: #4A5260; padding: 6px 10px 4px">Preferences</span>
+        <a href="SettingsGeneral.html" style="height: 34px; padding: 0 10px; border-radius: 6px; color: #1B1D21; text-decoration: none; display: flex; align-items: center">General</a>
+        <a href="SettingsGeneral.html" style="height: 34px; padding: 0 10px; border-radius: 6px; color: #1B1D21; text-decoration: none; display: flex; align-items: center">Notifications</a>
+        <span style="font-size: 12px; font-weight: 600; color: #4A5260; padding: 12px 10px 4px">Sync</span>
+        <a href="SettingsGeneral.html" style="height: 34px; padding: 0 10px; border-radius: 6px; color: #1B1D21; text-decoration: none; display: flex; align-items: center">Sync and storage</a>
+        <a href="SettingsGeneral.html" style="height: 34px; padding: 0 10px; border-radius: 6px; color: #1B1D21; text-decoration: none; display: flex; align-items: center">Network</a>
+        <span style="font-size: 12px; font-weight: 600; color: #4A5260; padding: 12px 10px 4px">Nextcloud MyGo</span>
+        <a href="SettingsUpdates.html" aria-current="page" style="height: 34px; padding: 0 10px; border-radius: 6px; background: #E3F1FA; color: #00507F; font-weight: 600; text-decoration: none; display: flex; align-items: center">About &amp; updates</a>
+        <a href="SettingsGeneral.html" style="height: 34px; padding: 0 10px; border-radius: 6px; color: #1B1D21; text-decoration: none; display: flex; align-items: center">Diagnostics</a>
+      </nav>
+      <div style="flex: 1; min-width: 0; padding: 28px 40px; display: flex; flex-direction: column; gap: 22px">
+        <div style="display: flex; flex-direction: column; gap: 4px; max-width: 720px">
+          <h2 style="margin: 0; font-size: 22px; font-weight: 600">About &amp; updates</h2>
+          <span style="color: #4A5260">The version you run, where its source lives, and how it updates.</span>
+        </div>
+        <section aria-labelledby="upd" style="display: flex; flex-direction: column; gap: 8px; max-width: 720px">
+          <h3 id="upd" style="margin: 0; font-size: 13px; font-weight: 600; color: #4A5260">Updates</h3>
+          <div style="border: 1px solid #9CC9E6; background: #F2F8FC; border-radius: 8px; padding: 14px 16px; display: flex; align-items: center; gap: 14px">
+            <span style="width: 32px; height: 32px; border-radius: 7px; background: #0072B5; display: flex; align-items: center; justify-content: center; flex-shrink: 0"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"></path></svg></span>
+            <span style="flex: 1; display: flex; flex-direction: column; gap: 2px"><span style="font-weight: 600">Version 0.1.1 is available</span><span style="font-size: 13px; color: #4A5260">Signed and checked. It installs once sync reaches a safe point. <a href="SettingsUpdates.html">What's new</a></span></span>
+            <button style="height: 32px; padding: 0 14px; border-radius: 6px; border: 0; background: #0072B5; color: #FFFFFF; font-weight: 600">Install and restart</button>
+          </div>
+          <div style="border: 1px solid #DCE2E8; border-radius: 8px; overflow: hidden">
+            <div style="display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-bottom: 1px solid #EEF2F6">
+              <span style="width: 32px; height: 32px; border-radius: 7px; background: #EEF2F6; display: flex; align-items: center; justify-content: center; flex-shrink: 0"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1B1D21" stroke-width="1.8" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"></path></svg></span>
+              <span style="flex: 1; display: flex; flex-direction: column"><span style="font-weight: 600">Check for updates every day</span><span style="font-size: 13px; color: #4A5260">Last checked today at 09:12.</span></span>
+              <button style="height: 30px; padding: 0 12px; border-radius: 6px; border: 1px solid #C9D1DA; background: #FFFFFF; color: #1B1D21">Check now</button>
+              <button role="switch" aria-checked="true" aria-label="Check for updates every day" style="width: 44px; height: 22px; border-radius: 11px; border: 0; background: #0072B5; position: relative; padding: 0"><span style="position: absolute; right: 3px; top: 3px; width: 16px; height: 16px; border-radius: 8px; background: #FFFFFF"></span></button>
+            </div>
+            <div style="display: flex; align-items: center; gap: 14px; padding: 12px 16px">
+              <span style="width: 32px; height: 32px; border-radius: 7px; background: #EEF2F6; display: flex; align-items: center; justify-content: center; flex-shrink: 0"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1B1D21" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v4l3 2"></path></svg></span>
+              <span style="flex: 1; display: flex; flex-direction: column"><span style="font-weight: 600">Install updates automatically</span><span style="font-size: 13px; color: #4A5260">Never while files are moving, a deletion waits for you, or the address is switching.</span></span>
+              <select aria-label="Install updates automatically" style="height: 32px; min-width: 210px; border: 1px solid #C9D1DA; border-radius: 6px; background: #FFFFFF; color: #1B1D21; padding: 0 8px"><option>Never</option><option selected>When the computer is idle</option><option>Every day at 03:00</option></select>
+            </div>
+          </div>
+        </section>
+        <section aria-labelledby="abt" style="display: flex; flex-direction: column; gap: 8px; max-width: 720px">
+          <h3 id="abt" style="margin: 0; font-size: 13px; font-weight: 600; color: #4A5260">Nextcloud MyGo</h3>
+          <div style="border: 1px solid #DCE2E8; border-radius: 8px; overflow: hidden">
+            <div style="display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-bottom: 1px solid #EEF2F6">
+              <span style="width: 32px; height: 32px; border-radius: 7px; background: #0072B5; display: flex; align-items: center; justify-content: center; flex-shrink: 0"><svg width="22" height="11" viewBox="0 0 32 16" fill="none" stroke="#FFFFFF" stroke-width="3" aria-hidden="true"><circle cx="5" cy="8" r="3.5"></circle><circle cx="16" cy="8" r="5.5"></circle><circle cx="27" cy="8" r="3.5"></circle></svg></span>
+              <span style="flex: 1; display: flex; flex-direction: column"><span style="font-weight: 600">Version 0.1.0</span><span style="font-size: 13px; color: #4A5260">Windows 11 ARM64 · sync service 0.1.0, running</span></span>
+              <a href="SettingsUpdates.html" style="font-size: 13px">Source code</a>
+            </div>
+            <div style="display: flex; align-items: center; gap: 14px; padding: 12px 16px">
+              <span style="width: 32px; height: 32px; border-radius: 7px; background: #EEF2F6; display: flex; align-items: center; justify-content: center; flex-shrink: 0"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1B1D21" stroke-width="1.8" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"></path><path d="M9 12h6M9 16h6"></path></svg></span>
+              <span style="flex: 1; display: flex; flex-direction: column"><span style="font-weight: 600">License</span><span style="font-size: 13px; color: #4A5260">GPL-3.0. Built on the Nextcloud Desktop sync engine and MyGo.</span></span>
+              <button style="height: 30px; padding: 0 12px; border-radius: 6px; border: 1px solid #C9D1DA; background: #FFFFFF; color: #1B1D21">Open source licenses</button>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

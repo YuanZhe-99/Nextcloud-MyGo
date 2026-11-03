@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Add an address</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:#0069A6}a:hover{color:#00507F}
+button,input{font:inherit}
+</style>
+</helmet>
+<div role="dialog" aria-labelledby="dlgt" style="width: 600px; height: 720px; box-sizing: border-box; background: #FFFFFF; border: 1px solid #C9D1DA; border-radius: 10px; box-shadow: 0 16px 40px rgba(20,30,45,0.18); font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif; color: #1B1D21; font-size: 14px; display: flex; flex-direction: column; overflow: hidden">
+  <div style="padding: 24px 28px 8px; display: flex; flex-direction: column; gap: 4px">
+    <h1 id="dlgt" style="margin: 0; font-size: 20px; font-weight: 600">Add an address</h1>
+    <span style="color: #4A5260">Another way to reach the same server for alex@cloud.example.com</span>
+  </div>
+  <ol style="list-style: none; margin: 0; padding: 12px 28px; display: flex; gap: 8px; align-items: center">
+    <li style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #0F7B3F; font-weight: 600"><span style="width: 22px; height: 22px; border-radius: 11px; background: #0F7B3F; color: #FFFFFF; display: flex; align-items: center; justify-content: center"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="M5 12l5 5 9-10"></path></svg></span>Address</li>
+    <li aria-hidden="true" style="flex: 1; height: 1px; background: #C9D1DA"></li>
+    <li aria-current="step" style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #1B1D21; font-weight: 600"><span style="width: 22px; height: 22px; border-radius: 11px; background: #0072B5; color: #FFFFFF; display: flex; align-items: center; justify-content: center; font-size: 12px">2</span>Approve</li>
+    <li aria-hidden="true" style="flex: 1; height: 1px; background: #C9D1DA"></li>
+    <li style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #4A5260"><span style="width: 22px; height: 22px; border-radius: 11px; border: 1.5px solid #8A939F; box-sizing: border-box; display: flex; align-items: center; justify-content: center; font-size: 12px">3</span>Verify</li>
+  </ol>
+  <div style="flex: 1; padding: 8px 28px; display: flex; flex-direction: column; gap: 16px">
+    <div style="display: flex; gap: 12px">
+      <div style="flex: 1; display: flex; flex-direction: column; gap: 6px">
+        <label for="nm" style="font-size: 13px; font-weight: 600">Name</label>
+        <input id="nm" value="VPN" style="height: 34px; border: 1px solid #C9D1DA; border-radius: 6px; padding: 0 10px; color: #1B1D21">
+      </div>
+      <div style="flex: 2; display: flex; flex-direction: column; gap: 6px">
+        <label for="url" style="font-size: 13px; font-weight: 600">Address</label>
+        <input id="url" value="https://cloud.vpn.example" style="height: 34px; border: 1px solid #C9D1DA; border-radius: 6px; padding: 0 10px; color: #1B1D21">
+      </div>
+    </div>
+    <section aria-labelledby="ap" style="border: 1px solid #DCE2E8; border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 10px">
+      <h2 id="ap" style="margin: 0; font-size: 15px; font-weight: 600">Step 2 · Approve this address</h2>
+      <span style="color: #4A5260; font-size: 13px">It answered over a secure connection. Nothing of your sign-in has been sent to it yet.</span>
+      <div style="display: grid; grid-template-columns: 130px minmax(0, 1fr); row-gap: 6px; font-size: 13px; background: #F6F8FA; border-radius: 6px; padding: 10px 12px">
+        <span style="color: #4A5260">Connection</span><span style="color: #0F7B3F; font-weight: 600">Secure, certificate valid</span>
+        <span style="color: #4A5260">Certificate for</span><span>cloud.vpn.example</span>
+        <span style="color: #4A5260">Issued by</span><span>[ISSUER OF THE CERTIFICATE]</span>
+        <span style="color: #4A5260">Server says</span><span>Nextcloud, same version as your main address</span>
+      </div>
+      <label style="display: flex; gap: 10px; align-items: flex-start; font-size: 13px; cursor: pointer">
+        <input type="checkbox" checked style="width: 18px; height: 18px; margin: 1px 0 0; accent-color: #0072B5">
+        <span>I set up this address myself. Nextcloud MyGo may send my sign-in for alex@cloud.example.com to it.</span>
+      </label>
+    </section>
+    <section aria-labelledby="vf" style="border: 1px dashed #C9D1DA; border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 6px; color: #4A5260">
+      <h2 id="vf" style="margin: 0; font-size: 15px; font-weight: 600; color: #1B1D21">Step 3 · Check it is the same server</h2>
+      <span style="font-size: 13px">After approval, Nextcloud MyGo signs in there and compares your account and your folders with the main address. The address is used only if everything matches.</span>
+    </section>
+  </div>
+  <div style="padding: 16px 28px; background: #F6F8FA; border-top: 1px solid #E3E8EE; display: flex; justify-content: flex-end; gap: 10px">
+    <a href="Network.html" style="height: 34px; padding: 0 16px; border-radius: 6px; border: 1px solid #C9D1DA; background: #FFFFFF; color: #1B1D21; text-decoration: none; display: flex; align-items: center">Cancel</a>
+    <a href="Network.html" style="height: 34px; padding: 0 16px; border-radius: 6px; background: #0072B5; color: #FFFFFF; text-decoration: none; display: flex; align-items: center; font-weight: 600">Approve and verify</a>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":600,"height":720}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>
