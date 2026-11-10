@@ -67,8 +67,8 @@ After reacquiring original root leases it reserves a new internal operation/epoc
 fresh verification and reconciliation path. The interrupted receipt stays failed. A previous hard
 verification failure is not automatically retried. Same-origin recovery admits existing transfer rows
 to upstream recovery. Cross-origin rebinding admits only audited relative download state with a
-nonempty ETag and single-PUT uncertainty state with transfer ID/chunk zero and a nonempty checksum;
-poll URLs and chunked-upload sessions remain blocked. Admission never edits those rows.
+nonempty ETag, single-PUT uncertainty state with a nonempty checksum, and chunking-v2 sessions with a
+nonempty checksum; poll URLs and legacy v1 chunk indexes remain blocked. Admission never edits those rows.
 Before publication, verification also requires the OCS files capability map and readable (`G`) DAV
 home/mapped roots. It does not infer write permission: upstream discovery still enforces each item's
 actual permissions. Every retired local root and read-only resume context is checked before the
@@ -119,10 +119,17 @@ single-PUT upload rows (`transferid=0`, `chunk=0`, nonnegative size, positive mt
 checksum). Desktop v35.0.3's download path compares discovery ETags, reply ETags, ranges and content
 length; its single-PUT discovery compares the persisted checksum before interpreting an uncertain
 write. The adapter forces upstream remote rediscovery with the original journal before propagation.
-Any pending poll URL, chunk session or unsupported/malformed transfer context is reported as
+A chunking-v2 session row (`transferid` nonzero, `chunk=0`, same size, mtime and checksum rules) is
+admitted too. It stores no address: upstream addresses the session relative to the current account,
+lists it on the target before sending anything, resumes after the last complete chunk, and adopts a
+final MOVE the server already committed by checksum during discovery. Patch 0016 adds the two
+upstream regressions for exactly that after an origin change. In a real run against server 35.0.2 a
+112 MiB upload interrupted in its second chunk resumed on the other origin without resending the
+first 100 MiB chunk; with the previous gate the same run could not leave the failed address.
+Any pending poll URL, legacy v1 chunk index or unsupported/malformed transfer context is reported as
 `RESUME_CONTEXT_UNSUPPORTED`; it is never removed or rewritten to force a switch. An absent journal
-has no existing resume context. Same-origin recovery remains upstream-owned. Portable admission is
-under real cross-origin acceptance and is not yet a support claim.
+has no existing resume context. Same-origin recovery remains upstream-owned. A real withheld final
+MOVE, uncertain MOVE/DELETE of existing items and files above 4 GiB are not yet accepted.
 Relative resume paths also reject trailing-dot/space components and Windows wildcard/control
 characters, rather than allowing Win32 normalization to reinterpret a purported child path. The
 read-only regression rejected neither `.. /outside` nor its nested form before this boundary fix;

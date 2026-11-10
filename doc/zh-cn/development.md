@@ -92,6 +92,18 @@ origin 恢复，不证明映射目录活动传输期间的自动故障选择。
 进程配置，不加入 Windows 信任库；仍启用正常证书链及主机名检查，绝不关闭 TLS 验证。隔离实例
 凭据及清理清单仅留在忽略的本机配置中，不进入提交的夹具。
 
+`-Scenario network-chunked` 在第二个分块内切断一个分块会话，并要求它在另一个 origin 上续传
+且不重发第一个分块。上游仅对超过 100 MiB 的文件分块，因此它上传 112 MiB，需要没有小配额
+的隔离服务器，并使用同样的夹具本地根证书（`SYNCD_TEST_CA_CERT`、`SYNCD_TEST_CA_SHA1`）。
+Qt 对 `127.0.0.1` 或 `localhost` 的请求从不经过代理，这会绕过故障中继：请通过两个保留的
+`.test` 名称访问回环服务器，这两个名称须出现在它的证书和 `trusted_domains` 中，并把
+`NEXTCLOUD_TEST_CLEANUP_URL` 设为直接的回环 origin，供不经过中继的清理步骤使用。失败时
+脚本输出已到达的 `PASS` 行和一条脱敏原因。
+
+`tools/build-syncd.ps1` 运行 CTest 时只把 Qt 的 `bin` 加入 PATH。集成测试还需要相同架构的
+对应上游构建 `bin/Release` 和原生依赖 `bin` 目录；请在调用前加入，直接运行已构建的可执行
+文件时还要设置 `QT_PLUGIN_PATH`。绝不混用来自其他上游构建的头文件或 DLL。
+
 M0 发现生命周期回归测试使用 `./tools/test-discovery-lifetime.ps1 -Executable <build>/bin/Release/RemoteDiscoveryTest.exe`，并将目标 Qt 和依赖 DLL 目录加入 PATH。
 它在 20 个有时间上限的子进程中执行上游超时及下一夹具组合，遇到非零退出或超时即失败。
 诊断输出保留在忽略的 `build/` 下；这是模拟服务器崩溃回归，不是真实服务器验收。

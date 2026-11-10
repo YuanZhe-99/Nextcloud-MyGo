@@ -1,8 +1,8 @@
 # Exercises renewal cancellation/replacement inside real read-only DAV verification.
 # Inputs: compiled contract executable and approved NEXTCLOUD_TEST_* environment; matching native DLL paths.
-# Side effects: one disposable profile and borrowed native-vault copies; network-active also reserves one remote content collection. Parent cleanup runs after a child crash.
+# Side effects: one disposable profile and borrowed native-vault copies; network-active and network-chunked also reserve one remote content collection; network-chunked needs an isolated server and SYNCD_TEST_CA_*. Parent cleanup runs after a child crash.
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$Executable, [ValidateSet('lifetime','network','network-lifetime','network-active','wrong-instance')][string]$Scenario = 'lifetime')
+param([Parameter(Mandatory)][string]$Executable, [ValidateSet('lifetime','network','network-lifetime','network-active','network-chunked','wrong-instance')][string]$Scenario = 'lifetime')
 $ErrorActionPreference = 'Stop'
 if (-not [IO.Path]::IsPathFullyQualified($Executable) -or -not (Test-Path -LiteralPath $Executable)) { throw 'Existing absolute contract path required.' }
 if (-not $env:NEXTCLOUD_TEST_URL -or -not $env:NEXTCLOUD_TEST_USER -or -not $env:NEXTCLOUD_TEST_PASSWORD) { throw 'Approved test environment required.' }
@@ -25,7 +25,7 @@ function RunOwned([string]$Argument) {
         if (-not $child.Start()) { throw 'Owned lifetime child launch failed.' }
         $output = $child.StandardOutput.ReadToEndAsync()
         $errors = $child.StandardError.ReadToEndAsync()
-        $timeout = if ($Scenario -eq 'network-active' -and $Argument -ne '--cleanup') { 900000 } elseif ($Scenario -eq 'network' -and $Argument -ne '--cleanup') { 600000 } else { 150000 }
+        $timeout = if ($Scenario -in 'network-active','network-chunked' -and $Argument -ne '--cleanup') { 900000 } elseif ($Scenario -eq 'network' -and $Argument -ne '--cleanup') { 600000 } else { 150000 }
         if (-not $child.WaitForExit($timeout)) { $child.Kill(); $child.WaitForExit(); throw 'Owned lifetime child exceeded its deadline.' }
         return @{ Code = $child.ExitCode; Output = $output.GetAwaiter().GetResult(); Error = $errors.GetAwaiter().GetResult() }
     } finally { $child.Dispose() }

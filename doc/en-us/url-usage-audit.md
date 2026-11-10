@@ -43,6 +43,12 @@ target capability/root verification and forced upstream rediscovery. Real cross-
 acceptance is pending. `propagateuploadng.cpp:34–38` derives chunk URLs relative to the current account,
 but this alone is not session-portability proof: chunked-upload and all pending poll rows stay blocked.
 
+Follow-up the same day: `propagateuploadng.cpp:90–123` reuses a stored session only when size and
+mtime still match, then lists the session collection (`141–193`) and continues after the last
+consecutive chunk; a missing collection starts a new upload (`195–209`), and discovery adopts a
+committed final MOVE by checksum. Patch 0016 proves both after an origin change, and the gate now
+admits checksum-qualified chunking-v2 rows. Poll rows and legacy v1 chunk indexes stay blocked.
+
 2026-11-07 source recheck against Desktop v35.0.3; subsequent remediation is in progress:
 
 - `src/common/syncjournaldb.cpp:277–288` returns no commit result; a failed SQLite commit is logged

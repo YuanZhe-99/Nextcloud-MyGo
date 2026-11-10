@@ -7,8 +7,10 @@
   while its revocation is throttled. A successful half-open probe no longer fails a verified switch
   onto a recovering address. Shared rebuild: 21/21 CTest targets and real Go↔C++ entrypoints on
   native ARM64 and emulated x64; the real active-transfer fixture (upload fault, download fault,
-  withheld PUT acknowledgement) passed on both against server 35.0.2. Protocol 1.7, Control schema 8 and the fifteen patches are
-  unchanged. Go 1.27.3 / MyGo v0.8.3 / Desktop v35.0.3 / server v35.0.2 (previous major v34.0.5)
+  withheld PUT acknowledgement) passed on both against server 35.0.2. Chunking-v2 sessions are admitted across origins: test-only upstream patch 0016 and a real
+  112 MiB upload interrupted in its second chunk, resumed without resending the first chunk on both
+  architectures against an isolated server 35.0.2. Protocol 1.7 and Control schema 8 are unchanged;
+  sixteen patches. Go 1.27.3 / MyGo v0.8.3 / Desktop v35.0.3 / server v35.0.2 (previous major v34.0.5)
   checked again on 2026-11-09, unchanged; `origin` only, fetch 0/0. No commit, tag or push.
 
 - Protocol 1.7 adds explicit startup availability and folder reasons. Control schema 8 durable

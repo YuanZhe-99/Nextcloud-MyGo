@@ -23,6 +23,9 @@
 /// faults without borrowed-password revocation.
 void networkAcceptance(bool lifetimeOnly, bool activeTransfers,
                        bool wrongInstance = false);
+/// chunkedTransferAcceptance switches the active-transfer acceptance to one
+/// interrupted chunk session on an isolated server.
+void chunkedTransferAcceptance();
 /// cleanupNetworkContent removes only the manifest-owned remote collection
 /// before native credential deletion.
 void cleanupNetworkContent(const QString &root, const QString &credential);
@@ -510,6 +513,10 @@ int main(int argc, char **argv) {
   QCoreApplication app(argc, argv);
   try {
     if (app.arguments().contains("--cleanup")) {
+      // Remote content on an isolated fixture server needs its acknowledged
+      // root here as well.
+      if (qEnvironmentVariableIsSet("SYNCD_TEST_CA_CERT"))
+        trustIsolatedCA();
       cleanupManifest();
       return 0;
     }
@@ -526,6 +533,12 @@ int main(int argc, char **argv) {
       return 0;
     }
     if (app.arguments().contains("--network-active")) {
+      networkAcceptance(false, true);
+      return 0;
+    }
+    if (app.arguments().contains("--network-chunked")) {
+      trustIsolatedCA();
+      chunkedTransferAcceptance();
       networkAcceptance(false, true);
       return 0;
     }

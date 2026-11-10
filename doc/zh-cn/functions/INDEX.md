@@ -23,7 +23,7 @@ SyncD 连通基础已实现；完整同步尚未完成。见 [IPC](../ipc.md) �
 | `backend/control_activity.cpp` | 有界、按游标过滤的已确认条目汇总及已提交切换历史 | `activityProjection`、`recordActivity` |
 | `backend/watcher*` | Windows 递归变化通知、溢出核对及取消排空 | `RootWatcher`、`ready`、`arm` |
 | `backend/request_lifetime.*` | 回复完成/销毁计数及粘滞的结果不明写入观察 | `RequestLifetime`、`observe`、`Counts` |
-| `backend/resume_context.*` | 只读 ETag 下载/带校验和单 PUT 准入；保留被阻塞轮询/分块及损坏 journal | `resumeContextError` |
+| `backend/resume_context.*` | 只读 ETag 下载、带校验和单 PUT 及分块 v2 会话准入；保留被阻塞轮询/v1 分块索引及损坏 journal | `resumeContextError` |
 | `backend/switch_state.*` | 事务化切换意图/epoch 存储、已提交绑定解析及重启门槛 | `SwitchState`、`begin`、`commit`、`reconciled`、`interrupt` |
 | `protocol/` | 协议 1.7 清单、schema 及共享恶意输入夹具 | `contract.json`、`message.schema.json`、`folders.schema.json`、`endpoints.schema.json`、`switch.schema.json`、`reauthentication.schema.json`、`policy.schema.json`、`startup.examples.json`、`constraints.examples.json`、`fixtures.json` |
 | `tools/build-syncd.ps1` | ARM64/x64 SyncD 构建与核心契约测试 | 脚本参数 |

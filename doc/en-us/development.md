@@ -106,6 +106,20 @@ in the Windows trust store; normal chain and hostname checks remain enabled. TLS
 disabled. Isolated-instance credentials and cleanup
 manifests stay in ignored local configuration, never in committed fixtures.
 
+`-Scenario network-chunked` cuts one chunk session inside its second chunk and requires it to resume
+on the other origin without resending the first chunk. Upstream chunks only above 100 MiB, so it
+uploads 112 MiB and needs an isolated server without a small quota, with the same fixture-local root
+(`SYNCD_TEST_CA_CERT`, `SYNCD_TEST_CA_SHA1`). Qt never sends requests for `127.0.0.1` or `localhost`
+through a proxy, which would bypass the fault relay: address a loopback server through two reserved
+`.test` names present in its certificate and its `trusted_domains`, and set
+`NEXTCLOUD_TEST_CLEANUP_URL` to the direct loopback origin for the cleanup step, which runs without
+the relay. On failure the script prints the `PASS` lines already reached and one sanitized reason.
+
+`tools/build-syncd.ps1` puts only Qt's `bin` on PATH for CTest. The consuming tests also need the
+matching upstream build's `bin/Release` and the native dependency `bin` directories for the same
+architecture; add them before calling it, and set `QT_PLUGIN_PATH` when running a built executable
+directly. Never mix headers or DLLs from a different upstream build.
+
 For the M0 discovery lifetime regression, run `./tools/test-discovery-lifetime.ps1 -Executable <build>/bin/Release/RemoteDiscoveryTest.exe` with the target Qt and dependency DLL directories on
 PATH. It runs the upstream timeout/next-fixture pair in 20 bounded subprocesses and fails on any
 nonzero exit or timeout. Diagnostic output remains under ignored `build/`; this is a mock-server

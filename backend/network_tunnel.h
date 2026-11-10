@@ -31,6 +31,15 @@ public:
   /// uploads; encrypted byte counts never prove HTTP success. Notes: like relay
   /// callbacks, observations run only on the control thread.
   static Progress heldProgress();
+  /// setThroughput changes how many bytes every relay forwards per 10 ms tick
+  /// in each direction, bounded by the relay buffer. Notes: the default keeps
+  /// small transfers observable; large chunk fixtures raise it.
+  static void setThroughput(qint64 bytes);
+  /// setTarget makes every relay connect to this host instead of resolving the
+  /// admitted authority; the port still comes from the authority. Notes: Qt
+  /// never proxies loopback destinations, so an isolated loopback server is
+  /// addressed through reserved names that only this relay maps back.
+  static void setTarget(const QString &host);
 
 private:
   /// handshake admits an exact approved CONNECT authority, without interpreting

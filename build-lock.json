@@ -13,7 +13,7 @@
     "x64RealServiceEntrypoint": "passed-emulated-real-pipe-unavailable-second-stop-and-existing-inv12-inv13-5.865s",
     "handoffReady": false,
     "cleanup": "subagents-interrupted-owned-native-test-credentials-removed-zero-remote-owned-collections-zero-n02-containers-volumes-listeners-no-test-root-1168-temp-test-dirs-removed-explorer-test-clsid-and-namespace-removed-stale-nextcloud-run-and-config-removed",
-    "see": "HANDOFF.md"
+    "see": "doc/en-us/backend-progress.md"
   },
   "nextcloudDesktop": {
     "repository": "https://github.com/nextcloud/desktop",
@@ -96,6 +96,11 @@
         "path": "patches/nextcloud/0015-keep-capability-updates-headless.patch",
         "sha256": "ada5295a01ee9a05cde9ad6729e2ae9dec6756415420721b9de37c9645306209",
         "reason": "Keep headless accounts free of interactive user-status, push and client-status services when sync capabilities are installed; the new narrow account regression failed !hasUserStatus before the guard."
+      },
+      {
+        "path": "patches/nextcloud/0016-prove-chunk-recovery-across-origins.patch",
+        "sha256": "3cb68bc2563fb3bac08318ca60eb2ceb77d0489255f78754cae2d1ad40b5c5ed",
+        "reason": "Test-only: prove that an interrupted chunk session resumes after the account moves to another origin of the same server without resending chunks or contacting the previous origin, and that a committed final MOVE with a lost reply is adopted there without download, chunk or second MOVE. No library source changes."
       }
     ]
   },

@@ -3,7 +3,9 @@
 #include <QNetworkProxy>
 
 namespace {
-constexpr qint64 headerLimit = 8192, bufferLimit = 65536, bytesPerTick = 8192;
+constexpr qint64 headerLimit = 8192, bufferLimit = 65536;
+qint64 bytesPerTick = 8192;
+QString target;
 constexpr int tickMilliseconds = 10;
 QList<NetworkTunnel *> tunnels;
 } // namespace
@@ -59,6 +61,12 @@ NetworkTunnel::NetworkTunnel(QTcpSocket *client, QUrl primary, QUrl alternate,
 
 NetworkTunnel::~NetworkTunnel() { tunnels.removeOne(this); }
 
+void NetworkTunnel::setTarget(const QString &host) { target = host; }
+
+void NetworkTunnel::setThroughput(qint64 bytes) {
+  bytesPerTick = qBound<qint64>(1, bytes, bufferLimit);
+}
+
 NetworkTunnel::Progress NetworkTunnel::heldProgress() {
   Progress progress;
   for (const auto *tunnel : tunnels) {
@@ -111,7 +119,8 @@ void NetworkTunnel::handshake() {
     close();
     return;
   }
-  remote_.connectToHost(destination.host(), quint16(destination.port(443)));
+  remote_.connectToHost(target.isEmpty() ? destination.host() : target,
+                        quint16(destination.port(443)));
 }
 
 void NetworkTunnel::tick() {

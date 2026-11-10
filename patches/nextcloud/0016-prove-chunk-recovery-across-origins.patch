@@ -1,0 +1,116 @@
+diff --git a/test/testchunkingng.cpp b/test/testchunkingng.cpp
+index ff45586..01ac4ca 100644
+--- a/test/testchunkingng.cpp
++++ b/test/testchunkingng.cpp
+@@ -429,6 +429,111 @@ private Q_SLOTS:
+         QCOMPARE(fakeFolder.currentLocalState(), fakeFolder.currentRemoteState());
+     }
+ 
++    // An interrupted chunk session stores no address. After the account moves to
++    // another origin of the same server, the same session is listed and resumed
++    // without sending earlier chunks again or contacting the previous origin.
++    void testResumeAfterOriginChange()
++    {
++        FakeFolder fakeFolder{FileInfo::A12_B12_C12_S12()};
++        fakeFolder.syncEngine().account()->setCapabilities({{"dav", QVariantMap{{"chunking", "1.0"}}}});
++        const int size = 10 * 1000 * 1000; // 10 MB
++        setChunkSize(fakeFolder.syncEngine(), 1 * 1000 * 1000);
++
++        partialUpload(fakeFolder, "A/a0", size);
++        QCOMPARE(fakeFolder.uploadState().children.count(), 1);
++        const auto chunkingId = fakeFolder.uploadState().children.first().name;
++        const auto &chunkMap = fakeFolder.uploadState().children.first().children;
++        const auto uploadedSize = std::accumulate(chunkMap.begin(), chunkMap.end(), 0LL, [](qint64 s, const FileInfo &f) { return s + f.size; });
++        QVERIFY(uploadedSize > 2 * 1000 * 1000); // at least 2 MB
++
++        fakeFolder.syncEngine().account()->setUrl(QUrl(QStringLiteral("http://admin:admin@alternate.invalid/owncloud")));
++
++        auto previousOriginRequests = 0;
++        auto resentChunks = 0;
++        QByteArray chunkDestination;
++        fakeFolder.setServerOverride([&](QNetworkAccessManager::Operation op, const QNetworkRequest &request, QIODevice *) -> QNetworkReply * {
++            if (request.url().host() != QLatin1String("alternate.invalid")) {
++                ++previousOriginRequests;
++            }
++            if (op == QNetworkAccessManager::PutOperation) {
++                chunkDestination = request.rawHeader("Destination");
++                if (request.rawHeader("OC-Chunk-Offset").toLongLong() < uploadedSize) {
++                    ++resentChunks;
++                }
++            }
++            return nullptr;
++        });
++
++        QVERIFY(fakeFolder.syncOnce());
++
++        QCOMPARE(previousOriginRequests, 0);
++        QCOMPARE(resentChunks, 0);
++        QVERIFY(chunkDestination.contains("alternate.invalid"));
++        QVERIFY(!chunkDestination.contains("localhost"));
++        QCOMPARE(fakeFolder.currentLocalState(), fakeFolder.currentRemoteState());
++        QCOMPARE(fakeFolder.currentRemoteState().find("A/a0")->size, size);
++        // The same chunk id was re-used
++        QCOMPARE(fakeFolder.uploadState().children.count(), 1);
++        QCOMPARE(fakeFolder.uploadState().children.first().name, chunkingId);
++    }
++
++    // The final MOVE was applied by the server but its reply never arrived, and
++    // the account then moves to another origin of the same server. Discovery
++    // there must adopt the committed file: no download, no chunk and no second
++    // MOVE.
++    void testLateAbortHardAfterOriginChange()
++    {
++        FakeFolder fakeFolder{FileInfo::A12_B12_C12_S12()};
++        fakeFolder.syncEngine().account()->setCapabilities({{"dav", QVariantMap{{"chunking", "1.0"}}}, {"checksums", QVariantMap{{"supportedTypes", QStringList() << "SHA1"}}}});
++        const int size = 15 * 1000 * 1000; // 15 MB
++        setChunkSize(fakeFolder.syncEngine(), 1 * 1000 * 1000);
++
++        QObject parent;
++        QByteArray moveChecksumHeader;
++        auto downloads = 0;
++        auto writes = 0;
++        auto previousOriginRequests = 0;
++        auto originChanged = false;
++        constexpr auto responseDelay = 100000; // bigger than abort-wait timeout
++        fakeFolder.setServerOverride([&](QNetworkAccessManager::Operation op, const QNetworkRequest &request, QIODevice *) -> QNetworkReply * {
++            const auto verb = request.attribute(QNetworkRequest::CustomVerbAttribute).toString();
++            if (originChanged) {
++                if (request.url().host() != QLatin1String("alternate.invalid")) {
++                    ++previousOriginRequests;
++                }
++                if (op == QNetworkAccessManager::GetOperation) {
++                    ++downloads;
++                } else if (op == QNetworkAccessManager::PutOperation || verb == QLatin1String("MOVE") || verb == QLatin1String("MKCOL")) {
++                    ++writes;
++                }
++                return nullptr;
++            }
++            if (verb == QLatin1String("MOVE")) {
++                QTimer::singleShot(50, &parent, [&]() { fakeFolder.syncEngine().abort(); });
++                moveChecksumHeader = request.rawHeader("OC-Checksum");
++                return new DelayedReply<FakeChunkMoveReply>(responseDelay, fakeFolder.uploadState(), fakeFolder.remoteModifier(), op, request, &parent);
++            }
++            return nullptr;
++        });
++
++        fakeFolder.localModifier().insert("A/a0", size);
++        QVERIFY(!fakeFolder.syncOnce()); // error: abort!
++        QVERIFY(fakeFolder.currentRemoteState().find("A/a0")); // the server committed it
++        QVERIFY(!moveChecksumHeader.isEmpty());
++        // Set the remote checksum -- the test setup doesn't do it automatically
++        fakeFolder.remoteModifier().find("A/a0")->checksums = moveChecksumHeader;
++
++        fakeFolder.syncEngine().account()->setUrl(QUrl(QStringLiteral("http://admin:admin@alternate.invalid/owncloud")));
++        originChanged = true;
++
++        QVERIFY(fakeFolder.syncOnce());
++        QCOMPARE(previousOriginRequests, 0);
++        QCOMPARE(downloads, 0);
++        QCOMPARE(writes, 0);
++        QCOMPARE(fakeFolder.currentLocalState(), fakeFolder.currentRemoteState());
++        QCOMPARE(fakeFolder.currentRemoteState().find("A/a0")->size, size);
++    }
++
+     // We modify the file locally after it has been partially uploaded
+     void testRemoveStale1() {
+ 

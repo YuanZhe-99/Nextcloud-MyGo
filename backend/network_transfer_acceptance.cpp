@@ -30,7 +30,11 @@ namespace {
 // The three cases each leave one file behind and must fit the approved test
 // account's quota together: at 16 MiB the third PUT was refused with HTTP 507,
 // which read as a committed write that never became visible.
-constexpr int contentSize = 8 * 1024 * 1024;
+int contentSize = 8 * 1024 * 1024;
+// Upstream sends files above its default 100 MiB threshold as a chunking-v2
+// session whose first chunk is that size.
+constexpr qint64 firstChunk = 100LL * 1024 * 1024;
+bool chunked = false;
 /// require preserves live acceptance conditions in optimized executables.
 void require(bool ok, const char *message) {
   if (!ok)
@@ -233,6 +237,17 @@ QByteArray journalIdentity(const QString &root) {
 }
 } // namespace
 
+/// chunkedTransferAcceptance selects the chunk-session case: one file past the
+/// upstream threshold, interrupted inside its second chunk. Notes: needs an
+/// isolated server without the shared account's quota; the relay runs faster
+/// so the first chunk fits the observation deadline.
+void chunkedTransferAcceptance() {
+  chunked = true;
+  contentSize = int(firstChunk) + 12 * 1024 * 1024;
+  NetworkTunnel::setThroughput(65536);
+  NetworkTunnel::setTarget("127.0.0.1");
+}
+
 /// cleanupNetworkContent removes only the manifest-reserved collection on the
 /// approved real test origin. Notes: called by the parent-owned cleanup child
 /// after any failure; the caller validates the native credential reference
@@ -248,7 +263,11 @@ void cleanupNetworkContent(const QString &root, const QString &credential) {
   const auto collection = manifest.value("collection").toString();
   require(collection == "mygo-network-" + QFileInfo(root).fileName().right(32),
           "owned content cleanup escaped reserved collection");
-  dav(canonicalServer(qEnvironmentVariable("NEXTCLOUD_TEST_URL")),
+  // The cleanup child has no relay: an isolated fixture names its direct
+  // loopback origin for this one request.
+  dav(canonicalServer(
+          qEnvironmentVariable("NEXTCLOUD_TEST_CLEANUP_URL",
+                               qEnvironmentVariable("NEXTCLOUD_TEST_URL"))),
       manifest.value("uid").toString(), collection, "DELETE", credential);
   require(file.remove(), "owned content cleanup manifest removal failed");
 }
@@ -325,8 +344,8 @@ void networkTransferAcceptance(Control &c, const QString &root,
   const auto hash =
       QCryptographicHash::hash(content, QCryptographicHash::Sha256);
   for (const auto &direction :
-       {QStringLiteral("upload"), QStringLiteral("download"),
-        QStringLiteral("unacknowledged-upload")}) {
+       chunked ? QStringList{"chunked-upload"}
+               : QStringList{"upload", "download", "unacknowledged-upload"}) {
     const bool upload = direction != "download",
                unacknowledged = direction == "unacknowledged-upload";
     holdResponse(false);
@@ -375,7 +394,10 @@ void networkTransferAcceptance(Control &c, const QString &root,
                              .toObject();
           return d.value(activeKey).toString().toULongLong() > 0 &&
                  d.value(bytesKey).toString().toULongLong() >=
-                     baseline.value(bytesKey).toString().toULongLong() + 65536;
+                     baseline.value(bytesKey).toString().toULongLong() +
+                         // Past the first chunk means the server answered it
+                         // and the second chunk is in flight.
+                         (chunked ? quint64(firstChunk) + 1048576 : 65536);
         },
         "owned unfinished content transfer was not observed");
     if (unacknowledged) {
@@ -449,8 +471,29 @@ void networkTransferAcceptance(Control &c, const QString &root,
             "owned active transfer was not on the primary address");
     failPrimary(true);
     holdResponse(false);
-    wait([&] { return inUse(alternate); },
-         "owned active transfer did not automatically fail over");
+    try {
+      wait([&] { return inUse(alternate); },
+           "owned active transfer did not automatically fail over");
+    } catch (...) {
+      // Name what held the account back; only a stable reason code leaves.
+      const auto folder = c.projection()
+                              .value("snapshot")
+                              .toObject()
+                              .value("folders")
+                              .toArray()
+                              .first()
+                              .toObject();
+      const auto word = [](QString text) {
+        bool safe = !text.isEmpty() && text.size() <= 80;
+        for (const auto character : text)
+          safe = safe && (character.isLetter() || character == '_');
+        return safe ? text : QStringLiteral("unknown");
+      };
+      std::fprintf(stderr, "owned failover blocked, folder %s reason %s\n",
+                   qPrintable(word(folder.value("state").toString())),
+                   qPrintable(word(folder.value("reasonCode").toString())));
+      throw;
+    }
     wait(idle,
          "owned active transfer did not reconcile after automatic failover");
     if (upload) {
@@ -464,6 +507,14 @@ void networkTransferAcceptance(Control &c, const QString &root,
       require(recovered.value("uncertainWrites").toString().toULongLong() >
                   baseline.value("uncertainWrites").toString().toULongLong(),
               "owned interrupted upload lost its unconfirmed-write evidence");
+      // Resuming the same session on the other origin sends only what the
+      // server lacks; a restarted upload would send the first chunk twice.
+      require(
+          !chunked ||
+              recovered.value("uploadBytes").toString().toULongLong() -
+                      baseline.value("uploadBytes").toString().toULongLong() <
+                  quint64(contentSize) + 32 * 1048576,
+          "owned chunk session was restarted instead of resumed");
     }
     failPrimary(false);
     QFile file(local + '/' + name);
@@ -491,9 +542,14 @@ void networkTransferAcceptance(Control &c, const QString &root,
                                    .first()
                                    .toObject()
                                    .value("id")}}));
-  std::puts("PASS real unfinished positive-byte upload/download faults, "
-            "server-committed PUT with withheld acknowledgement, automatic "
-            "mapped-root cross-origin recovery, matching hashes and "
-            "original native journal");
+  std::puts(
+      chunked ? "PASS real chunk session interrupted in its second chunk, "
+                "resumed without resending the first chunk, automatic "
+                "mapped-root cross-origin recovery, matching hashes and "
+                "original native journal"
+              : "PASS real unfinished positive-byte upload/download faults, "
+                "server-committed PUT with withheld acknowledgement, automatic "
+                "mapped-root cross-origin recovery, matching hashes and "
+                "original native journal");
 #endif
 }

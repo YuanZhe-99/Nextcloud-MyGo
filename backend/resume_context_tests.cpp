@@ -120,6 +120,20 @@ void portableContexts() {
              true},
         Case{"INSERT INTO uploadinfo "
              "VALUES('dir/file',0,123,16,123,'SHA1:owned-checksum')",
+             true},
+        Case{"INSERT INTO uploadinfo "
+             "VALUES('dir/file',0,4294967295,16,123,'SHA1:owned-checksum')",
+             true},
+        Case{"INSERT INTO uploadinfo VALUES('dir/file',0,123,16,123,'')",
+             false},
+        Case{"INSERT INTO uploadinfo "
+             "VALUES('dir/file',0,-1,16,123,'SHA1:owned-checksum')",
+             false},
+        Case{"INSERT INTO uploadinfo "
+             "VALUES('dir/file',0,4294967296,16,123,'SHA1:owned-checksum')",
+             false},
+        Case{"INSERT INTO uploadinfo "
+             "VALUES('../file',0,123,16,123,'SHA1:owned-checksum')",
              false},
         Case{"INSERT INTO uploadinfo "
              "VALUES('dir/file',1,0,16,123,'SHA1:owned-checksum')",
@@ -173,8 +187,14 @@ void portableContexts() {
                      "VALUES('chunk',0,123,16,123,'SHA1:owned')"),
           "mixed portable fixture failed");
   q.finish();
+  require(resumeContextError(path).isEmpty(),
+          "portable download and chunk session were not admitted together");
+  require(q.exec("INSERT INTO uploadinfo "
+                 "VALUES('legacy',1,123,16,123,'SHA1:owned')"),
+          "legacy chunk fixture failed");
+  q.finish();
   require(resumeContextError(path) == "RESUME_CONTEXT_UNSUPPORTED",
-          "one portable row bypassed a blocked session");
+          "one portable row bypassed a blocked legacy chunk index");
   q = QSqlQuery();
   db.close();
   db = {};

@@ -68,6 +68,23 @@ its fix ("successful recovery probe blocked the active endpoint") and passes aft
 failing runs of this fixture were a 16 MiB quota refusal (HTTP 507) and that defect, not a lost write.
 Failure-stage injection, uncertain MOVE/DELETE and chunked uploads are not covered by it.
 
+Chunk-session acceptance on the same host: an owned Nextcloud 35.0.2 container (`wslc`, loopback
+port, SQLite, fresh instance) served HTTPS with a two-day fixture certificate whose root was trusted
+only inside the acceptance process; no Windows trust store, hosts file or proxy setting changed. Qt
+never proxies loopback destinations, so the fixture reached it through two reserved `.test` names
+that only the acceptance relay maps back to the loopback port. `-Scenario network-chunked` passed on
+**native ARM64 (2 min 52 s) and emulated x64 (2 min 56 s)**; the before-run with the previous gate
+ended "failover blocked, folder offline reason NETWORK_UNAVAILABLE". Upstream `ChunkingNgTest`
+with patch 0016 passed 22/22 on both. After the gate change the shared rebuild passed 21/21 CTest
+targets (ARM64 15.55 s, x64 21.66 s). Cleanup removed the container, volume, image, bootstrap
+credentials and TLS files; only two sanitized manifests remain, and the pre-existing container was
+untouched. This run covers one interruption point (inside the second chunk); a withheld final MOVE
+was exercised only by the upstream regression, not against a real server. The regular
+`network-active` fixture passed again on the final ARM64 build (12 min 24 s). Actual Go↔service
+pipe tests then passed 12/12 per architecture over six rounds. One earlier emulated-x64 run of
+`TestRealPipeINV12INV13` failed while that fixture was running concurrently; its message was not
+captured and it did not recur in fifteen later runs, so its cause is unknown.
+
 Metadata boundary regressions reproduced 26 misclassifications before remediation, including 403
 reported as authentication failure and locked identity properties reported as an identity mismatch.
 The corrected synthetic suites passed on native ARM64 (0.12 s) and emulated x64 (0.16 s); these are

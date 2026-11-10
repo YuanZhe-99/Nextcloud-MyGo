@@ -43,8 +43,13 @@ QString portable(QSqlDatabase db) {
                t = q.value(2).toLongLong(&transfer),
                s = q.value(3).toLongLong(&size),
                m = q.value(4).toLongLong(&mtime);
+    // A zero transfer ID is single-PUT uncertainty; a nonzero one names a
+    // chunking-v2 session, which upstream addresses relative to the current
+    // account and re-lists before sending anything. Both need the checksum so
+    // discovery can adopt a write the server already committed. A legacy v1
+    // chunk index stays blocked.
     if (!relativeFile(q.value(0).toString()) || !chunk || c != 0 || !transfer ||
-        t != 0 || !size || s < 0 || !mtime || m <= 0 ||
+        t < 0 || t > 4294967295LL || !size || s < 0 || !mtime || m <= 0 ||
         q.value(5).toByteArray().isEmpty())
       return "RESUME_CONTEXT_UNSUPPORTED";
   }

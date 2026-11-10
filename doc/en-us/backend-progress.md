@@ -1,5 +1,40 @@
 # Backend progress
 
+## Where the backend stands
+
+Read this section first; everything below it is the dated record, newest first.
+
+The backend is **not complete** and no milestone has passed its exit criteria. Product 0.1.0,
+protocol 1.7, Control schema 8, Desktop v35.0.3 with sixteen recorded patches.
+
+Built and verified on native ARM64 and emulated x64 (evidence in [platform notes](platform-notes.md)):
+
+- The authenticated pipe, durable settings/receipts/outbox, login, reauthentication and removal,
+  folder mappings, the serial scheduler, root leases, the watcher and deletion protection.
+- Origin consent, namespace verification, immutable epochs, manual and automatic switching with
+  recovery, network probes and policy, startup admission and diagnostics.
+- Real-server faults against server 35.0.2: an interrupted upload, an interrupted download, a
+  committed PUT whose reply is withheld, a chunk session cut in its second chunk, and a second
+  instance with the same user but another namespace (refused).
+
+Not done:
+
+| Item | What is missing |
+|---|---|
+| Uncertain writes | A real withheld final MOVE, uncertain MOVE/DELETE of existing items, failure-stage injection, files above 4 GiB |
+| Upstream patch 0016 | Ran only as an incremental build in the fifteen-patch trees; a fresh sixteen-patch build and the full upstream suite are owed |
+| Login throttling | Covered by scripted-transport regressions only; no real-server 429 acceptance. A daemon restart during a held revocation reports it unconfirmed instead of retrying |
+| Packaging and update (B13) | No installer, dependency closure or update channel; `daemon.prepareUpdate` is declared but not dispatched. Depends on B08/B12 acceptance |
+| Platform evidence | No native x64 hardware, interactive browser/SSO/MFA login, suspend/resume, previous-major server 34 or 24-hour run; clang-tidy could not be run |
+
+What the interface must respect until those pass:
+
+- The `fullSync` and `endpointAutoSwitch` capabilities stay `false`; never present them as supported.
+- While `daemon.stateAvailable` is `false` nothing is shown as healthy, and a missing collection is
+  unknown, not empty.
+- The interface goes only through IPC ([IPC](ipc.md)); the account and engine rules are in
+  [accounts](accounts.md) and [engine](engine.md).
+
 ## M0 / B01: dependency and interface audit
 
 Status: in progress; no backend milestone has passed its exit criteria.
@@ -12,8 +47,8 @@ schema-8 durable-constraint and metadata-boundary targets. The emulated x64 tree
 targets pass as well (25.25 s). Real service-entrypoint Go tests pass on both (5.698 s ARM64,
 5.865 s emulated x64), including a second corrupt-storage boot's fresh shutdown key. Known in-flight gaps are the LoginFlow 429/expiry cleanup ownership, constraint
 observation after a network-generation change, the real active-transfer withheld-acknowledgement
-case, modern chunk/MOVE/DELETE recovery, and packaging/update (B13). `HANDOFF.md` lists the exact
-files, commands and next steps; do not resume the stopped subagent sessions.
+case, modern chunk/MOVE/DELETE recovery, and packaging/update (B13). The takeover below closed the
+first four; the current list is at the top of this page.
 
 ### Takeover after the handoff (2026-11-09)
 
@@ -40,9 +75,22 @@ limit: three 16 MiB files exceed the test account's quota, so the third PUT was 
 to recover before switching back and requires the primary to be in use before each fault. See
 [platform notes](platform-notes.md) for the x64 result.
 
-Still open, unchanged in scope: real-server throttle acceptance for login; automatic revocation
-retry across a daemon restart (recovery reports the unconfirmed revocation instead); modern
-chunk/MOVE/DELETE recovery, which needs a new upstream regression and an approved isolated server;
+Chunk-session recovery followed the same day. The cross-origin resume gate now admits a
+checksum-qualified chunking-v2 session; poll URLs and legacy v1 chunk indexes stay blocked. Upstream
+patch 0016 is test-only: it proves that an interrupted session resumes after the account moves to
+another origin without resending chunks or contacting the previous origin, and that a committed
+final MOVE with a lost reply is adopted there with no download, chunk or second MOVE. Its suite
+passed 22/22 on native ARM64 and emulated x64, built incrementally in the existing fifteen-patch
+trees; a fresh sixteen-patch upstream build and full suite are still owed. A user-approved temporary
+Nextcloud 35.0.2 container on a loopback port, with a fixture-local root trusted only inside the
+acceptance process, ran `-Scenario network-chunked` on both architectures: a 112 MiB upload cut in
+its second chunk failed over automatically and resumed without resending the first 100 MiB chunk,
+with matching hashes and the original journal. With the previous gate the same run stayed on the
+failed address. The container, volume, image, credentials and TLS files were removed afterwards.
+
+Still open: real-server throttle acceptance for login; automatic revocation retry across a daemon
+restart (recovery reports the unconfirmed revocation instead); a real withheld final MOVE, uncertain
+MOVE/DELETE of existing items, failure-stage injection and files above 4 GiB;
 and packaging/update (B13), whose dependencies B08/B12 are not accepted, so `daemon.prepareUpdate`
 stays undispatched. Full sync and automatic switching stay disabled; this is not a backend handoff.
 

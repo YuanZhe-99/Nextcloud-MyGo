@@ -23,7 +23,7 @@ then inputs, returns, side effects and notes where non-trivial).
 | `backend/control_activity.cpp` | Bounded, cursor-filtered confirmed-item aggregates and committed switch history | `activityProjection`, `recordActivity` |
 | `backend/watcher*` | Recursive Windows change notifications, overflow audits and drained cancellation | `RootWatcher`, `ready`, `arm` |
 | `backend/request_lifetime.*` | Reply completion/destruction accounting and sticky uncertain-write observations | `RequestLifetime`, `observe`, `Counts` |
-| `backend/resume_context.*` | Read-only ETag-download/checksummed single-PUT admission; preserved blocked polls/chunks and corrupt journals | `resumeContextError` |
+| `backend/resume_context.*` | Read-only ETag-download, checksummed single-PUT and chunking-v2 session admission; preserved blocked polls/v1 chunk indexes and corrupt journals | `resumeContextError` |
 | `backend/switch_state.*` | Transactional switch intent/epoch storage, committed binding resolution and restart gates | `SwitchState`, `begin`, `commit`, `reconciled`, `interrupt` |
 | `protocol/` | Protocol 1.7 manifest, schemas and shared hostile-input fixtures | `contract.json`, `message.schema.json`, `folders.schema.json`, `endpoints.schema.json`, `switch.schema.json`, `reauthentication.schema.json`, `policy.schema.json`, `startup.examples.json`, `constraints.examples.json`, `fixtures.json` |
 | `tools/build-syncd.ps1` | ARM64/x64 SyncD builds and core contract tests | Script parameters |
