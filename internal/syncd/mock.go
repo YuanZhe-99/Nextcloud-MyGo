@@ -40,7 +40,10 @@ func NewMock(sample bool, now func() time.Time) *Mock {
 		now = time.Now
 	}
 	m := &Mock{now: now, subs: map[int]func(){}, logins: map[string]mockLogin{}, staged: map[string]mockStage{}, cycle: map[string]int{}}
-	m.s.Daemon = Daemon{Version: "0.1.0", Protocol: 1, Demo: true, CheckedAt: now().Add(-2 * time.Minute)}
+	m.s = Snapshot{
+		Daemon:   Daemon{Version: "0.1.0", Protocol: 1, Demo: true, StateAvailable: true, StartupState: StartupNormal, CheckedAt: now().Add(-2 * time.Minute)},
+		Accounts: []Account{}, Folders: []Folder{}, Endpoints: []Endpoint{}, Networks: []Network{}, Switches: []Switch{}, Decisions: []Decision{}, Activity: []Activity{},
+	}
 	if sample {
 		m.s = sampleState(now())
 		m.cycle["f-projects"] = 12
@@ -51,7 +54,7 @@ func NewMock(sample bool, now func() time.Time) *Mock {
 // sampleState is the design's sample: what the screens in design/ show.
 func sampleState(now time.Time) Snapshot {
 	return Snapshot{
-		Daemon: Daemon{Version: "0.1.0", Protocol: 1, Demo: true, CheckedAt: now.Add(-2 * time.Minute)},
+		Daemon: Daemon{Version: "0.1.0", Protocol: 1, Demo: true, StateAvailable: true, StartupState: StartupNormal, CheckedAt: now.Add(-2 * time.Minute)},
 		Accounts: []Account{
 			{ID: "a-home", User: "alex", DisplayName: "Alex", Server: "cloud.example.com", SignedIn: true},
 			{ID: "a-work", User: "alex", DisplayName: "Alex", Server: "work.example", SignedIn: false},

@@ -1,0 +1,54 @@
+// SPDX-License-Identifier: GPL-3.0-only
+#pragma once
+#include <QObject>
+#include <QTcpSocket>
+#include <QTimer>
+#include <QUrl>
+#include <functional>
+
+/// NetworkTunnel is an acceptance-only bounded CONNECT relay; TLS remains
+/// end-to-end with the real server. Notes: only the two supplied authorities
+/// are admitted; no decrypted payload, headers or credentials are logged.
+class NetworkTunnel final : public QObject {
+public:
+  /// NetworkTunnel owns one accepted socket and limits raw-byte throughput so a
+  /// real active fault is observable. An optional hold suppresses responses
+  /// only after substantial upstream traffic, leaving metadata probes
+  /// independent.
+  NetworkTunnel(QTcpSocket *client, QUrl primary, QUrl alternate,
+                std::function<bool(bool)> failed,
+                std::function<bool(bool)> held = {});
+  /// ~NetworkTunnel removes this relay from process-local diagnostic
+  /// observation.
+  ~NetworkTunnel() override;
+  /// Progress aggregates opaque counters of currently held relays, never their
+  /// authorities, encrypted bytes or credentials.
+  struct Progress {
+    quint64 count = 0, maxUpstreamBytes = 0;
+    qint64 clientPending = 0, remotePending = 0, upstreamQueued = 0;
+  };
+  /// heldProgress exposes forwarded and buffered counts to diagnose stalled
+  /// uploads; encrypted byte counts never prove HTTP success. Notes: like relay
+  /// callbacks, observations run only on the control thread.
+  static Progress heldProgress();
+
+private:
+  /// handshake admits an exact approved CONNECT authority, without interpreting
+  /// encrypted traffic.
+  void handshake();
+  /// tick forwards bounded encrypted bytes or breaks both ends when this
+  /// origin's fault becomes active.
+  void tick();
+  /// close ends this relay once and defers only its own QObject destruction.
+  void close();
+  QTcpSocket *client_;
+  QTcpSocket remote_;
+  QTimer timer_;
+  QUrl primary_, alternate_;
+  std::function<bool(bool)> failed_;
+  std::function<bool(bool)> held_;
+  QByteArray header_;
+  quint64 upstreamBytes_ = 0;
+  bool primaryOrigin_ = false, connecting_ = false, ready_ = false,
+       closed_ = false, remoteEnded_ = false;
+};

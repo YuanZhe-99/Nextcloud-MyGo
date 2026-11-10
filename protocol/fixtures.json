@@ -1,0 +1,16 @@
+[
+  {"name":"fixed-policy", "valid":true, "json":"{\"jsonrpc\":\"2.0\",\"id\":\"policy\",\"method\":\"endpoints.setPolicy\",\"params\":{\"policy\":\"fixed\",\"fixedEndpointId\":\"33333333-3333-4333-8333-333333333333\"}}"},
+  {"name":"duplicate-policy-target", "valid":false, "json":"{\"method\":\"endpoints.setPolicy\",\"params\":{\"fixedEndpointId\":\"one\",\"fixedEndpointId\":\"two\"}}"},
+  {"name":"hello", "valid":true, "json":"{\"jsonrpc\":\"2.0\",\"id\":\"h\",\"method\":\"session.hello\",\"params\":{\"protocol\":{\"major\":1,\"minor\":1}}}"},
+  {"name":"login-status", "valid":true, "json":"{\"jsonrpc\":\"2.0\",\"id\":\"status\",\"method\":\"accounts.login.status\",\"params\":{\"loginSessionId\":\"6a45d3ee-70bc-4c25-91cb-204c17fbaf49\"}}"},
+  {"name":"duplicate-method", "valid":false, "json":"{\"method\":\"one\",\"method\":\"two\"}"},
+  {"name":"manual-switch", "valid":true, "json":"{\"jsonrpc\":\"2.0\",\"id\":\"switch\",\"method\":\"endpoints.requestSwitch\",\"params\":{\"operationKey\":\"66666666-6666-4666-8666-666666666666\",\"expectedRevision\":\"45\",\"accountId\":\"22222222-2222-4222-8222-222222222222\",\"endpointId\":\"44444444-4444-4444-8444-444444444444\"}}"},
+  {"name":"duplicate-switch-target", "valid":false, "json":"{\"method\":\"endpoints.requestSwitch\",\"params\":{\"endpointId\":\"one\",\"endpointId\":\"two\"}}"},
+  {"name":"reauthentication", "valid":true, "json":"{\"jsonrpc\":\"2.0\",\"id\":\"renew\",\"method\":\"accounts.reauthenticate\",\"params\":{\"operationKey\":\"11111111-1111-4111-8111-111111111111\",\"expectedRevision\":\"42\",\"accountId\":\"22222222-2222-4222-8222-222222222222\"}}"},
+  {"name":"duplicate-renewal-account", "valid":false, "json":"{\"method\":\"accounts.reauthenticate\",\"params\":{\"accountId\":\"one\",\"accountId\":\"two\"}}"},
+  {"name":"escaped-duplicate", "valid":false, "json":"{\"id\":1,\"\\u0069d\":2}"},
+  {"name":"nested-duplicate", "valid":false, "json":"{\"params\":{\"x\":1,\"x\":2}}"},
+  {"name":"nonfinite", "valid":false, "json":"{\"x\":1e999}"},
+  {"name":"trailing", "valid":false, "json":"{}{}"},
+  {"name":"array", "valid":true, "json":"[{\"id\":1},{\"id\":2}]"}
+]

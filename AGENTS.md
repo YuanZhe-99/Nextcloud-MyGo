@@ -37,6 +37,11 @@ about to change, verify against the code, then fix the docs in the same commit.
 | Verified upstream contracts (Nextcloud Desktop, Nextcloud server APIs, Qt, MyGo) and quirks | `doc/en-us/upstream.md` |
 | Reused third-party code, licenses and obligations | `doc/en-us/third-party.md` |
 | What is implemented and verified per platform and architecture | `doc/en-us/platform-notes.md` |
+| Backend work-package progress, dependency audit and test isolation | `doc/en-us/backend-progress.md` |
+| URL request surfaces and endpoint-recovery audit | `doc/en-us/url-usage-audit.md` |
+| Implemented IPC contract and connected daemon scope | `doc/en-us/ipc.md` |
+| Account creation, login sessions and native credential ownership | `doc/en-us/accounts.md` |
+| Engine adapter ownership and serial scheduling | `doc/en-us/engine.md` |
 | Environment, commands, dev loop | `doc/en-us/development.md` |
 | English→Chinese terminology | `doc/en-us/translation-guide.md` |
 | Past releases and the upstream versions they used | `doc/en-us/version-history.md` |

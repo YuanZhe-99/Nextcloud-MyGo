@@ -26,7 +26,7 @@ Go、MyGo 与 Nextcloud 不固定版本，始终跟随各自最新的稳定发�
 | 组件 | 策略 | 上次检查时的最新版本 |
 |---|---|---|
 | Go | 最新发行版 | 1.27.3 |
-| MyGo | 最新标签 | v0.7.4 |
+| MyGo | 最新标签 | v0.8.1 |
 | Nextcloud Desktop | 最新发行标签 | v35.0.2 |
 | Qt、QtKeychain、TLS 后端、SQLite | 在 M0 选定组合并记录 | 尚未选定 |
 | MSVC、Windows SDK、CMake、Ninja | 在 M0 选定组合并记录 | 尚未选定 |

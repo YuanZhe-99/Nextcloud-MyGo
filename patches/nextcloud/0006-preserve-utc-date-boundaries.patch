@@ -1,0 +1,11 @@
+diff --git a/src/gui/filedetails/datefieldbackend.cpp b/src/gui/filedetails/datefieldbackend.cpp
+--- a/src/gui/filedetails/datefieldbackend.cpp
++++ b/src/gui/filedetails/datefieldbackend.cpp
+@@ -124,2 +124,2 @@
+-    const auto dt = QDateTime::fromMSecsSinceEpoch(minimumDateMsecs);
++    const auto dt = QDateTime::fromMSecsSinceEpoch(minimumDateMsecs, QTimeZone::utc());
+     setMinimumDate(dt.date());
+@@ -156,2 +156,2 @@
+-    const auto dt = QDateTime::fromMSecsSinceEpoch(maximumDateMsecs);
++    const auto dt = QDateTime::fromMSecsSinceEpoch(maximumDateMsecs, QTimeZone::utc());
+     setMaximumDate(dt.date());

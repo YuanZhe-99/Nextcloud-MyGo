@@ -1,0 +1,23 @@
+diff --git a/src/libsync/vfs/cfapi/CMakeLists.txt b/src/libsync/vfs/cfapi/CMakeLists.txt
+--- a/src/libsync/vfs/cfapi/CMakeLists.txt
++++ b/src/libsync/vfs/cfapi/CMakeLists.txt
+@@ -1,5 +1,19 @@
+ # SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
+ # SPDX-License-Identifier: GPL-2.0-or-later
++if(WIN32 AND NOT BUILD_SHELL_INTEGRATION)
++    if(NOT DEFINED CUSTOM_STATE_ICON_INDEX_OFFSET)
++        set(CUSTOM_STATE_ICON_INDEX_OFFSET 1)
++    endif()
++    if(NOT DEFINED CUSTOM_STATE_ICON_LOCKED_INDEX)
++        set(CUSTOM_STATE_ICON_LOCKED_INDEX 1)
++    endif()
++    if(NOT DEFINED CUSTOM_STATE_ICON_SHARED_INDEX)
++        set(CUSTOM_STATE_ICON_SHARED_INDEX 2)
++    endif()
++    configure_file(shellext/configvfscfapishellext.h.in
++        ${CMAKE_CURRENT_BINARY_DIR}/shellext/configvfscfapishellext.h)
++endif()
++
+ if (WIN32 AND BUILD_SHELL_INTEGRATION)
+     add_definitions(-D_WIN32_WINNT=_WIN32_WINNT_WIN10)
+ 

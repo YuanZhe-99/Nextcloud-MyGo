@@ -152,10 +152,18 @@ func (a *App) setupFoot(c *ui.Context, back func(), next string, nextOff bool, o
 	})
 }
 
+// setupServer gates sign-in on the negotiated backend capability.
 func (a *App) setupServer(c *ui.Context) {
 	p := pal(c)
 	st := &a.setup
 	setupTitle(c, L.SetupWelcomeTitle(), L.SetupWelcomeBody())
+	if !a.snap.Daemon.Demo {
+		if !a.snap.Daemon.Connected {
+			muted(c, L.DaemonDisconnected(), fontBody).Wrap()
+		} else if !a.snap.Daemon.Capabilities["login"] {
+			muted(c, L.LoginUnavailable(), fontBody).Wrap()
+		}
+	}
 	ui.Column(c).Gap(6).MaxWidth(480).Margin(8, 0, 0, 0).Children(func() {
 		ui.Text(c, L.ServerAddressLabel()).FontSize(13).FontWeight(600)
 		in := ui.TextInput(c.Key("setup-server"), &st.server).Placeholder("cloud.example.com").Label(L.ServerAddressLabel()).AutoFocus()
@@ -175,14 +183,19 @@ func (a *App) setupServer(c *ui.Context) {
 	if len(a.snap.Accounts) > 0 {
 		back = func() { a.setup = setupState{} }
 	}
-	a.setupFoot(c, back, L.ActionContinue(), strings.TrimSpace(st.server) == "" || a.busy["login"], a.beginLogin)
+	a.setupFoot(c, back, L.ActionContinue(), strings.TrimSpace(st.server) == "" || a.busy["login"] || !a.loginAvailable(), a.beginLogin)
+}
+
+// loginAvailable requires a live negotiated capability, except in explicit demo mode.
+func (a *App) loginAvailable() bool {
+	return a.snap.Daemon.Demo || (a.snap.Daemon.Connected && a.snap.Daemon.Capabilities["login"])
 }
 
 // beginLogin starts Login Flow v2 and waits for the browser step.
 func (a *App) beginLogin() {
 	st := &a.setup
 	server := strings.TrimSpace(st.server)
-	if server == "" || a.busy["login"] {
+	if server == "" || a.busy["login"] || !a.loginAvailable() {
 		return
 	}
 	a.do("login", func() error {
@@ -244,7 +257,7 @@ func (a *App) setupSignIn(c *ui.Context) {
 	muted(c, L.SignInFoot(), fontSmall).Wrap().MaxWidth(500)
 	a.setupFoot(c, func() {
 		id := st.login.ID
-		a.async(func() { _ = a.client.CancelLogin(id) })
+		a.do("login-cancel", func() error { return a.client.CancelLogin(id) }, nil)
 		a.setup.step = stepServer
 	}, L.ActionContinue(), true, func() {})
 }
@@ -266,10 +279,18 @@ func (a *App) loadRemote(accountID string) {
 	}, nil)
 }
 
+// setupFolders offers mappings only when the backend can actually synchronize them.
 func (a *App) setupFolders(c *ui.Context) {
 	p := pal(c)
 	st := &a.setup
 	setupTitle(c, L.SetupFoldersTitle(), L.SetupFoldersBody())
+	if !a.snap.Daemon.Demo && !a.snap.Daemon.Capabilities["fullSync"] {
+		muted(c, L.SyncUnavailable(), fontBody).Wrap()
+		if button(c, "setup-unavailable-back", L.ActionBack(), nil).Clicked() {
+			a.setup = setupState{}
+		}
+		return
+	}
 	ui.Row(c).Gap(10).Children(func() {
 		muted(c, L.InsideLabel(), 13)
 		ui.Text(c, st.base).FontSize(13).FontWeight(600)

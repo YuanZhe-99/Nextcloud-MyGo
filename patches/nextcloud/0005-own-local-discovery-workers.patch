@@ -1,0 +1,36 @@
+diff --git a/src/libsync/discovery.cpp b/src/libsync/discovery.cpp
+--- a/src/libsync/discovery.cpp
++++ b/src/libsync/discovery.cpp
+@@ -2601,8 +2601,7 @@
+         }
+     });
+ 
+-    QThreadPool *pool = QThreadPool::globalInstance();
+-    pool->start(localJob); // QThreadPool takes ownership
++    _discoveryData->_localDiscoveryPool.start(localJob); // QThreadPool takes ownership
+ }
+ 
+ 
+diff --git a/src/libsync/discoveryphase.h b/src/libsync/discoveryphase.h
+--- a/src/libsync/discoveryphase.h
++++ b/src/libsync/discoveryphase.h
+@@ -22,6 +22,7 @@
+ #include <QMutex>
+ #include <QWaitCondition>
+ #include <QRunnable>
++#include <QThreadPool>
+ #include <deque>
+ 
+ class ExcludedFiles;
+@@ -328,6 +329,11 @@
+ 
+     QSet<QString> _topLevelE2eeFolderPaths;
+ 
++private:
++    /// Joins local discovery workers before sync options release their borrowed VFS.
++    /// Keep this after the worker dependencies: members are destroyed in reverse order.
++    QThreadPool _localDiscoveryPool;
++
+ Q_SIGNALS:
+     void fatalError(const QString &errorString, const OCC::ErrorCategory errorCategory);
+     void itemDiscovered(const OCC::SyncFileItemPtr &item);

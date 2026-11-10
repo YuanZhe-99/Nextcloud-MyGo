@@ -1,0 +1,50 @@
+diff --git a/src/libsync/syncengine.cpp b/src/libsync/syncengine.cpp
+--- a/src/libsync/syncengine.cpp
++++ b/src/libsync/syncengine.cpp
+@@ -1088,6 +1088,12 @@
+     // To announce the beginning of the sync
+     Q_EMIT aboutToPropagate(_syncItems);
+ 
++    // A direct policy observer may have aborted discovery and finalized this
++    // cycle. Never create a propagator after that terminal transition.
++    if (!_syncRunning) {
++        return;
++    }
++
+     qCInfo(lcEngine) << "#### Reconcile (aboutToPropagate OK) #################################################### "<< _stopWatch.addLapTime(QStringLiteral("Reconcile (aboutToPropagate OK)")) << "ms";
+ 
+     // it's important to do this before ProgressInfo::start(), to announce start of new sync
+diff --git a/test/testsyncengine.cpp b/test/testsyncengine.cpp
+--- a/test/testsyncengine.cpp
++++ b/test/testsyncengine.cpp
+@@ -102,6 +102,30 @@
+     Q_OBJECT
+ 
+ private Q_SLOTS:
++    // A pre-propagation policy veto must leave both sides unchanged and permit a later cycle.
++    void testAbortBeforePropagation()
++    {
++        FakeFolder fakeFolder{FileInfo::A12_B12_C12_S12()};
++        fakeFolder.localModifier().insert("local-policy-fixture");
++        fakeFolder.remoteModifier().insert("remote-policy-fixture");
++        const auto local = fakeFolder.currentLocalState();
++        const auto remote = fakeFolder.currentRemoteState();
++        auto observed = false;
++        const auto connection = connect(&fakeFolder.syncEngine(), &SyncEngine::aboutToPropagate,
++            &fakeFolder.syncEngine(), [&](SyncFileItemVector &) {
++                observed = true;
++                fakeFolder.syncEngine().abort();
++            }, Qt::DirectConnection);
++        QVERIFY(!fakeFolder.syncOnce());
++        QVERIFY(observed);
++        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
++        QCOMPARE(fakeFolder.currentLocalState(), local);
++        QCOMPARE(fakeFolder.currentRemoteState(), remote);
++        disconnect(connection);
++        QVERIFY(fakeFolder.syncOnce());
++        QCOMPARE(fakeFolder.currentLocalState(), fakeFolder.currentRemoteState());
++    }
++
+     void initTestCase()
+     {
+         Logger::instance()->setLogFlush(true);

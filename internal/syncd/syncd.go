@@ -1,7 +1,6 @@
 // Package syncd is the interface's side of the contract with SyncD, the
 // background sync process (PLAN.md §13): the state SyncD reports and the
-// commands it takes. Mock stands in for SyncD until the Named Pipe client
-// exists; both satisfy Client.
+// commands it takes. Remote connects to SyncD; Mock is the explicit demo adapter.
 //
 // Enumerations cross as strings, as the protocol carries them. Reason and
 // state codes are for the interface to put into words: they are never
@@ -72,34 +71,57 @@ type Client interface {
 
 // Errors the interface tells apart.
 var (
-	ErrStale    = errors.New("syncd: the decision changed; review it again")
-	ErrBusy     = errors.New("syncd: not at a safe point yet")
-	ErrNotFound = errors.New("syncd: no such item")
-	ErrRefused  = errors.New("syncd: refused")
+	ErrStale                 = errors.New("syncd: the decision changed; review it again")
+	ErrBusy                  = errors.New("syncd: not at a safe point yet")
+	ErrNotFound              = errors.New("syncd: no such item")
+	ErrRefused               = errors.New("syncd: refused")
+	ErrRevocationUnconfirmed = errors.New("syncd: account removed; server credential revocation unconfirmed")
+	ErrCredentialCleanup     = errors.New("syncd: app-password revocation unconfirmed")
+	ErrStateUnavailable      = errors.New("syncd: application state is unavailable")
 )
 
 // Snapshot is SyncD's whole state as the interface shows it.
+// Notes: nil collections mean unknown, not a confirmed empty account or folder list.
 type Snapshot struct {
-	Daemon    Daemon
-	Accounts  []Account
-	Folders   []Folder
-	Endpoints []Endpoint
-	Networks  []Network
-	Switches  []Switch
-	Decisions []Decision
-	Activity  []Activity
+	Daemon    Daemon     `json:"daemon"`
+	Accounts  []Account  `json:"accounts,omitzero"`
+	Folders   []Folder   `json:"folders,omitzero"`
+	Endpoints []Endpoint `json:"endpoints,omitzero"`
+	Networks  []Network  `json:"networks,omitzero"`
+	Switches  []Switch   `json:"switches,omitzero"`
+	Decisions []Decision `json:"decisions,omitzero"`
+	Activity  []Activity `json:"activity,omitzero"`
 }
+
+// StartupState describes daemon recovery independently of transport authentication.
+type StartupState string
+
+const (
+	StartupNormal              StartupState = "normal"
+	StartupBackoff             StartupState = "backoff"
+	StartupDiagnostic          StartupState = "diagnostic"
+	StartupStopped             StartupState = "stopped"
+	StartupDatabaseUnavailable StartupState = "databaseUnavailable"
+)
 
 // Daemon is SyncD itself.
 type Daemon struct {
-	Version  string
-	Protocol int
+	// Connected requires a live negotiated bootstrap with available application state.
+	// An authenticated diagnostic-only transport remains callable while this is false.
+	Connected bool `json:"-"`
+	// StateAvailable distinguishes known application state from diagnostic-only startup.
+	StateAvailable bool         `json:"stateAvailable"`
+	StartupState   StartupState `json:"startupState"`
+	// Capabilities gate unfinished backend workflows without assuming version support.
+	Capabilities map[string]bool `json:"capabilities"`
+	Version      string          `json:"version"`
+	Protocol     int             `json:"protocol"`
 	// Demo is true for Mock: the interface says it shows sample data.
-	Demo bool
+	Demo bool `json:"demo"`
 	// AllPaused is the user's pause of every folder.
-	AllPaused bool
+	AllPaused bool `json:"allPaused"`
 	// CheckedAt is when the last full check of every folder ended.
-	CheckedAt time.Time
+	CheckedAt time.Time `json:"checkedAt"`
 }
 
 // Account is one Nextcloud account: its identity never depends on the
@@ -143,6 +165,8 @@ type Folder struct {
 	LocalPath  string
 	RemotePath string
 	State      FolderState
+	// ReasonCode explains a blocker independently of the user's pause state.
+	ReasonCode string `json:"reasonCode"`
 	// UserPaused is kept apart from every other blocking reason, which
 	// never overrides it (INV-13).
 	UserPaused bool
@@ -217,7 +241,9 @@ type Network struct {
 	Policy    Policy
 	// FixedEndpointID is the address PolicyFixed always uses.
 	FixedEndpointID string
-	ActiveID        string
+	// RequestedEndpointID is a pending fixed target, not the actual or committed policy.
+	RequestedEndpointID string
+	ActiveID            string
 	// Why lists the reasons for the active address, strongest first.
 	Why []Reason
 	// Speedup is how many times faster the active address answers than
@@ -248,6 +274,8 @@ const (
 	// DecisionLocalDeletions: many files were deleted on this PC; their
 	// deletion on the server waits for the user (deletion protection).
 	DecisionLocalDeletions DecisionKind = "localDeletions"
+	// DecisionBulkDeletions reports the separate local and remote effects of a guarded cycle.
+	DecisionBulkDeletions DecisionKind = "bulkDeletions"
 	// DecisionConflict: a file changed in both places; both were kept.
 	DecisionConflict DecisionKind = "conflict"
 )
@@ -260,6 +288,8 @@ const (
 	ActionDeleteRemote Action = "deleteRemote"
 	ActionLater        Action = "later"
 	ActionResolved     Action = "resolved"
+	// ActionApproveDeletion authorizes one matching, unexpired recomputed proposal.
+	ActionApproveDeletion Action = "approveDeletion"
 )
 
 // Decision waits for the user.
@@ -271,8 +301,11 @@ type Decision struct {
 	// Digest binds an answer to exactly this proposal.
 	Digest string
 	// Count is how many files a deletion proposal covers.
-	Count  int
-	Groups []FileGroup
+	Count         int
+	LocalDeletes  int
+	RemoteDeletes int
+	Expires       time.Time
+	Groups        []FileGroup
 	// File and Copy name a conflict's file and the copy kept beside it.
 	File string
 	Copy string
@@ -299,9 +332,10 @@ const (
 
 // Activity is one entry of the recent history.
 type Activity struct {
-	At       time.Time
-	Kind     ActivityKind
-	FolderID string
+	Cursor, AccountID, FromID, ToID, Reason string
+	At                                      time.Time
+	Kind                                    ActivityKind
+	FolderID                                string
 	// Name is a file's name, or an address's name for a switch.
 	Name  string
 	Count int

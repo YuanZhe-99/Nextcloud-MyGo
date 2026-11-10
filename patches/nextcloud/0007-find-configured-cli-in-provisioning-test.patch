@@ -1,0 +1,21 @@
+diff --git a/test/testnextcloudcmdprovisioning.cpp b/test/testnextcloudcmdprovisioning.cpp
+--- a/test/testnextcloudcmdprovisioning.cpp
++++ b/test/testnextcloudcmdprovisioning.cpp
+@@ -16,6 +16,5 @@
+-// The binary is named APPLICATION_EXECUTABLEcmd and lives in OWNCLOUD_BIN_PATH.
+-// Both macros are provided by the build system at compile time.
++// Finds the CLI beside the test executable, including the active build configuration.
+ static QString nextcloudCmdBinary()
+ {
+-    return QString::fromLatin1(OWNCLOUD_BIN_PATH "/" APPLICATION_EXECUTABLE "cmd");
++    return QDir(QCoreApplication::applicationDirPath()).filePath(QString::fromLatin1(APPLICATION_EXECUTABLE "cmd"));
+ }
+@@ -37,2 +36,8 @@
+         proc.start(nextcloudCmdBinary(), args);
++        if (!proc.waitForStarted(timeoutMs)) {
++            if (exitCodeOut) {
++                *exitCodeOut = -2;
++            }
++            return proc.errorString().toUtf8();
++        }
+         proc.closeWriteChannel(); // close stdin — no interactive reads

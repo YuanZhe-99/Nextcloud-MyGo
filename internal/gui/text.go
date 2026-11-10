@@ -70,7 +70,11 @@ const (
 	overallOffline
 )
 
+// overallOf never presents stale or unsupported backend state as synchronized.
 func overallOf(s syncd.Snapshot) overall {
+	if !s.Daemon.Demo && (!s.Daemon.Connected || !s.Daemon.Capabilities["fullSync"]) {
+		return overallOffline
+	}
 	if s.Daemon.AllPaused {
 		return overallPaused
 	}

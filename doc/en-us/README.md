@@ -29,7 +29,7 @@ actually used.
 | Component | Policy | Latest at last check |
 |---|---|---|
 | Go | latest release | 1.27.3 |
-| MyGo | latest tag | v0.7.4 |
+| MyGo | latest tag | v0.8.1 |
 | Nextcloud Desktop | latest release tag | v35.0.2 |
 | Qt, QtKeychain, TLS backend, SQLite | combination chosen in M0, recorded | not chosen yet |
 | MSVC, Windows SDK, CMake, Ninja | combination chosen in M0, recorded | not chosen yet |

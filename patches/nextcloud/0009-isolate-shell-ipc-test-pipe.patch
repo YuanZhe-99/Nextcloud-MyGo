@@ -1,0 +1,38 @@
+diff --git a/src/gui/shellextensionsserver.h b/src/gui/shellextensionsserver.h
+--- a/src/gui/shellextensionsserver.h
++++ b/src/gui/shellextensionsserver.h
+@@ -39,3 +39,4 @@
+ public:
+-    ShellExtensionsServer(QObject *parent = nullptr);
++    /// Listens on the application pipe, or a dedicated pipe supplied by an isolated test.
++    ShellExtensionsServer(QObject *parent = nullptr, const QString &serverName = {});
+     ~ShellExtensionsServer() override;
+diff --git a/src/gui/shellextensionsserver.cpp b/src/gui/shellextensionsserver.cpp
+--- a/src/gui/shellextensionsserver.cpp
++++ b/src/gui/shellextensionsserver.cpp
+@@ -27,6 +27,6 @@
+-ShellExtensionsServer::ShellExtensionsServer(QObject *parent)
++ShellExtensionsServer::ShellExtensionsServer(QObject *parent, const QString &serverName)
+     : QObject(parent)
+ {
+     _isSharedInvalidationInterval = isSharedInvalidationInterval;
+-    _localServer.listen(VfsShellExtensions::serverNameForApplicationNameDefault());
++    _localServer.listen(serverName.isEmpty() ? VfsShellExtensions::serverNameForApplicationNameDefault() : serverName);
+     connect(&_localServer, &QLocalServer::newConnection, this, &ShellExtensionsServer::slotNewConnection);
+diff --git a/test/testcfapishellextensionsipc.cpp b/test/testcfapishellextensionsipc.cpp
+--- a/test/testcfapishellextensionsipc.cpp
++++ b/test/testcfapishellextensionsipc.cpp
+@@ -89,8 +89,10 @@
+         QTemporaryDir dir;
++        QVERIFY(dir.isValid());
+         ConfigFile::setConfDir(dir.path());
+ 
+-        VfsShellExtensions::ThumbnailProviderIpc::overrideServerName = VfsShellExtensions::serverNameForApplicationNameDefault();
+-        VfsShellExtensions::CustomStateProviderIpc::overrideServerName = VfsShellExtensions::serverNameForApplicationNameDefault();
++        const auto serverName = VfsShellExtensions::serverNameForApplicationName(dir.path().section(QLatin1Char('/'), -1));
++        VfsShellExtensions::ThumbnailProviderIpc::overrideServerName = serverName;
++        VfsShellExtensions::CustomStateProviderIpc::overrideServerName = serverName;
+ 
+-        _shellExtensionsServer.reset(new ShellExtensionsServer);
++        _shellExtensionsServer.reset(new ShellExtensionsServer(nullptr, serverName));
+         _shellExtensionsServer->setIsSharedInvalidationInterval(shellExtensionServerOverrideIntervalMs);

@@ -13,6 +13,10 @@ Nextcloud-MyGo 以 GPL-3.0 授权。本清单列出它复用或内嵌的每个�
 
 ## 商标
 
+未经修改的 Desktop v35.0.3 快照为 `third_party/nextcloud` 中的 Git 子模块，
+提交为 `809fadb79180eeacb3fd5b83c804765822e2cd09`。原有许可证文件保留于其中。
+`build-lock.json` 记录此审计输入；目前尚不代表已验证的 SyncD 构建。
+
 Nextcloud 名称与图标是 Nextcloud GmbH 的商标。产品名称与图标复用遵循用户的决定；首次发布前核对商标条款。
 
 ## 计划中的组件

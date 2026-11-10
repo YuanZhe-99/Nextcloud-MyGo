@@ -1,0 +1,24 @@
+diff --git a/test/testnextcloudcmdprovisioning.cpp b/test/testnextcloudcmdprovisioning.cpp
+--- a/test/testnextcloudcmdprovisioning.cpp
++++ b/test/testnextcloudcmdprovisioning.cpp
+@@ -32,6 +32,19 @@
+     static QByteArray runCmd(const QStringList &args, int *exitCodeOut, int timeoutMs = 12000)
+     {
++        using namespace Qt::StringLiterals;
++        QTemporaryDir confDir;
++        auto isolatedArgs = args;
++        if (!args.isEmpty() && !args.contains(u"--confdir"_s)) {
++            if (!confDir.isValid()) {
++                if (exitCodeOut) {
++                    *exitCodeOut = -2;
++                }
++                return confDir.errorString().toUtf8();
++            }
++            isolatedArgs.prepend(confDir.path());
++            isolatedArgs.prepend(u"--confdir"_s);
++        }
+         QProcess proc;
+         proc.setProcessChannelMode(QProcess::MergedChannels);
+-        proc.start(nextcloudCmdBinary(), args);
++        proc.start(nextcloudCmdBinary(), isolatedArgs);
+         if (!proc.waitForStarted(timeoutMs)) {

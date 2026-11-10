@@ -1,0 +1,139 @@
+diff --git a/test/CMakeLists.txt b/test/CMakeLists.txt
+--- a/test/CMakeLists.txt
++++ b/test/CMakeLists.txt
+@@ -47,6 +47,7 @@
+ nextcloud_add_test(NetrcParser)
+ nextcloud_add_test(OwnSql)
+ nextcloud_add_test(SyncJournalDB)
++target_link_libraries(SyncJournalDBTest PRIVATE SQLite::SQLite3)
+ nextcloud_add_test(SyncFileItem)
+ nextcloud_add_test(ConcatUrl)
+ nextcloud_add_test(Cookies)
+diff --git a/src/common/syncjournaldb.cpp b/src/common/syncjournaldb.cpp
+--- a/src/common/syncjournaldb.cpp
++++ b/src/common/syncjournaldb.cpp
+@@ -278,6 +278,7 @@ void SyncJournalDb::commitTransaction()
+ {
+     if (_transaction == 1) {
+         if (!_db.commit()) {
++            _commitError = true;
+             qCWarning(lcDb) << "ERROR committing to the database:" << _db.error();
+             return;
+         }
+@@ -703,6 +704,12 @@ bool SyncJournalDb::checkConnect()
+     return rc;
+ }
+ 
++bool SyncJournalDb::hasCommitError()
++{
++    QMutexLocker locker(&_mutex);
++    return _commitError;
++}
++
+ void SyncJournalDb::close()
+ {
+     QMutexLocker locker(&_mutex);
+diff --git a/src/common/syncjournaldb.h b/src/common/syncjournaldb.h
+--- a/src/common/syncjournaldb.h
++++ b/src/common/syncjournaldb.h
+@@ -216,6 +216,9 @@ public:
+     void commit(const QString &context, bool startTrans = true);
+     void commitIfNeededAndStartNewTransaction(const QString &context);
+ 
++    /// Reports a failed commit for this object's lifetime, including after close/reopen.
++    [[nodiscard]] bool hasCommitError();
++
+     /** Open the db if it isn't already.
+      *
+      * This usually creates some temporary files next to the db file, like
+@@ -429,6 +432,7 @@ private:
+     QRecursiveMutex _mutex; // Public functions are protected with the mutex.
+     QMap<QByteArray, int> _checksymTypeCache;
+     int _transaction = 0;
++    bool _commitError = false;
+     bool _metadataTableIsEmpty = false;
+ 
+     /* Storing etags to these folders, or their parent folders, is filtered out.
+diff --git a/test/testsyncjournaldb.cpp b/test/testsyncjournaldb.cpp
+--- a/test/testsyncjournaldb.cpp
++++ b/test/testsyncjournaldb.cpp
+@@ -19,6 +19,25 @@
+ using namespace OCC;
+ using namespace Qt::StringLiterals;
+ 
++namespace
++{
++// Only the isolated commit regression enables this hook, after schema creation.
++bool rejectCommit = false;
++
++/// rejectTestCommit makes SQLite roll back a real commit without altering production code.
++int rejectTestCommit(void *)
++{
++    return rejectCommit ? 1 : 0;
++}
++
++/// installCommitHook instruments connections opened during the isolated regression.
++int installCommitHook(sqlite3 *db, char **, const sqlite3_api_routines *)
++{
++    sqlite3_commit_hook(db, rejectTestCommit, nullptr);
++    return SQLITE_OK;
++}
++}
++
+ class TestSyncJournalDB : public QObject
+ {
+     Q_OBJECT
+@@ -38,6 +57,53 @@ public:
+     }
+ 
+ private Q_SLOTS:
++    /// testCommitFailureSurvivesClose rejects a real commit and checks rollback and sticky failure.
++    void testCommitFailureSurvivesClose()
++    {
++        const auto extension = reinterpret_cast<void (*)()>(installCommitHook);
++        QCOMPARE(sqlite3_auto_extension(extension), SQLITE_OK);
++        const auto cleanup = qScopeGuard([extension] {
++            rejectCommit = false;
++            sqlite3_cancel_auto_extension(extension);
++        });
++        QTemporaryDir directory;
++        QVERIFY(directory.isValid());
++        const auto path = directory.filePath("commit.db");
++        SyncJournalDb journal(path);
++        QVERIFY(journal.open());
++        QVERIFY(!journal.hasCommitError());
++        journal.commit("begin commit fixture");
++        SyncJournalFileRecord record;
++        record._path = "uncommitted";
++        record._type = ItemTypeFile;
++        record._etag = "owned";
++        record._fileId = "owned";
++        record._modtime = 1;
++        QVERIFY(journal.setFileRecord(record));
++        rejectCommit = true;
++        journal.commit("injected commit rejection", false);
++        rejectCommit = false;
++        QVERIFY(journal.hasCommitError());
++        journal.close();
++        QVERIFY(journal.hasCommitError());
++        QVERIFY(journal.open());
++        QVERIFY(journal.hasCommitError());
++        journal.close();
++        SyncJournalDb recovered(path);
++        QVERIFY(recovered.open());
++        QVERIFY(!recovered.hasCommitError());
++        SyncJournalFileRecord stored;
++        QVERIFY(recovered.getFileRecord(record._path, &stored));
++        QVERIFY(!stored.isValid());
++        QVERIFY(recovered.setFileRecord(record));
++        recovered.commit("successful recovery", false);
++        QVERIFY(!recovered.hasCommitError());
++        recovered.close();
++        QVERIFY(recovered.open());
++        QVERIFY(recovered.getFileRecord(record._path, &stored));
++        QVERIFY(stored.isValid());
++    }
++
+     void initTestCase()
+     {
+         OCC::Logger::instance()->setLogFlush(true);

@@ -13,6 +13,10 @@ what it uses, and what that obliges. `THIRD_PARTY_NOTICES.md` holds the notices 
 
 ## Trademarks
 
+The unmodified Desktop v35.0.3 snapshot is the Git submodule at `third_party/nextcloud`,
+commit `809fadb79180eeacb3fd5b83c804765822e2cd09`. Its original license files remain there.
+`build-lock.json` records this audit input; it does not yet describe a verified SyncD build.
+
 The Nextcloud name and icon are trademarks of Nextcloud GmbH. The product name and the reuse of the
 icon follow the user's decision; the trademark terms are checked before the first release.
 

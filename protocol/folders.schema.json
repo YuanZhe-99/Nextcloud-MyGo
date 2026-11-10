@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SyncD 1.2 folder inspection and deletion proposal results",
+  "$defs": {
+    "resolveParams": {
+      "type": "object",
+      "required": ["operationKey", "decisionId", "proposalDigest", "action"],
+      "properties": {
+        "operationKey": {"type": "string", "format": "uuid"},
+        "expectedRevision": {"type": "string", "pattern": "^[0-9]+$"},
+        "decisionId": {"type": "string", "format": "uuid"},
+        "proposalDigest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "action": {"enum": ["approveDeletion", "later"]}
+      },
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["inspectToken", "localExists", "mergeExisting", "expiresInSeconds"],
+      "properties": {
+        "inspectToken": {"type": "string", "format": "uuid"},
+        "localExists": {"type": "boolean"},
+        "mergeExisting": {"type": "boolean"},
+        "expiresInSeconds": {"const": 300}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["id", "kind", "accountId", "folderId", "digest", "count", "localDeletes", "remoteDeletes", "expires"],
+      "properties": {
+        "id": {"type": "string", "format": "uuid"},
+        "kind": {"const": "bulkDeletions"},
+        "accountId": {"type": "string", "format": "uuid"},
+        "folderId": {"type": "string", "format": "uuid"},
+        "digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "count": {"type": "integer", "minimum": 0},
+        "localDeletes": {"type": "integer", "minimum": 0},
+        "remoteDeletes": {"type": "integer", "minimum": 0},
+        "expires": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false
+    }
+  ]
+}

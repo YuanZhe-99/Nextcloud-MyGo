@@ -1,0 +1,547 @@
+// SPDX-License-Identifier: GPL-3.0-only
+#include "control.h"
+#include "namespace.h"
+#include "network_tunnel.h"
+#include "switch_state.h"
+#include <QCoreApplication>
+#include <QDir>
+#include <QEventLoop>
+#include <QFile>
+#include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QNetworkProxyFactory>
+#include <QRegularExpression>
+#include <QSqlQuery>
+#include <QTcpServer>
+#include <QTcpSocket>
+#include <QUuid>
+#include <cstdio>
+#include <stdexcept>
+
+/// networkTransferAcceptance exercises automatic switching with real content
+/// and parent-reserved cleanup.
+void networkTransferAcceptance(Control &, const QString &, const QString &,
+                               const QString &, const QString &,
+                               const QString &,
+                               const std::function<void(bool)> &,
+                               const std::function<bool()> &,
+                               const std::function<void(bool)> &);
+
+/// NetworkTestAccess observes the real coordinator while keeping fault controls
+/// out of production IPC.
+struct NetworkTestAccess {
+  /// removeDuringVerification exercises endpoint removal while the real
+  /// full-verification loop is nested.
+  static void
+  removeDuringVerification(Control &c, const QString &account,
+                           const QString &target,
+                           const std::function<quint64()> &capabilityRequests) {
+    auto &state = c.network_->accounts.at(account);
+    const auto now = c.network_->clock.elapsed();
+    for (auto &[id, node] : state.nodes)
+      node.next = now + 600000;
+    auto &node = state.nodes.at(target);
+    node.verified = false;
+    node.config.namespaceVerified = false;
+    node.config.tlsValid = false;
+    node.next = 0;
+    state.policy.configure(target, node.config);
+    bool removed = false;
+    const auto before = capabilityRequests();
+    QTimer::singleShot(0, &c.networkTasks_, [&] {
+      bool negotiated = true, subscribed = false;
+      const QJsonObject params{
+          {"endpointId", target},
+          {"operationKey", QUuid::createUuid().toString(QUuid::WithoutBraces)},
+          {"expectedRevision", c.projection().value("revision")}};
+      const auto reply = c.dispatch(QJsonObject{{"jsonrpc", "2.0"},
+                                                {"id", 1},
+                                                {"method", "endpoints.remove"},
+                                                {"params", params}},
+                                    negotiated, subscribed)
+                             .toObject();
+      removed = reply.contains("result");
+      // A different completed health probe can refresh this same state during
+      // the nested request.
+      c.refreshNetwork(account);
+    });
+    c.evaluateNetwork();
+    if (capabilityRequests() != before)
+      throw std::runtime_error(
+          "removed endpoint received a new credentialed capability request");
+    if (!removed || c.shutdownRequested() || state.nodes.contains(target))
+      throw std::runtime_error(
+          "endpoint removal invalidated the in-use verification lifetime");
+  }
+  /// flow accesses only this test's borrowed-credential login session.
+  static LoginFlow &flow(Control &c, const QString &session) {
+    return *c.logins_.at(session);
+  }
+  /// changed injects the same generation invalidation used by native
+  /// notifications after a local proxy fault.
+  static void changed(Control &c) { c.networkChanged(true); }
+  /// ready requires full-root verification and fresh independent health on
+  /// every approved endpoint.
+  static bool ready(Control &c, const QString &account) {
+    if (!c.network_ || !c.network_->accounts.contains(account))
+      return false;
+    const auto &state = c.network_->accounts.at(account);
+    if (state.nodes.size() != 2)
+      return false;
+    for (const auto &[id, node] : state.nodes) {
+      const auto h = state.policy.health(id, c.network_->clock.elapsed());
+      if (!node.verified || !h.fresh || h.successes < 2)
+        return false;
+    }
+    return true;
+  }
+  /// failed requires observed independent failure/circuit evidence, not merely
+  /// an offline hint.
+  static bool failed(Control &c, const QString &account,
+                     const QString &endpoint) {
+    return c.network_ && c.network_->accounts.contains(account) &&
+           c.network_->accounts.at(account)
+               .policy.health(endpoint, c.network_->clock.elapsed())
+               .failed;
+  }
+  /// binding returns the committed epoch without inspecting or changing the
+  /// engine journal.
+  static SwitchState::Binding binding(Control &c, const QString &a) {
+    return SwitchState(c.db_).binding(a);
+  }
+  /// stable reports actual switch reconciliation, not merely committed binding
+  /// publication.
+  static bool stable(Control &c, const QString &a) {
+    return !SwitchState(c.db_).gated(a);
+  }
+};
+
+namespace {
+/// require keeps real acceptance checks enabled in optimized builds.
+void require(bool value, const char *message) {
+  if (!value)
+    throw std::runtime_error(message);
+}
+/// call uses the production JSON-RPC path with optimistic revision and
+/// operation IDs.
+QJsonObject call(Control &c, const QString &method, QJsonObject params = {}) {
+  params.insert("operationKey",
+                QUuid::createUuid().toString(QUuid::WithoutBraces));
+  params.insert("expectedRevision", c.projection().value("revision"));
+  bool negotiated = true, subscribed = false;
+  return c
+      .dispatch(QJsonObject{{"jsonrpc", "2.0"},
+                            {"id", 1},
+                            {"method", method},
+                            {"params", params}},
+                negotiated, subscribed)
+      .toObject();
+}
+/// waitFor drives real Qt networking with an explicit overall deadline and no
+/// retry of mutating requests.
+void waitFor(const std::function<bool()> &condition, const char *message) {
+  QEventLoop loop;
+  QTimer poll, deadline;
+  poll.setInterval(25);
+  deadline.setSingleShot(true);
+  bool done = false;
+  std::exception_ptr error;
+  QObject::connect(&poll, &QTimer::timeout, &loop, [&] {
+    try {
+      if (condition()) {
+        done = true;
+        loop.quit();
+      }
+    } catch (...) {
+      error = std::current_exception();
+      loop.quit();
+    }
+  });
+  QObject::connect(&deadline, &QTimer::timeout, &loop, &QEventLoop::quit);
+  poll.start();
+  deadline.start(180000);
+  loop.exec();
+  if (error)
+    std::rethrow_exception(error);
+  require(done, message);
+}
+/// settled waits for an accepted operation and returns only its sanitized
+/// terminal result.
+QJsonObject settled(Control &c, const QJsonObject &accepted) {
+  const auto operation =
+      accepted.value("result").toObject().value("operationId").toString();
+  require(!operation.isEmpty(), "network acceptance operation refused");
+  QJsonObject receipt;
+  waitFor(
+      [&] {
+        receipt = call(c, "operations.get", {{"operationId", operation}})
+                      .value("result")
+                      .toObject();
+        return receipt.value("state") != "running" &&
+               receipt.value("state") != "accepted";
+      },
+      "network acceptance operation deadline");
+  return receipt;
+}
+/// FaultState contains only approved origin names and test-local refusal
+/// switches, never credentials.
+struct FaultState {
+  QString primary, alternate;
+  std::atomic_bool failPrimary{false}, failAlternate{false};
+  quint16 port = 0;
+  std::atomic<quint64> refused{0};
+  std::atomic<quint64> capabilityRequests{0};
+  std::atomic_bool holdPrimaryResponses{false};
+  bool tunnel = false;
+};
+/// FaultProxy refuses selected HTTPS tunnels through a process-local closed
+/// proxy without TLS interception.
+class FaultProxy final : public QNetworkProxyFactory {
+public:
+  /// FaultProxy shares only nonsecret fault state with its acceptance fixture.
+  explicit FaultProxy(std::shared_ptr<FaultState> state)
+      : state_(std::move(state)) {}
+  /// queryProxy routes healthy addresses directly; failed ones reach the owned
+  /// rejecting socket.
+  QList<QNetworkProxy> queryProxy(const QNetworkProxyQuery &query) override {
+    const auto host = query.url().host();
+    if (query.url().path().contains("/cloud/capabilities"))
+      ++state_->capabilityRequests;
+    if ((host == state_->primary && state_->failPrimary) ||
+        (host == state_->alternate && state_->failAlternate)) {
+      ++state_->refused;
+      return {
+          QNetworkProxy(QNetworkProxy::HttpProxy, "127.0.0.1", state_->port)};
+    }
+    if (state_->tunnel)
+      return {
+          QNetworkProxy(QNetworkProxy::HttpProxy, "127.0.0.1", state_->port)};
+    return {QNetworkProxy(QNetworkProxy::NoProxy)};
+  }
+
+private:
+  std::shared_ptr<FaultState> state_;
+};
+/// ProxyScope restores process-local proxy configuration even when acceptance
+/// fails.
+struct ProxyScope {
+  /// ~ProxyScope removes the owned factory without changing any system proxy
+  /// setting.
+  ~ProxyScope() { QNetworkProxyFactory::setApplicationProxyFactory(nullptr); }
+};
+/// hold drives a bounded observation interval to prove no bad-endpoint
+/// ping-pong or fixed fallback.
+void hold(int milliseconds) {
+  QEventLoop loop;
+  QTimer::singleShot(milliseconds, &loop, &QEventLoop::quit);
+  loop.exec();
+}
+} // namespace
+
+void networkAcceptance(bool lifetimeOnly, bool activeTransfers,
+                       bool wrongInstance) {
+#ifndef SYNCD_WITH_ENGINE
+  Q_UNUSED(lifetimeOnly);
+  Q_UNUSED(activeTransfers);
+  Q_UNUSED(wrongInstance);
+  throw std::runtime_error("network acceptance requires an engine build");
+#else
+  const auto root = QDir::cleanPath(QDir::fromNativeSeparators(
+      qEnvironmentVariable("SYNCD_REAUTH_LIFETIME_ROOT")));
+  require(QDir::isAbsolutePath(root) && QDir(root).exists() &&
+              QRegularExpression("^reauth-lifetime-[a-f0-9]{32}$")
+                  .match(QFileInfo(root).fileName())
+                  .hasMatch(),
+          "owned network acceptance profile missing");
+  const auto base = canonicalServer(qEnvironmentVariable("NEXTCLOUD_TEST_URL")),
+             alternate = canonicalServer(
+                 qEnvironmentVariable("NEXTCLOUD_TEST_ALTERNATE_URL"));
+  require(wrongInstance ? base != alternate : base.host() != alternate.host(),
+          "network acceptance requires distinct approved HTTPS origin hosts");
+  auto faults = std::make_shared<FaultState>();
+  faults->primary = base.host();
+  faults->alternate = alternate.host();
+  faults->tunnel = activeTransfers;
+  QTcpServer rejecting;
+  require(rejecting.listen(QHostAddress::LocalHost, 0),
+          "owned rejecting proxy unavailable");
+  faults->port = rejecting.serverPort();
+  QObject::connect(&rejecting, &QTcpServer::newConnection, &rejecting, [&] {
+    while (auto *socket = rejecting.nextPendingConnection()) {
+      if (activeTransfers)
+        new NetworkTunnel(
+            socket, base, alternate,
+            [faults](bool primary) {
+              return primary ? faults->failPrimary.load()
+                             : faults->failAlternate.load();
+            },
+            [faults](bool primary) {
+              return primary && faults->holdPrimaryResponses.load();
+            });
+      else {
+        socket->abort();
+        socket->deleteLater();
+      }
+    }
+  });
+  ProxyScope proxy;
+  QNetworkProxyFactory::setApplicationProxyFactory(new FaultProxy(faults));
+  Control c(QDir(root).filePath("control.sqlite"));
+  const auto accepted =
+      call(c, "accounts.login.start", {{"canonicalBaseUrl", base.toString()}});
+  const auto operation =
+      accepted.value("result").toObject().value("operationId").toString();
+  require(!operation.isEmpty(), "network borrowed login reservation failed");
+  // The cleanup manifest is reserved before copying the borrowed password into
+  // the native vault.
+  const auto connection = QUuid::createUuid().toString();
+  QString credential;
+  {
+    auto db = QSqlDatabase::addDatabase("QSQLITE", connection);
+    db.setDatabaseName(QDir(root).filePath("control.sqlite"));
+    require(db.open(), "owned network fixture DB unavailable");
+    QSqlQuery q(db);
+    require(q.exec("SELECT id,session_id,credential_ref FROM accounts") &&
+                q.next(),
+            "owned network account reservation absent");
+    const auto session = q.value(1).toString(),
+               reference = q.value(2).toString();
+    credential = reference;
+    q.finish();
+    QFile manifest(QDir(root).filePath("owned-refs.json"));
+    require(manifest.open(QIODevice::WriteOnly),
+            "network cleanup manifest unavailable");
+    require(manifest.write(QJsonDocument(QJsonArray{reference})
+                               .toJson(QJsonDocument::Compact)) > 0 &&
+                manifest.flush(),
+            "network cleanup reservation failed");
+    manifest.close();
+    NetworkTestAccess::flow(c, session)
+        .verifyCredentials(qEnvironmentVariable("NEXTCLOUD_TEST_USER"),
+                           qEnvironmentVariable("NEXTCLOUD_TEST_PASSWORD"));
+    waitFor(
+        [&] {
+          return call(c, "accounts.login.status", {{"loginSessionId", session}})
+                     .value("result")
+                     .toObject()
+                     .value("state") == "succeeded";
+        },
+        "network borrowed credential verification failed");
+    q.finish();
+    db.close();
+  }
+  QSqlDatabase::removeDatabase(connection);
+  const auto accounts =
+      c.projection().value("snapshot").toObject().value("accounts").toArray();
+  require(accounts.size() == 1, "network account identity absent");
+  const auto account = accounts[0].toObject().value("id").toString();
+  const auto primary = NetworkTestAccess::binding(c, account).endpoint;
+  auto receipt = settled(c, call(c, "endpoints.stage",
+                                 {{"accountId", account},
+                                  {"name", "Owned alternate"},
+                                  {"baseUrl", alternate.toString()}}));
+  require(receipt.value("state") == "succeeded",
+          "real alternate public probe failed");
+  const auto staging =
+      receipt.value("result").toObject().value("id").toString();
+  receipt =
+      settled(c, call(c, "endpoints.approveOrigin", {{"stagingId", staging}}));
+  if (wrongInstance) {
+    require(
+        receipt.value("state") == "failed" &&
+            receipt.value("error").toObject().value("data").toObject().value(
+                "reasonCode") == "ENDPOINT_IDENTITY_MISMATCH",
+        "owned wrong instance did not fail namespace verification");
+    const auto user = [&](const QUrl &origin) {
+      return readServerJson(origin, "ocs/v2.php/cloud/user?format=json",
+                            qEnvironmentVariable("NEXTCLOUD_TEST_USER"),
+                            credential)
+          .value("ocs")
+          .toObject()
+          .value("data")
+          .toObject()
+          .value("id")
+          .toString();
+    };
+    const auto uid = user(base);
+    require(!uid.isEmpty() && user(alternate) == uid,
+            "owned wrong-instance authentication was not the same user");
+    const auto left =
+        readCollections(base, uid, qEnvironmentVariable("NEXTCLOUD_TEST_USER"),
+                        credential, "/", false);
+    const auto right = readCollections(
+        alternate, uid, qEnvironmentVariable("NEXTCLOUD_TEST_USER"), credential,
+        "/", false);
+    require(left.size() == 1 && right.size() == 1 &&
+                left.first().identity != right.first().identity,
+            "owned independent instances did not have distinct namespaces");
+    bool rejected = false;
+    for (const auto &entry : c.projection()
+                                 .value("snapshot")
+                                 .toObject()
+                                 .value("endpoints")
+                                 .toArray()) {
+      const auto endpoint = entry.toObject();
+      if (endpoint.value("id") == staging)
+        rejected = endpoint.value("approved").toBool() &&
+                   endpoint.value("blocked").toBool() &&
+                   endpoint.value("verified") == "failed" &&
+                   !endpoint.value("inUse").toBool();
+    }
+    require(rejected, "owned wrong instance did not remain quarantined");
+    const auto refused =
+        call(c, "endpoints.requestSwitch",
+             {{"accountId", account}, {"endpointId", staging}});
+    require(refused.value("error").toObject().value("data").toObject().value(
+                "reasonCode") == "ENDPOINT_IDENTITY_MISMATCH" &&
+                NetworkTestAccess::binding(c, account).endpoint == primary &&
+                NetworkTestAccess::binding(c, account).epoch == 0,
+            "owned wrong instance was activated or changed canonical binding");
+    settled(c, call(c, "daemon.shutdown", {{"reason", "user"}}));
+    std::puts("PASS real independent instances with matching authenticated "
+              "UID, distinct DAV namespace, durable quarantine and unchanged "
+              "canonical binding");
+    return;
+  }
+  require(receipt.value("state") == "succeeded",
+          "real approved alternate root verification failed");
+  const auto target =
+      receipt.value("result").toObject().value("endpointId").toString();
+  require(!target.isEmpty(), "approved alternate ID absent");
+  require(settled(c, call(c, "endpoints.setPolicy",
+                          {{"accountId", account}, {"policy", "auto"}}))
+                  .value("state") == "succeeded",
+          "automatic policy failed");
+  waitFor([&] { return NetworkTestAccess::ready(c, account); },
+          "initial real health/root evidence did not become ready");
+  if (lifetimeOnly) {
+    NetworkTestAccess::removeDuringVerification(
+        c, account, target, [&] { return faults->capabilityRequests.load(); });
+    std::puts("PASS endpoint removal during real nested full verification "
+              "retains safe selection/session lifetime");
+    return;
+  }
+  const auto original = NetworkTestAccess::binding(c, account);
+  if (activeTransfers) {
+    try {
+      networkTransferAcceptance(
+          c, root, account, primary, target, credential,
+          [&](bool failed) {
+            faults->failPrimary = failed;
+            NetworkTestAccess::changed(c);
+          },
+          [&] { return NetworkTestAccess::ready(c, account); },
+          [&](bool held) { faults->holdPrimaryResponses = held; });
+    } catch (const std::exception &error) {
+      // Preserve the actual assertion before draining; Control must never be
+      // destroyed with an active writer.
+      std::fprintf(stderr, "%s\n", error.what());
+      faults->failPrimary = false;
+      faults->failAlternate = false;
+      faults->holdPrimaryResponses = false;
+      settled(c, call(c, "daemon.shutdown", {{"reason", "user"}}));
+      throw;
+    }
+    settled(c, call(c, "daemon.shutdown", {{"reason", "user"}}));
+    return;
+  }
+  faults->failAlternate = true;
+  const auto rejected = call(c, "endpoints.setPolicy",
+                             {{"accountId", account},
+                              {"policy", "fixed"},
+                              {"fixedEndpointId", target}});
+  const auto rejectedOperation =
+      rejected.value("result").toObject().value("operationId").toString();
+  receipt = settled(c, rejected);
+  require(receipt.value("state") == "failed",
+          "failed target verification committed a fixed policy");
+  waitFor(
+      [&] {
+        const auto b = NetworkTestAccess::binding(c, account);
+        return b.endpoint == primary && b.epoch > original.epoch &&
+               NetworkTestAccess::stable(c, account);
+      },
+      "failed target did not freshly recover previous origin with a new epoch");
+  require(call(c, "operations.get", {{"operationId", rejectedOperation}})
+                  .value("result")
+                  .toObject()
+                  .value("state") == "failed",
+          "successful fallback changed failed request into success");
+  require(c.projection()
+                  .value("snapshot")
+                  .toObject()
+                  .value("networks")
+                  .toArray()[0]
+                  .toObject()
+                  .value("policy") == "auto",
+          "failed fixed target replaced prior policy");
+  faults->failAlternate = false;
+  NetworkTestAccess::changed(c);
+  waitFor([&] { return NetworkTestAccess::ready(c, account); },
+          "real healthy origins did not refresh after failed-target recovery");
+  faults->failPrimary = true;
+  NetworkTestAccess::changed(c);
+  waitFor(
+      [&] {
+        const auto b = NetworkTestAccess::binding(c, account);
+        return b.endpoint == target && b.epoch > 0;
+      },
+      "automatic failover did not activate real approved alternate");
+  const auto failover = NetworkTestAccess::binding(c, account);
+  require(faults->refused > 0, "process-local proxy fault was not exercised");
+  faults->failAlternate = true;
+  NetworkTestAccess::changed(c);
+  waitFor(
+      [&] {
+        return NetworkTestAccess::failed(c, account, primary) &&
+               NetworkTestAccess::failed(c, account, target);
+      },
+      "both real endpoint failures were not classified");
+  hold(16000);
+  require(NetworkTestAccess::binding(c, account).epoch == failover.epoch,
+          "all-bad endpoints ping-ponged bindings");
+  faults->failAlternate = false;
+  NetworkTestAccess::changed(c);
+  waitFor(
+      [&] {
+        return NetworkTestAccess::ready(c, account) ||
+               !NetworkTestAccess::failed(c, account, target);
+      },
+      "alternate half-open recovery failed");
+  receipt = settled(c, call(c, "endpoints.setPolicy",
+                            {{"accountId", account},
+                             {"policy", "fixed"},
+                             {"fixedEndpointId", target}}));
+  require(receipt.value("state") == "succeeded",
+          "verified fixed alternate policy did not commit");
+  const auto fixed = NetworkTestAccess::binding(c, account);
+  faults->failPrimary = false;
+  faults->failAlternate = true;
+  NetworkTestAccess::changed(c);
+  waitFor(
+      [&] {
+        return NetworkTestAccess::failed(c, account, target) &&
+               !NetworkTestAccess::failed(c, account, primary);
+      },
+      "fixed-failure/healthy-backup evidence missing");
+  hold(16000);
+  require(NetworkTestAccess::binding(c, account).epoch == fixed.epoch,
+          "fixed policy silently fell back to healthy alternate");
+  const auto network = c.projection()
+                           .value("snapshot")
+                           .toObject()
+                           .value("networks")
+                           .toArray()[0]
+                           .toObject();
+  require(network.value("policy") == "fixed" &&
+              network.value("fixedEndpointId") == target &&
+              !c.shutdownRequested(),
+          "fixed failure changed configuration or stopped daemon");
+  call(c, "daemon.shutdown", {{"reason", "user"}});
+  std::puts(
+      "PASS real approved HTTPS probes, process-local transport failure, "
+      "automatic failover, both-bad waiting, half-open recovery and "
+      "fixed-target refusal; no system settings or remote content changed");
+#endif
+}

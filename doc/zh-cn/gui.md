@@ -2,8 +2,10 @@
 
 界面是一个原生 MyGo 应用（`cmd/nextcloud-mygo`、`internal/gui`），面向使用 Nextcloud MyGo 的人，按 `design/`
 中的设计稿实现。它自己不保存任何同步状态：账号、目录、地址和待决事项归 SyncD 所有；界面显示 SyncD 报告的快照，
-并通过 `internal/syncd` 向它发送命令。在 SyncD 完成之前，界面连接 `syncd.Mock`，它显示示例数据，并在每页顶部的
-一行中注明。
+并通过 `internal/syncd.Remote` 向它发送命令。默认连接配套的 SyncD 可执行文件；
+`NEXTCLOUD_MYGO_MOCK=1` 显式选择 `syncd.Mock`，并注明其示例数据。
+登录要求实时协商得到的登录能力。守护进程断开连接或版本尚不支持完整同步时，
+不会显示绿色的已同步状态。连通范围见 [IPC](ipc.md)。
 
 ## 线程与状态
 

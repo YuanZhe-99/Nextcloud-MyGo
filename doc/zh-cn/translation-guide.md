@@ -28,6 +28,9 @@ Nextcloud-MyGo、MyGo、Qt、Microsoft），以及协议与 API 名称（WebDAV�
 | journal | journal（同步数据库） |
 | SyncD | SyncD（同步服务进程） |
 | Control DB | 控制数据库（Control DB） |
+| crash ledger | 崩溃记录 |
+| state availability | 状态可用性 |
+| ancestor-presence event | 祖先存在事件 |
 | endpoint | 端点 |
 | origin | origin |
 | canonical URL | 规范地址 |
@@ -37,6 +40,10 @@ Nextcloud-MyGo、MyGo、Qt、Microsoft），以及协议与 API 名称（WebDAV�
 | namespace verification | 命名空间核验 |
 | acknowledge (an origin) | 认可（origin） |
 | credential reference | 凭据引用 |
+| reauthentication | 重新认证 |
+| credential rotation | 凭据轮换 |
+| rollback | 回滚 |
+| reserved vault slot | 预留凭据库槽位 |
 | app password | 应用密码 |
 | conflict | 冲突 |
 | conflict copy | 冲突副本 |

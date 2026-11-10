@@ -144,6 +144,58 @@ func (msgs Messages) DemoBanner() string {
 	return Catalog.Format(msgs.locale, "DemoBanner", nil)
 }
 
+// DaemonDisconnected says "Connecting to the background sync service…"
+// in the language the app shows.
+func DaemonDisconnected() string { return In(i18n.Locale()).DaemonDisconnected() }
+
+// DaemonDisconnected says "Connecting to the background sync service…"
+// in the language of msgs.
+func (msgs Messages) DaemonDisconnected() string {
+	return Catalog.Format(msgs.locale, "DaemonDisconnected", nil)
+}
+
+// LoginUnavailable says "This development build does not support sign-in yet."
+// in the language the app shows.
+func LoginUnavailable() string { return In(i18n.Locale()).LoginUnavailable() }
+
+// LoginUnavailable says "This development build does not support sign-in yet."
+// in the language of msgs.
+func (msgs Messages) LoginUnavailable() string {
+	return Catalog.Format(msgs.locale, "LoginUnavailable", nil)
+}
+
+// SyncUnavailable says "Your account is signed in. Folder synchronization is not available in this development build yet."
+// in the language the app shows.
+func SyncUnavailable() string { return In(i18n.Locale()).SyncUnavailable() }
+
+// SyncUnavailable says "Your account is signed in. Folder synchronization is not available in this development build yet."
+// in the language of msgs.
+func (msgs Messages) SyncUnavailable() string {
+	return Catalog.Format(msgs.locale, "SyncUnavailable", nil)
+}
+
+// AccountRemovedRevocationUnconfirmed says "Account removed from this PC. We could not confirm revoking its app password; you can remove it in your server's secu…"
+// in the language the app shows.
+func AccountRemovedRevocationUnconfirmed() string {
+	return In(i18n.Locale()).AccountRemovedRevocationUnconfirmed()
+}
+
+// AccountRemovedRevocationUnconfirmed says "Account removed from this PC. We could not confirm revoking its app password; you can remove it in your server's secu…"
+// in the language of msgs.
+func (msgs Messages) AccountRemovedRevocationUnconfirmed() string {
+	return Catalog.Format(msgs.locale, "AccountRemovedRevocationUnconfirmed", nil)
+}
+
+// CredentialCleanupUnconfirmed says "We could not confirm revoking the app password. Please remove it in your server's security settings."
+// in the language the app shows.
+func CredentialCleanupUnconfirmed() string { return In(i18n.Locale()).CredentialCleanupUnconfirmed() }
+
+// CredentialCleanupUnconfirmed says "We could not confirm revoking the app password. Please remove it in your server's security settings."
+// in the language of msgs.
+func (msgs Messages) CredentialCleanupUnconfirmed() string {
+	return Catalog.Format(msgs.locale, "CredentialCleanupUnconfirmed", nil)
+}
+
 // SidebarThrough says "Through {name}"
 // in the language the app shows.
 func SidebarThrough(name string) string { return In(i18n.Locale()).SidebarThrough(name) }

@@ -1,0 +1,61 @@
+diff --git a/src/libsync/account.h b/src/libsync/account.h
+--- a/src/libsync/account.h
++++ b/src/libsync/account.h
+@@ -114,7 +114,8 @@ public:
+     };
+     Q_ENUM(AccountNetworkTransferLimitSetting)
+ 
+-    static AccountPtr create();
++    /// Creates an account, optionally omitting interactive user-status services for headless runtimes.
++    static AccountPtr create(bool withUserStatus = true);
+     ~Account() override;
+ 
+     AccountPtr sharedFromThis();
+diff --git a/src/libsync/account.cpp b/src/libsync/account.cpp
+--- a/src/libsync/account.cpp
++++ b/src/libsync/account.cpp
+@@ -94,10 +94,13 @@ Account::Account(QObject *parent)
+             this, &Account::userCertificateNeedsMigrationChanged);
+ }
+ 
+-AccountPtr Account::create()
++AccountPtr Account::create(bool withUserStatus)
+ {
+     AccountPtr acc = AccountPtr(new Account);
+     acc->setSharedThis(acc);
++    if (withUserStatus) {
++        acc->setupUserStatusConnector();
++    }
+     acc->_e2e.setAccount(acc);
+     return acc;
+ }
+@@ -127,7 +130,6 @@ QString Account::davPathRoot() const
+ void Account::setSharedThis(AccountPtr sharedThis)
+ {
+     _sharedThis = sharedThis.toWeakRef();
+-    setupUserStatusConnector();
+ }
+ 
+ QString Account::davPathBase()
+diff --git a/test/testaccount.cpp b/test/testaccount.cpp
+--- a/test/testaccount.cpp
++++ b/test/testaccount.cpp
+@@ -24,6 +24,18 @@ class TestAccount: public QObject
+ {
+     Q_OBJECT
+ 
+ private Q_SLOTS:
++    /// Verifies that a headless account can be released after its unused E2EE back-reference is cleared.
++    void testHeadlessAccountRelease()
++    {
++        auto account = Account::create(false);
++        QPointer<Account> witness(account.data());
++        QVERIFY(!account->userStatusConnector());
++        QVERIFY(account->sharedFromThis() == account);
++        account->e2e()->setAccount({});
++        account.reset();
++        QVERIFY(witness.isNull());
++    }
++
+     void initTestCase()
+     {

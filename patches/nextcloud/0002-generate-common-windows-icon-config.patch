@@ -1,0 +1,14 @@
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -91,6 +91,10 @@ endif()
+ 
+ set(QML_IMPORT_PATH ${CMAKE_SOURCE_DIR}/theme CACHE STRING "" FORCE)
+ 
++if(WIN32 AND NOT BUILD_GUI)
++    configure_file(gui/configgui.h.in ${CMAKE_CURRENT_BINARY_DIR}/gui/configgui.h)
++endif()
++
+ add_subdirectory(csync)
+ add_subdirectory(libsync)
+ if (NOT BUILD_LIBRARIES_ONLY)

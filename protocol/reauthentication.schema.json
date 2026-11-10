@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SyncD 1.5 account-preserving reauthentication parameters",
+  "type": "object",
+  "required": ["operationKey", "expectedRevision", "accountId"],
+  "properties": {
+    "operationKey": {"type": "string", "format": "uuid"},
+    "expectedRevision": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},
+    "accountId": {"type": "string", "format": "uuid"}
+  },
+  "additionalProperties": false
+}

@@ -185,16 +185,19 @@ func TestPauseAllKeepsFolderPause(t *testing.T) {
 
 func TestOverall(t *testing.T) {
 	now := time.Now()
+	live := syncd.Daemon{Connected: true, Capabilities: map[string]bool{"fullSync": true}}
 	cases := []struct {
 		name string
 		s    syncd.Snapshot
 		want overall
 	}{
-		{"nothing yet", syncd.Snapshot{}, overallUpToDate},
-		{"paused wins", syncd.Snapshot{Daemon: syncd.Daemon{AllPaused: true}, Folders: []syncd.Folder{{State: syncd.FolderSyncing}}}, overallPaused},
-		{"review before syncing", syncd.Snapshot{Folders: []syncd.Folder{{State: syncd.FolderSyncing}, {State: syncd.FolderNeedsReview}}}, overallNeedsYou},
-		{"syncing", syncd.Snapshot{Folders: []syncd.Folder{{State: syncd.FolderSyncing}, {State: syncd.FolderUpToDate}}}, overallSyncing},
-		{"all offline", syncd.Snapshot{Folders: []syncd.Folder{{State: syncd.FolderOffline}}}, overallOffline},
+		{"not connected", syncd.Snapshot{}, overallOffline},
+		{"stale green IPC 13.6", syncd.Snapshot{Folders: []syncd.Folder{{State: syncd.FolderUpToDate}}}, overallOffline},
+		{"unsupported sync", syncd.Snapshot{Daemon: syncd.Daemon{Connected: true}}, overallOffline},
+		{"paused wins", syncd.Snapshot{Daemon: syncd.Daemon{Demo: true, AllPaused: true}, Folders: []syncd.Folder{{State: syncd.FolderSyncing}}}, overallPaused},
+		{"review before syncing", syncd.Snapshot{Daemon: live, Folders: []syncd.Folder{{State: syncd.FolderSyncing}, {State: syncd.FolderNeedsReview}}}, overallNeedsYou},
+		{"syncing", syncd.Snapshot{Daemon: live, Folders: []syncd.Folder{{State: syncd.FolderSyncing}, {State: syncd.FolderUpToDate}}}, overallSyncing},
+		{"all offline", syncd.Snapshot{Daemon: live, Folders: []syncd.Folder{{State: syncd.FolderOffline}}}, overallOffline},
 		{"sample", syncd.NewMock(true, func() time.Time { return now }).Snapshot(), overallNeedsYou},
 	}
 	for _, c := range cases {

@@ -1,0 +1,63 @@
+diff --git a/src/libsync/account.h b/src/libsync/account.h
+--- a/src/libsync/account.h
++++ b/src/libsync/account.h
+@@ -116,3 +116,3 @@ public:
+-    /// Creates an account, optionally omitting interactive user-status services for headless runtimes.
++    /// Creates an account, optionally omitting background status and push services for headless runtimes.
+     static AccountPtr create(bool withUserStatus = true);
+     ~Account() override;
+@@ -551,3 +551,4 @@ private:
+     bool _trustCertificates = false;
++    bool _headless = false;
+ 
+     bool _e2eEncryptionKeysGenerationAllowed = false;
+diff --git a/src/libsync/account.cpp b/src/libsync/account.cpp
+--- a/src/libsync/account.cpp
++++ b/src/libsync/account.cpp
+@@ -99,3 +99,4 @@ AccountPtr Account::create(bool withUserStatus)
+     AccountPtr acc = AccountPtr(new Account);
++    acc->_headless = !withUserStatus;
+     acc->setSharedThis(acc);
+     if (withUserStatus) {
+@@ -338,3 +339,6 @@ void Account::trySetupClientStatusReporting()
+ {
++    if (_headless) {
++        return;
++    }
+     if (!_capabilities.isClientStatusReportingEnabled()) {
+         _clientStatusReporting.reset();
+@@ -357,3 +361,6 @@ void Account::trySetupPushNotifications()
+ {
++    if (_headless) {
++        return;
++    }
+     // Stop the timer to prevent parallel setup attempts
+     _pushNotificationsReconnectTimer.stop();
+@@ -788,3 +795,6 @@ void Account::setupUserStatusConnector()
+ {
++    if (_headless) {
++        return;
++    }
+     _userStatusConnector = std::make_shared<OcsUserStatusConnector>(sharedFromThis());
+     connect(_userStatusConnector.get(), &UserStatusConnector::userStatusFetched, this, [this](const UserStatus &) {
+diff --git a/test/testaccount.cpp b/test/testaccount.cpp
+--- a/test/testaccount.cpp
++++ b/test/testaccount.cpp
+@@ -27,3 +27,17 @@ class TestAccount: public QObject
+ private Q_SLOTS:
++    /// Verifies that installing sync capabilities cannot re-enable interactive services on a headless account.
++    void testHeadlessCapabilitiesKeepServicesDisabled()
++    {
++        auto account = Account::create(false);
++        account->setCapabilities({{u"dav"_s, QVariantMap{{u"chunking"_s, u"1.0"_s}}}});
++        const auto hasUserStatus = bool(account->userStatusConnector());
++        const auto hasPush = account->pushNotifications() != nullptr;
++        const auto hasChunking = account->capabilities().chunkingNg();
++        account->e2e()->setAccount({});
++        QVERIFY(hasChunking);
++        QVERIFY(!hasUserStatus);
++        QVERIFY(!hasPush);
++    }
++
+     /// Verifies that a headless account can be released after its unused E2EE back-reference is cleared.
+     void testHeadlessAccountRelease()

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SyncD 1.6 durable endpoint policy parameters",
+  "type": "object",
+  "required": ["accountId", "policy", "operationKey", "expectedRevision"],
+  "properties": {
+    "accountId": {"type": "string", "format": "uuid"},
+    "policy": {"enum": ["auto", "fixed"]},
+    "fixedEndpointId": {"type": "string"},
+    "operationKey": {"type": "string", "format": "uuid"},
+    "expectedRevision": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"}
+  },
+  "allOf": [
+    {"if": {"properties": {"policy": {"const": "fixed"}}}, "then": {"required": ["fixedEndpointId"], "properties": {"fixedEndpointId": {"format": "uuid", "minLength": 1}}}},
+    {"if": {"properties": {"policy": {"const": "auto"}}}, "then": {"properties": {"fixedEndpointId": {"const": ""}}}}
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SyncD 1.4 manual switch parameters",
+  "type": "object",
+  "required": ["operationKey", "expectedRevision", "accountId", "endpointId"],
+  "properties": {
+    "operationKey": {"type": "string", "format": "uuid"},
+    "expectedRevision": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},
+    "accountId": {"type": "string", "format": "uuid"},
+    "endpointId": {"type": "string", "format": "uuid"}
+  },
+  "additionalProperties": false
+}

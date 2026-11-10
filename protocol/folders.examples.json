@@ -1,0 +1,16 @@
+{
+  "inspect": {
+    "jsonrpc": "2.0", "id": "inspect", "method": "folders.inspect",
+    "params": {"accountId": "11111111-1111-4111-8111-111111111111", "localPath": "C:/Sync/Example", "remotePath": "/Example"}
+  },
+  "approveDeletion": {
+    "jsonrpc": "2.0", "id": "approve", "method": "decisions.resolve",
+    "params": {
+      "operationKey": "22222222-2222-4222-8222-222222222222",
+      "expectedRevision": "42",
+      "decisionId": "33333333-3333-4333-8333-333333333333",
+      "proposalDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "approveDeletion"
+    }
+  }
+}

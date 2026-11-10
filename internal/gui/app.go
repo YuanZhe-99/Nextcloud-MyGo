@@ -226,6 +226,10 @@ func (a *App) do(key string, cmd func() error, done func(error)) {
 // errText puts a SyncD error into words.
 func errText(err error) string {
 	switch {
+	case errors.Is(err, syncd.ErrRevocationUnconfirmed):
+		return L.AccountRemovedRevocationUnconfirmed()
+	case errors.Is(err, syncd.ErrCredentialCleanup):
+		return L.CredentialCleanupUnconfirmed()
 	case errors.Is(err, syncd.ErrRefused):
 		return L.ToastCannotSync()
 	case errors.Is(err, syncd.ErrStale):

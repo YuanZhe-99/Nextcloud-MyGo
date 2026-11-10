@@ -1,0 +1,11 @@
+diff --git a/src/libsync/vfs/cfapi/CMakeLists.txt b/src/libsync/vfs/cfapi/CMakeLists.txt
+--- a/src/libsync/vfs/cfapi/CMakeLists.txt
++++ b/src/libsync/vfs/cfapi/CMakeLists.txt
+@@ -1,6 +1,6 @@
+ # SPDX-FileCopyrightText: 2021 Nextcloud GmbH and Nextcloud contributors
+ # SPDX-License-Identifier: GPL-2.0-or-later
+-if (WIN32)
++if (WIN32 AND BUILD_SHELL_INTEGRATION)
+     add_definitions(-D_WIN32_WINNT=_WIN32_WINNT_WIN10)
+ 
+     add_library(nextcloudsync_vfs_cfapi SHARED

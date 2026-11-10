@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SyncD 1.4 immutable endpoint staging result",
+  "type": "object",
+  "required": ["id", "url", "secureTLS", "certSubject", "certIssuer", "sameVersion"],
+  "properties": {
+    "id": {"type": "string", "format": "uuid"},
+    "url": {"type": "string", "format": "uri", "pattern": "^https://"},
+    "secureTLS": {"const": true},
+    "certSubject": {"type": "string"},
+    "certIssuer": {"type": "string"},
+    "sameVersion": {"type": "boolean"}
+  },
+  "additionalProperties": false
+}

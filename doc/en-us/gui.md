@@ -3,8 +3,10 @@
 The interface is a native MyGo application (`cmd/nextcloud-mygo`, `internal/gui`) for the person
 using Nextcloud MyGo, built from the screens in `design/`. It holds no sync state of its own: SyncD
 owns accounts, folders, addresses and decisions; the interface shows the snapshot SyncD reports
-and sends it commands through `internal/syncd`. Until SyncD exists it runs against `syncd.Mock`,
-which shows sample data and says so in a line at the top of every page.
+and sends it commands through `internal/syncd.Remote`. The paired SyncD executable is the default;
+`NEXTCLOUD_MYGO_MOCK=1` explicitly selects `syncd.Mock`, which labels its sample data.
+Sign-in requires a live negotiated login capability. A disconnected daemon, or a build without
+full sync, never produces a green up-to-date status. See [IPC](ipc.md) for the connected scope.
 
 ## Threads and state
 

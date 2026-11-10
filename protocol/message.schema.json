@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/YuanZhe-99/Nextcloud-MyGo/protocol/message.schema.json",
+  "title": "SyncD protocol 1.7 message or bounded batch",
+  "oneOf": [
+    {"$ref": "#/$defs/message"},
+    {"type": "array", "minItems": 1, "maxItems": 32, "items": {"$ref": "#/$defs/message"}}
+  ],
+  "$defs": {
+    "message": {
+      "type": "object",
+      "required": ["jsonrpc"],
+      "properties": {
+        "jsonrpc": {"const": "2.0"},
+        "id": {"type": ["string", "integer", "null"]},
+        "method": {"type": "string"},
+        "params": {"type": "object"},
+        "result": {},
+        "error": {
+          "type": "object", "required": ["code", "message"],
+          "properties": {"code": {"type": "integer"}, "message": {"type": "string"}, "data": {"type": "object"}}
+        }
+      },
+      "allOf": [
+        {
+          "if": {"required": ["method"], "properties": {"method": {"const": "settings.update"}}},
+          "then": {"required": ["params"], "properties": {"params": {"$ref": "#/$defs/settingsUpdate"}}}
+        },
+        {
+          "if": {"required": ["method"], "properties": {"method": {"const": "event"}}},
+          "then": {"required": ["params"], "not": {"required": ["id"]}, "properties": {"params": {"$ref": "#/$defs/projection"}}}
+        }
+      ],
+      "oneOf": [
+        {"required": ["method"], "not": {"anyOf": [{"required": ["result"]}, {"required": ["error"]}]}},
+        {"required": ["id", "result"], "not": {"anyOf": [{"required": ["method"]}, {"required": ["error"]}]}},
+        {"required": ["id", "error"], "not": {"anyOf": [{"required": ["method"]}, {"required": ["result"]}]}}
+      ]
+    },
+    "operationKey": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
+    "revision": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},
+    "settingsUpdate": {
+      "type": "object", "required": ["operationKey", "expectedRevision", "allPaused"],
+      "additionalProperties": false,
+      "properties": {
+        "operationKey": {"$ref": "#/$defs/operationKey"},
+        "expectedRevision": {"$ref": "#/$defs/revision"},
+        "allPaused": {"type": "boolean"}
+      }
+    },
+    "projection": {
+      "type": "object", "required": ["bootId", "seq", "revision", "snapshot"],
+      "properties": {
+        "bootId": {"$ref": "#/$defs/operationKey"},
+        "seq": {"$ref": "#/$defs/revision"},
+        "revision": {"$ref": "#/$defs/revision"},
+        "snapshot": {
+          "type": "object", "required": ["daemon"],
+          "properties": {
+            "daemon": {
+              "type": "object", "required": ["version", "protocol", "demo", "allPaused", "capabilities", "stateAvailable", "startupState"],
+              "properties": {
+                "version": {"type": "string"}, "protocol": {"const": 1}, "demo": {"const": false},
+                "allPaused": {"type": "boolean"}, "capabilities": {"type": "object", "additionalProperties": {"type": "boolean"}},
+                "stateAvailable": {"type": "boolean"},
+                "startupState": {"enum": ["normal", "backoff", "diagnostic", "stopped", "databaseUnavailable"]}
+              }
+            },
+            "accounts": {"type": "array"}, "folders": {"type": "array", "items": {"type": "object", "properties": {"reasonCode": {"type": "string", "maxLength": 80, "pattern": "^[A-Z_]*$"}}}}, "endpoints": {"type": "array"},
+            "networks": {"type": "array"}, "switches": {"type": "array"}, "decisions": {"type": "array"}, "activity": {"type": "array"}
+          },
+          "allOf": [{
+            "if": {"properties": {"daemon": {"properties": {"stateAvailable": {"const": true}}}}},
+            "then": {"required": ["accounts", "folders", "endpoints", "networks", "switches", "decisions", "activity"], "properties": {"daemon": {"properties": {"startupState": {"const": "normal"}}}}},
+            "else": {"not": {"anyOf": [{"required": ["accounts"]}, {"required": ["folders"]}, {"required": ["endpoints"]}, {"required": ["networks"]}, {"required": ["switches"]}, {"required": ["decisions"]}, {"required": ["activity"]}]}}
+          }]
+        }
+      }
+    }
+  }
+}

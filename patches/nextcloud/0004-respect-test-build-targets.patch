@@ -1,0 +1,35 @@
+diff --git a/test/nextcloud_add_test.cmake b/test/nextcloud_add_test.cmake
+--- a/test/nextcloud_add_test.cmake
++++ b/test/nextcloud_add_test.cmake
+@@ -27,3 +27,3 @@
+-    if (WIN32)
++    if (TARGET nextcloudsync_vfs_cfapi)
+         target_link_libraries(${OWNCLOUD_TEST_CLASS}Test PRIVATE nextcloudsync_vfs_cfapi)
+     elseif (LINUX)
+@@ -67,3 +67,3 @@
+-    if (WIN32)
++    if (TARGET nextcloudsync_vfs_cfapi)
+         target_link_libraries(${OWNCLOUD_TEST_CLASS}Test PRIVATE
+             nextcloudsync_vfs_cfapi
+diff --git a/test/CMakeLists.txt b/test/CMakeLists.txt
+--- a/test/CMakeLists.txt
++++ b/test/CMakeLists.txt
+@@ -261,4 +261,6 @@
+ 
+-    nextcloud_add_test(SyncCfApi)
+-    target_link_libraries(SyncCfApiTest PRIVATE cldapi)
++    if(TARGET nextcloudsync_vfs_cfapi)
++        nextcloud_add_test(SyncCfApi)
++        target_link_libraries(SyncCfApiTest PRIVATE cldapi)
++    endif()
+ 	nextcloud_add_test(CfApiShellExtensionsIPC)
+@@ -282,3 +284,8 @@
+ # folderwizard.h includes the ui_*.h headers generated for nextcloudCore.
+-target_include_directories(FolderWizardTest PRIVATE "$<TARGET_PROPERTY:nextcloudCore,BINARY_DIR>/nextcloudCore_autogen/include")
++if(CMAKE_CONFIGURATION_TYPES)
++    set(folderwizard_autogen_include "include_$<CONFIG>")
++else()
++    set(folderwizard_autogen_include "include")
++endif()
++target_include_directories(FolderWizardTest PRIVATE "$<TARGET_PROPERTY:nextcloudCore,BINARY_DIR>/nextcloudCore_autogen/${folderwizard_autogen_include}")
+ nextcloud_add_test(ForceSyncNow)

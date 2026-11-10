@@ -1,8 +1,6 @@
-// nextcloud-mygo is the interface of Nextcloud MyGo: its window, setup,
-// Settings and tray (PLAN.md §17). Until SyncD exists it runs against
-// syncd.Mock, which shows sample data and says so; NEXTCLOUD_MYGO_FRESH=1
-// starts it empty, as on a first run. NEXTCLOUD_MYGO_PROFILE runs a separate
-// development instance with its own name and settings.
+// nextcloud-mygo connects the native interface to its paired SyncD executable.
+// NEXTCLOUD_MYGO_MOCK=1 selects an explicit demo; NEXTCLOUD_MYGO_FRESH=1 empties it.
+// NEXTCLOUD_MYGO_PROFILE selects an independent development profile.
 package main
 
 import (
@@ -20,9 +18,10 @@ import (
 	_ "github.com/YuanZhe-99/Nextcloud-MyGo/locales" // the catalogs make their languages the app's
 )
 
+// main starts the native UI and its client transport without coupling window closure to sync.
 func main() {
 	profile := os.Getenv("NEXTCLOUD_MYGO_PROFILE")
-	name := "Nextcloud MyGo"
+	name := "Nextcloud-MyGo"
 	if profile != "" {
 		name += "-" + profile
 	}
@@ -38,11 +37,24 @@ func main() {
 	// Separate from the official client's own folder (PLAN.md §4.5).
 	dir := filepath.Join(base, "Nextcloud-MyGo"+suffix(profile))
 
-	mock := syncd.NewMock(os.Getenv("NEXTCLOUD_MYGO_FRESH") == "", nil)
 	ctx, cancel := context.WithCancel(context.Background())
-	go mock.Run(ctx, 1500*time.Millisecond)
+	defer cancel()
+	var client syncd.Client
+	if os.Getenv("NEXTCLOUD_MYGO_MOCK") == "1" {
+		mock := syncd.NewMock(os.Getenv("NEXTCLOUD_MYGO_FRESH") == "", nil)
+		go mock.Run(ctx, 1500*time.Millisecond)
+		client = mock
+	} else {
+		executable, err := os.Executable()
+		if err != nil {
+			log.Fatal(err)
+		}
+		remote := syncd.NewRemote(ctx, profile, filepath.Join(filepath.Dir(executable), "nextcloud-mygo-syncd.exe"))
+		defer remote.Close()
+		client = remote
+	}
 
-	a := gui.New(mock, dir)
+	a := gui.New(client, dir)
 	gui.ApplyTheme(a.Prefs().Theme)
 	if lang := a.Prefs().Language; lang != "" {
 		mygo.App.SetLocale(lang)
@@ -67,6 +79,7 @@ func main() {
 	a.Stop()
 }
 
+// suffix keeps the UI preferences of explicit development profiles separate.
 func suffix(profile string) string {
 	if profile == "" {
 		return ""

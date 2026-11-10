@@ -1,0 +1,5 @@
+{
+  "permission": {"jsonrpc":"2.0","id":"permission","error":{"code":-32000,"message":"Request could not be completed","data":{"reasonCode":"PERMISSION_DENIED"}}},
+  "lock": {"jsonrpc":"2.0","id":"lock","error":{"code":-32000,"message":"Request could not be completed","data":{"reasonCode":"REMOTE_LOCKED"}}},
+  "throttle": {"jsonrpc":"2.0","id":"throttle","error":{"code":-32000,"message":"Request could not be completed","data":{"reasonCode":"SERVER_THROTTLED"}}}
+}

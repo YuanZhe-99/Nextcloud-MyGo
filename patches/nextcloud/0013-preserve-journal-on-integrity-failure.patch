@@ -1,0 +1,80 @@
+diff --git a/src/common/ownsql.h b/src/common/ownsql.h
+--- a/src/common/ownsql.h
++++ b/src/common/ownsql.h
+@@ -33,7 +33,8 @@ public:
+     ~SqlDatabase();
+ 
+     bool isOpen();
+-    bool openOrCreateReadWrite(const QString &filename);
++    /// Opens a database, preserving failed integrity-check bytes when recreation is disallowed.
++    bool openOrCreateReadWrite(const QString &filename, bool allowRecreation = true);
+     bool openReadOnly(const QString &filename);
+     bool transaction();
+     bool commit();
+diff --git a/src/common/ownsql.cpp b/src/common/ownsql.cpp
+--- a/src/common/ownsql.cpp
++++ b/src/common/ownsql.cpp
+@@ -104,7 +104,7 @@ SqlDatabase::CheckDbResult SqlDatabase::checkDb()
+     return CheckDbResult::Ok;
+ }
+ 
+-bool SqlDatabase::openOrCreateReadWrite(const QString &filename)
++bool SqlDatabase::openOrCreateReadWrite(const QString &filename, bool allowRecreation)
+ {
+     if (isOpen()) {
+         return true;
+@@ -117,6 +117,11 @@ bool SqlDatabase::openOrCreateReadWrite(const QString &filename)
+ 
+     auto checkResult = checkDb();
+     if (checkResult != CheckDbResult::Ok) {
++        if (!allowRecreation) {
++            qCCritical(lcSql) << "Database integrity check failed; preserving the existing database";
++            close();
++            return false;
++        }
+         if (checkResult == CheckDbResult::CantPrepare) {
+             // When disk space is low, preparing may fail even though the db is fine.
+             // Typically CANTOPEN or IOERR.
+diff --git a/src/common/syncjournaldb.cpp b/src/common/syncjournaldb.cpp
+--- a/src/common/syncjournaldb.cpp
++++ b/src/common/syncjournaldb.cpp
+@@ -322,7 +322,7 @@ bool SyncJournalDb::checkConnect()
+     }
+ 
+     // The database file is created by this call (SQLITE_OPEN_CREATE)
+-    if (!_db.openOrCreateReadWrite(_dbFile)) {
++    if (!_db.openOrCreateReadWrite(_dbFile, false)) {
+         QString error = _db.error();
+         qCWarning(lcDb) << "Error opening the db:" << error;
+         return false;
+diff --git a/test/testsyncjournaldb.cpp b/test/testsyncjournaldb.cpp
+--- a/test/testsyncjournaldb.cpp
++++ b/test/testsyncjournaldb.cpp
+@@ -57,6 +57,27 @@ public:
+     }
+ 
+ private Q_SLOTS:
++    /// Preserves a corrupt journal across repeated failed opens instead of silently recreating it.
++    void testCorruptJournalIsPreserved()
++    {
++        QTemporaryDir directory;
++        QVERIFY(directory.isValid());
++        const auto path = directory.filePath("corrupt.db");
++        const QByteArray original("owned-corrupt-journal-do-not-rebuild");
++        QFile file(path);
++        QVERIFY(file.open(QIODevice::WriteOnly));
++        QCOMPARE(file.write(original), original.size());
++        file.close();
++        SyncJournalDb journal(path);
++        for (auto attempt = 0; attempt < 2; ++attempt) {
++            QVERIFY(!journal.open());
++            journal.close();
++            QVERIFY(file.open(QIODevice::ReadOnly));
++            QCOMPARE(file.readAll(), original);
++            file.close();
++        }
++    }
++
+     /// testCommitFailureSurvivesClose rejects a real commit and checks rollback and sticky failure.
+     void testCommitFailureSurvivesClose()
+     {
