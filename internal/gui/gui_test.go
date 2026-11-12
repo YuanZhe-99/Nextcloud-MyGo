@@ -5,6 +5,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -119,6 +120,133 @@ func TestFirstRunShowsSetup(t *testing.T) {
 	a.setup.step = stepStart
 	tt.Frame()
 	shoot(t, tt, "setup-start")
+}
+
+// serverFolders is a Mock whose server folders a test changes.
+type serverFolders struct {
+	*syncd.Mock
+	list []syncd.RemoteFolder
+	err  error
+}
+
+func (s *serverFolders) RemoteFolders(string) ([]syncd.RemoteFolder, error) { return s.list, s.err }
+
+// TestSetupEndToEnd walks first-run setup against the Mock from the server
+// address through Start syncing: the folder step lists the server again
+// when shown and on Refresh, chooses first only folders the server has,
+// keeps the user's choices, keeps its list when a listing fails, and
+// nothing syncs before Start syncing (PLAN.md §17.1).
+func TestSetupEndToEnd(t *testing.T) {
+	dir := t.TempDir()
+	srv := &serverFolders{Mock: syncd.NewMock(false, nil), list: []syncd.RemoteFolder{{Path: "/Photos"}, {Path: "/Vault", Encrypted: true}}}
+	a := New(srv, dir)
+	a.later = func(fn func()) { fn() }
+	a.async = func(fn func()) { fn() }
+	a.openURL = func(string) {}
+	a.Start()
+	tt := ui.NewTester(a.view, 1200, 780)
+	frame := func() {
+		t.Helper()
+		tt.Frame()
+		if a.setup.step >= stepFolders && len(srv.Snapshot().Folders) > 0 {
+			t.Fatal("a folder was added before Start syncing")
+		}
+	}
+	click := func(label string) {
+		t.Helper()
+		if err := tt.Click(label); err != nil {
+			t.Fatal(err)
+		}
+		frame()
+	}
+	frame()
+	tt.Type("cloud.example.com")
+	frame()
+	click(L.ActionContinue()) // the Mock grants the sign-in after 3 s
+	if a.setup.step != stepFolders {
+		t.Fatalf("sign-in ended at step %d", a.setup.step)
+	}
+	if !a.setup.chosen["/Photos"] || a.setup.chosen["/Documents"] || a.setup.chosen["/Vault"] {
+		t.Fatalf("first choice %v: not only the server's unencrypted Photos", a.setup.chosen)
+	}
+	clickRole(t, tt, ui.RoleCheckBox, "Photos")
+	frame()
+
+	// A folder made on the server after sign-in appears on Refresh, and
+	// Photos stays as the user left it.
+	srv.list = append(srv.list, syncd.RemoteFolder{Path: "/Projects"})
+	click(L.ActionRefresh())
+	if !tt.HasText("Projects") || a.setup.chosen["/Photos"] {
+		t.Fatalf("after Refresh: Projects shown %v, choice %v", tt.HasText("Projects"), a.setup.chosen)
+	}
+	// A failed listing keeps the folders listed before.
+	srv.err = syncd.ErrBusy
+	click(L.ActionRefresh())
+	if !tt.HasText("Projects") || a.setup.remoteErr == "" {
+		t.Fatal("a failed listing emptied the list or said nothing")
+	}
+	srv.err = nil
+	clickRole(t, tt, ui.RoleCheckBox, "Projects")
+	clickRole(t, tt, ui.RoleCheckBox, "Photos")
+	frame()
+	shoot(t, tt, "setup-e2e-folders")
+	click(L.ActionContinue())
+	if a.setup.step != stepStart {
+		t.Fatalf("Continue went to step %d", a.setup.step)
+	}
+
+	// Photos goes from the server; back at the folder step it is no
+	// longer chosen.
+	srv.list = slices.DeleteFunc(srv.list, func(r syncd.RemoteFolder) bool { return r.Path == "/Photos" })
+	click(L.ActionBack())
+	if a.setup.step != stepFolders || a.setup.chosen["/Photos"] || !a.setup.chosen["/Projects"] {
+		t.Fatalf("back at folders: step %d, choice %v", a.setup.step, a.setup.chosen)
+	}
+	click(L.ActionContinue())
+	clickRole(t, tt, ui.RoleSwitch, L.NotifyMe())
+	frame()
+	shoot(t, tt, "setup-e2e-start")
+	base := a.setup.base
+	click(L.ActionStartSyncing())
+
+	if a.setupShown() || a.page != pageOverview {
+		t.Fatal("setup did not end on the overview")
+	}
+	fs := srv.Snapshot().Folders
+	if len(fs) != 1 || fs[0].RemotePath != "/Projects" || fs[0].LocalPath != filepath.Join(base, "Projects") {
+		t.Fatalf("folders added: %+v", fs)
+	}
+	if p := loadPrefs(dir); p.NotifyDecisions || p.NotifySignIn || p.NotifyConflicts {
+		t.Fatalf("notifications switched off at Start are on after a restart: %+v", p)
+	}
+}
+
+// TestNotificationSettingsPersist: each Notifications switch is applied at
+// once and survives a restart (gui.json).
+func TestNotificationSettingsPersist(t *testing.T) {
+	dir := t.TempDir()
+	a := New(syncd.NewMock(true, nil), dir)
+	a.later = func(fn func()) { fn() }
+	a.async = func(fn func()) { fn() }
+	a.openSettings(spNotifications)
+	tt := ui.NewTester(a.view, 1200, 780)
+	tt.Frame()
+	for _, name := range []string{L.NotifyDecisions(), L.NotifySignIn(), L.NotifyConflicts(), L.NotifyUpdates()} {
+		clickRole(t, tt, ui.RoleSwitch, name)
+		tt.Frame()
+	}
+	allOff := func(p Prefs) bool {
+		return !p.NotifyDecisions && !p.NotifySignIn && !p.NotifyConflicts && !p.NotifyUpdates
+	}
+	if !allOff(a.Prefs()) {
+		t.Fatalf("switched off, still on: %+v", a.Prefs())
+	}
+	if p := New(syncd.NewMock(true, nil), dir).Prefs(); !allOff(p) {
+		t.Fatalf("after a restart: %+v", p)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "gui.json.tmp")); !os.IsNotExist(err) {
+		t.Fatal("a temporary settings file was left behind")
+	}
 }
 
 // TestDecideLaterKeepsTheReview: the safe answer keeps the proposal and
@@ -426,6 +554,28 @@ func TestAutoDue(t *testing.T) {
 	for _, c := range cases {
 		if got := autoDue(c.mode, c.idle, c.now); got != c.want {
 			t.Errorf("autoDue(%s, %v, %v) = %v", c.mode, c.idle, c.now.Hour(), got)
+		}
+	}
+}
+
+// TestClockIsLocal: times SyncD reports in UTC are shown on the local
+// clock, and the day boundaries are the local ones.
+func TestClockIsLocal(t *testing.T) {
+	tokyo := time.FixedZone("UTC+9", 9*3600)
+	now := time.Date(2026, 11, 12, 8, 30, 0, 0, tokyo) // 2026-11-11 23:30 UTC
+	cases := []struct {
+		at   time.Time
+		want string
+	}{
+		{time.Date(2026, 11, 11, 23, 5, 0, 0, time.UTC), "08:05"},
+		{time.Date(2026, 11, 11, 14, 59, 0, 0, time.UTC), L.Yesterday()}, // now's UTC day, yesterday locally
+		{time.Date(2026, 11, 11, 15, 0, 0, 0, time.UTC), "00:00"},        // today locally
+		{time.Date(2026, 11, 10, 15, 0, 0, 0, time.UTC), L.Yesterday()},
+		{time.Date(2026, 11, 10, 14, 59, 0, 0, time.UTC), "2026-11-10"}, // under 48 h, but two days back
+	}
+	for _, c := range cases {
+		if got := clock(c.at, now); got != c.want {
+			t.Errorf("clock(%v) = %q, want %q", c.at, got, c.want)
 		}
 	}
 }

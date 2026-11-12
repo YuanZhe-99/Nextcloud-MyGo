@@ -28,17 +28,18 @@ func ago(t, now time.Time) string {
 	return L.AgoDays(int(d / (24 * time.Hour)))
 }
 
-// clock is a time of day for a list, or Yesterday and older as a date.
+// clock is a time of day for a list, Yesterday, or an older date, all on
+// now's clock (the local one for time.Now): SyncD reports times in UTC.
 func clock(t, now time.Time) string {
-	y1, m1, d1 := t.Date()
-	y2, m2, d2 := now.Date()
-	switch {
-	case y1 == y2 && m1 == m2 && d1 == d2:
+	t = t.In(now.Location())
+	day := func(t time.Time) string { return t.Format("2006-01-02") }
+	switch day(t) {
+	case day(now):
 		return t.Format("15:04")
-	case now.Sub(t) < 48*time.Hour:
+	case day(now.AddDate(0, 0, -1)):
 		return L.Yesterday()
 	}
-	return t.Format("2006-01-02")
+	return day(t)
 }
 
 // size is a byte count as people read it.

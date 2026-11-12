@@ -282,8 +282,12 @@ func (a *App) generalPage(c *ui.Context) {
 	section(c, L.SectionStartClose(), func(r *rows) {
 		r.row(c, "set-login", icPower, L.OpenAtSignIn(), L.OpenAtSignInHint(), func() {
 			on := a.openAtLogin()
+			// The switch reads Windows' Run entry each frame, so one that
+			// could not be changed shows as it is, and says so.
 			if ui.Switch(c.Key("set-login-sw"), &on).Label(L.OpenAtSignIn()).Changed() && a.window != nil {
-				_ = mygo.App.SetOpenAtLogin(on)
+				if err := mygo.App.SetOpenAtLogin(on); err != nil {
+					a.setToast(L.ToastFailed())
+				}
 			}
 		})
 		r.row(c, "set-tray", icTray, L.StartInTray(), L.StartInTrayHint(), func() {

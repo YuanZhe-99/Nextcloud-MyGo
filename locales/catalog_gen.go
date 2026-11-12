@@ -2128,6 +2128,16 @@ func (msgs Messages) InsideLabel() string {
 	return Catalog.Format(msgs.locale, "InsideLabel", nil)
 }
 
+// NoServerFolders says "The server has no folders yet. Make one there, then refresh."
+// in the language the app shows.
+func NoServerFolders() string { return In(i18n.Locale()).NoServerFolders() }
+
+// NoServerFolders says "The server has no folders yet. Make one there, then refresh."
+// in the language of msgs.
+func (msgs Messages) NoServerFolders() string {
+	return Catalog.Format(msgs.locale, "NoServerFolders", nil)
+}
+
 // ActionChange says "Change…"
 // in the language the app shows.
 func ActionChange() string { return In(i18n.Locale()).ActionChange() }

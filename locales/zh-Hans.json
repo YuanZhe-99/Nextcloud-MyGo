@@ -208,6 +208,7 @@
   "SetupFoldersTitle": "选择要同步的内容",
   "SetupFoldersBody": "服务器上的每个目录都会对应本机上的一个目录。任何一边的更改都会同步到另一边。",
   "InsideLabel": "本机位置",
+  "NoServerFolders": "服务器上还没有目录。请先在服务器上创建一个，然后刷新。",
   "ActionChange": "更改…",
   "NotSynced": "不同步",
   "EncryptedUnsupported": "端到端加密：暂不支持",

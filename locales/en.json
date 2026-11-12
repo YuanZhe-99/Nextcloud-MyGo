@@ -214,6 +214,7 @@
   "SetupFoldersTitle": "Choose what to sync",
   "SetupFoldersBody": "Each folder on the server gets a folder on this PC. Changes on either side reach the other.",
   "InsideLabel": "On this PC, inside",
+  "NoServerFolders": "The server has no folders yet. Make one there, then refresh.",
   "ActionChange": "Change…",
   "NotSynced": "Not synced",
   "EncryptedUnsupported": "End-to-end encrypted: not supported yet",

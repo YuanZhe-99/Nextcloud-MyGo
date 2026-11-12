@@ -33,11 +33,14 @@ type setupState struct {
 	login     syncd.Login
 	accountID string
 	remote    []syncd.RemoteFolder
-	chosen    map[string]bool
-	base      string
-	atLogin   bool
-	notify    bool
-	failed    string
+	// listed: the server's folders were listed once, and the design's
+	// first choice was made then; later listings keep the user's.
+	listed  bool
+	chosen  map[string]bool
+	base    string
+	atLogin bool
+	notify  bool
+	failed  string
 	// remoteErr says why the server's folders could not be listed, or "".
 	remoteErr string
 	// mode is how the chosen folders keep their files, an index of
@@ -285,22 +288,39 @@ func (a *App) setupSignIn(c *ui.Context) {
 	}, L.ActionContinue(), true, func() {})
 }
 
-// loadRemote lists an account's folders for step 3; the user's home and
-// documents folders start chosen when they exist on the server.
+// loadRemote lists an account's folders for step 3, each time the step is
+// shown and on Refresh, so a folder made on the server since appears.
+// Side effects: the first listing chooses Documents and Photos where the
+// server has them (design/SetupFolders.html); every listing drops a choice
+// the server no longer offers. A failed listing keeps the folders listed
+// before (offline is not empty) and says why.
 func (a *App) loadRemote(accountID string) {
 	a.setup.remoteErr = ""
 	a.do("remote", func() error {
 		list, err := a.client.RemoteFolders(accountID)
 		a.later(func() {
-			a.setup.remote = list
-			if err != nil {
-				a.setup.remoteErr = errText(err)
+			st := &a.setup
+			if st.accountID != accountID {
+				return // setup left or moved on meanwhile
 			}
+			if err != nil {
+				st.remoteErr = errText(err)
+				return
+			}
+			st.remote = list
+			offered := map[string]bool{}
 			for _, r := range list {
-				if !r.Encrypted && (r.Path == "/Documents" || r.Path == "/Photos") {
-					a.setup.chosen[r.Path] = true
+				offered[r.Path] = !r.Encrypted
+				if !st.listed && offered[r.Path] && (r.Path == "/Documents" || r.Path == "/Photos") {
+					st.chosen[r.Path] = true
 				}
 			}
+			for p := range st.chosen {
+				if !offered[p] {
+					delete(st.chosen, p)
+				}
+			}
+			st.listed = true
 		})
 		return nil // shown in the step itself
 	}, nil)
@@ -328,7 +348,7 @@ func (a *App) setupFolders(c *ui.Context) {
 			}
 		})
 	}
-	ui.Row(c).Gap(10).Children(func() {
+	ui.Row(c).FillWidth().Gap(10).Children(func() {
 		muted(c, L.InsideLabel(), 13)
 		ui.Text(c, st.base).FontSize(13).FontWeight(600)
 		if button(c, "setup-base", L.ActionChange(), nil).Height(28).Clicked() {
@@ -339,34 +359,43 @@ func (a *App) setupFolders(c *ui.Context) {
 				}
 			})
 		}
-	})
-	card(c).FillWidth().Clip().Children(func() {
-		for i, r := range st.remote {
-			name := strings.TrimPrefix(r.Path, "/")
-			row := ui.Row(c.Key("rf-"+r.Path)).FillWidth().Gap(12).Padding(12, 14)
-			if i < len(st.remote)-1 {
-				row.BorderWidth(0, 0, 1, 0).BorderColor(p.hover)
-			}
-			if r.Encrypted {
-				row.Background(p.subtle)
-			}
-			row.Children(func() {
-				on := st.chosen[r.Path]
-				if ui.Checkbox(c.Key("rf-cb-"+r.Path), &on, name).Disabled(r.Encrypted).Changed() {
-					st.chosen[r.Path] = on
-				}
-				ui.Spacer(c)
-				switch {
-				case r.Encrypted:
-					muted(c, L.EncryptedUnsupported(), 13)
-				case on:
-					muted(c, "→ "+filepath.Join(filepath.Base(st.base), name), 13)
-				default:
-					muted(c, L.NotSynced(), 13)
-				}
-			})
+		ui.Spacer(c)
+		if button(c, "setup-refresh", L.ActionRefresh(), icRefresh).Height(28).Disabled(a.busy["remote"]).Clicked() {
+			a.loadRemote(st.accountID)
 		}
 	})
+	if len(st.remote) == 0 && st.listed {
+		muted(c, L.NoServerFolders(), 13).Wrap().MaxWidth(620)
+	}
+	if len(st.remote) > 0 {
+		card(c).FillWidth().Clip().Children(func() {
+			for i, r := range st.remote {
+				name := strings.TrimPrefix(r.Path, "/")
+				row := ui.Row(c.Key("rf-"+r.Path)).FillWidth().Gap(12).Padding(12, 14)
+				if i < len(st.remote)-1 {
+					row.BorderWidth(0, 0, 1, 0).BorderColor(p.hover)
+				}
+				if r.Encrypted {
+					row.Background(p.subtle)
+				}
+				row.Children(func() {
+					on := st.chosen[r.Path]
+					if ui.Checkbox(c.Key("rf-cb-"+r.Path), &on, name).Disabled(r.Encrypted).Changed() {
+						st.chosen[r.Path] = on
+					}
+					ui.Spacer(c)
+					switch {
+					case r.Encrypted:
+						muted(c, L.EncryptedUnsupported(), 13)
+					case on:
+						muted(c, "→ "+filepath.Join(filepath.Base(st.base), name), 13)
+					default:
+						muted(c, L.NotSynced(), 13)
+					}
+				})
+			}
+		})
+	}
 	if a.snap.Daemon.Capabilities["virtualFiles"] {
 		ui.Row(c).FillWidth().Gap(14).AlignItems(ui.Start).Children(func() {
 			ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
@@ -430,7 +459,10 @@ func (a *App) setupStart(c *ui.Context) {
 			a.addr = addrForm{open: true, accountID: st.accountID}
 		}
 	})
-	a.setupFoot(c, func() { st.step = stepFolders }, L.ActionStartSyncing(), false, a.finishSetup)
+	a.setupFoot(c, func() {
+		st.step = stepFolders
+		a.loadRemote(st.accountID)
+	}, L.ActionStartSyncing(), false, a.finishSetup)
 }
 
 // switchRow is a row with an icon tile, a title and a sentence, and a
@@ -468,7 +500,9 @@ func (a *App) finishSetup() {
 		pr.NotifyDecisions, pr.NotifySignIn, pr.NotifyConflicts = st.notify, st.notify, st.notify
 		a.setPrefs(pr)
 		if a.window != nil {
-			_ = mygo.App.SetOpenAtLogin(st.atLogin)
+			if err := mygo.App.SetOpenAtLogin(st.atLogin); err != nil {
+				a.setToast(L.ToastFailed())
+			}
 		}
 	}
 	// A mode is sent only where SyncD offers on-demand files; without it

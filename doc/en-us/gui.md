@@ -73,7 +73,8 @@ kept there.
   SyncD names with their file counts, when the proposal expires; Decide later first, Open folder,
   and Allow the deletions only after a second question; nothing else answers a review); conflicts,
   each closed with Mark as resolved (`resolved`, both copies stay); what else needs the user; the
-  recent history, filtered.
+  recent history, filtered. Its times, like the Network page's recent switches, are on the local
+  clock (SyncD reports UTC): today as a time, then Yesterday, then a date.
 
 ## Dialogs
 
@@ -88,11 +89,15 @@ kept there.
 
 Shown instead of the pages while SyncD reports no account, and for Add an account: Your server,
 Sign in (Login Flow v2 in the browser; the interface never sees a password; an account already
-added says so plainly and setup stays at Your server), Folders (encrypted folders cannot be
-chosen; with `virtualFiles`, Full files or On demand for the folders chosen, fixed for each
-folder's life; SyncD creates a local folder that does not exist yet), Start (Start when I sign in
-to Windows and notifications, both on; an optional other address). Nothing syncs before Start
-syncing. Add a folder opens the Folders step for an account that exists.
+added says so plainly and setup stays at Your server), Folders (the server's folders are listed
+again each time the step is shown and on Refresh, so a folder made on the server since appears; a
+listing that fails keeps the folders listed before and says why; the first listing chooses
+Documents and Photos where the server has them, as `design/SetupFolders.html` shows, and later
+listings keep the user's choices and drop any folder the server no longer has; encrypted folders
+cannot be chosen; with `virtualFiles`, Full files or On demand for the folders chosen, fixed for
+each folder's life; SyncD creates a local folder that does not exist yet), Start (Start when I
+sign in to Windows and notifications, both on; an optional other address). Nothing syncs before
+Start syncing. Add a folder opens the Folders step for an account that exists.
 
 ## Settings
 
@@ -141,7 +146,10 @@ generate` writes `locales/catalog_gen.go`. Traditional Chinese and Japanese foll
 languages; checks the deletion review (Decide later keeps it, allowing asks twice), the Settings
 pause and that resuming everything keeps a folder's own pause, that unknown state is neither empty
 nor healthy, SyncD's real capabilities (no Automatic, no green, the file-sync notice), signing in
-again for a refused password, and that every protocol reason code has words. The protocol 1.9
+again for a refused password, that every protocol reason code has words, times on the local clock
+in a fixed non-UTC zone, the whole first-run setup against the Mock through Start syncing (a
+folder made on the server after sign-in, a failed listing, a folder gone from the server), and
+that Notifications' switches survive a restart. The protocol 1.9
 states are table-driven (`protocol19_test.go`): each account `auth`, several accounts in the
 sidebar, `multiAccount`, a duplicate account, account removal as one command, phases and a full
 server, the folder mode with and without `virtualFiles`, every blocked reason, the reasons for
