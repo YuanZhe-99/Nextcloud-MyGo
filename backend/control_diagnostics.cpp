@@ -20,7 +20,7 @@ QJsonObject Control::diagnosticsProjection() const {
       daemon.value("startupState").toString(QStringLiteral("normal"));
   if (!available)
     return {{"version", SYNCD_VERSION},
-            {"protocol", "1.8"},
+            {"protocol", protocolVersion()},
             {"stateAvailable", false},
             {"startupState", startupState},
             {"reasonCode", daemon.value("reasonCode").toString()},
@@ -66,7 +66,7 @@ QJsonObject Control::diagnosticsProjection() const {
   }
   return {{"version", SYNCD_VERSION},
           {"allPaused", paused_},
-          {"protocol", "1.8"},
+          {"protocol", protocolVersion()},
           {"stateAvailable", true},
           {"startupState", startupState},
           {"reasonCode", ""},

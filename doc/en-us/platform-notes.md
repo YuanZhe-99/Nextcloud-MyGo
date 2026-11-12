@@ -515,6 +515,25 @@ incomplete and no 24-hour run exists; `endpointAutoSwitch` has only a manual swi
 correctly to a safe point and the vanished switch above; `virtualFiles` was not exercised. All three
 stay `false`.
 
+### B14 findings fixed in SyncD and setup
+
+Same ARM64 host, 2026-11-12, SyncD rebuilt for ARM64 and x64 from this tree, protocol 1.10:
+
+| Finding | Cause | Fix and evidence |
+|---|---|---|
+| Diagnostics said protocol 1.8 | literals in `control_diagnostics.cpp` and `startup_control.cpp` | both use `Control::protocolVersion()`; `testProtocolVersion` compares `contract.json`, `session.hello` and both diagnostics with `Control::protocolMinor` |
+| Self-check `failed CANCELLED` after a reinstall | the cycle stopped at shutdown ends `CANCELLED` and was stored as a folder error; the next start kept it and `selfCheck` counted every folder in error | the start clears `CANCELLED` to offline and the self-check counts only mappings that did not attach; `previousCycle` (CANCELLED, SYNC_FAILED) in `SyncDFolderErrorContracts` |
+| A switch vanished | a user request whose running cycle outlasted the 30-second drain window was dropped (receipt failed, pending policy deleted) with nothing in the snapshot, and the interface does not poll receipts | the request ends as a `switchFailed` activity with its reason; `switch-quota` failed before the fix at its outcome step and passed after it, 74.8 s through its wrapper on Nextcloud 35.0.2 |
+| No Activity for local deletions or renames | the engine adapter counted only uploads, downloads and remote deletions | `deletedLocal`, `renamedRemote`, `renamedLocal`; `testCycleActivity`; the interface shows them (`TestActivityKinds110`, against the Mock) |
+| Setup used `daemon.shutdown` only; no second version | see [packaging](packaging.md) | setup calls `daemon.prepareUpdate`; the package smoke upgraded 0.1.0 to a 0.1.1 test package over a running SyncD in 36.0 s (no account) |
+
+Runs: fast tier ARM64 passed in 38.4 s. Fast tier on emulated x64 failed twice at
+`TestRealPipeUnavailableStopsINV11INV12` (the daemon exited 1 after its diagnostic shutdown) while
+another build loaded the host; the test passed 3 of 3 alone and all real-pipe tests passed together, so
+it is recorded as unresolved, not passed. The server tier on ARM64 stopped at `chunk session resume`,
+which exceeded its 150 s budget by 2.1 s (148.3 s before) under the same load; every case run before
+it passed. The B14 steps were not run again through the installed interface.
+
 ## Known limitations
 
 Upstream CTest on native Windows ARM64 passed SyncJournalDBTest, ConcatUrlTest,

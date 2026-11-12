@@ -94,11 +94,19 @@ void Control::selfCheck() {
       reasons.append("CREDENTIALS_LOCKED");
     }
   }
-  // Every mapping attached again, or says why not.
-  run(q, "SELECT reason FROM folders WHERE status='error'");
+#ifdef SYNCD_WITH_ENGINE
+  // Every mapping of a ready account attached again, or says why not. A
+  // reason the previous process's last cycle left (a cycle stopped at
+  // shutdown, a server error) is not an attachment failure of this start.
+  run(q, "SELECT f.id,f.reason FROM folders f JOIN accounts a ON "
+         "a.id=f.account_id WHERE a.state='ready'");
   while (q.next())
-    reasons.append(q.value(0).toString());
+    if (!runtime_->contains(q.value(0).toString()))
+      reasons.append(q.value(1).toString().isEmpty()
+                         ? QStringLiteral("LOCAL_ROOT_UNAVAILABLE")
+                         : q.value(1).toString());
   q.finish();
+#endif
   reasons.removeDuplicates();
   reasons.removeAll(QString{});
   selfCheckReasons_ = reasons;

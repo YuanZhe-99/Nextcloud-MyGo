@@ -16,6 +16,7 @@ Windows 11 on x64 and native ARM64.
 | [third-party.md](third-party.md) | Reused code and dependencies, licenses and obligations |
 | [platform-notes.md](platform-notes.md) | What is implemented and verified on each platform |
 | [development.md](development.md) | Environment, commands, the dev loop |
+| [ci.md](ci.md) | GitHub Actions: native x64 and ARM64 checks, the dependency bootstrap, caches, releases |
 | [translation-guide.md](translation-guide.md) | Mirror rules and the glossary |
 | [version-history.md](version-history.md) | Releases and the upstream versions they used |
 | [functions/INDEX.md](functions/INDEX.md) | Per-package and per-module roles and key declarations |

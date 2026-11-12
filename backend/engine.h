@@ -46,6 +46,10 @@ public:
     /// conflicts lists the conflict copies upstream kept, as compact JSON
     /// [[copy, original]] of folder-relative paths, after a finished cycle.
     QByteArray conflicts;
+    /// deletedLocal counts entries removed on this PC because the server
+    /// removed them; renamedRemote and renamedLocal count renames or moves
+    /// applied on the server and on this PC (protocol 1.10).
+    quint64 deletedLocal = 0, renamedRemote = 0, renamedLocal = 0;
   };
   /// Requests counts creation, active/retained replies, live managers and
   /// unconfirmed writes without recording paths, headers, credentials or

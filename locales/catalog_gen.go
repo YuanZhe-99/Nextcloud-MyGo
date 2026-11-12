@@ -1628,6 +1628,104 @@ func (msgs Messages) ActDeletedDetail(folder string) string {
 	return Catalog.Format(msgs.locale, "ActDeletedDetail", map[string]any{"folder": folder})
 }
 
+// ActDeletedLocalN says "Deleted {count, plural, one {# file} other {# files}} on this PC"
+// in the language the app shows.
+func ActDeletedLocalN(count int) string { return In(i18n.Locale()).ActDeletedLocalN(count) }
+
+// ActDeletedLocalN says "Deleted {count, plural, one {# file} other {# files}} on this PC"
+// in the language of msgs.
+func (msgs Messages) ActDeletedLocalN(count int) string {
+	return Catalog.Format(msgs.locale, "ActDeletedLocalN", map[string]any{"count": count})
+}
+
+// ActDeletedLocalDetail says "{folder} · deleted on the server"
+// in the language the app shows.
+func ActDeletedLocalDetail(folder string) string {
+	return In(i18n.Locale()).ActDeletedLocalDetail(folder)
+}
+
+// ActDeletedLocalDetail says "{folder} · deleted on the server"
+// in the language of msgs.
+func (msgs Messages) ActDeletedLocalDetail(folder string) string {
+	return Catalog.Format(msgs.locale, "ActDeletedLocalDetail", map[string]any{"folder": folder})
+}
+
+// ActRenamedRemoteN says "Renamed {count, plural, one {# item} other {# items}} on the server"
+// in the language the app shows.
+func ActRenamedRemoteN(count int) string { return In(i18n.Locale()).ActRenamedRemoteN(count) }
+
+// ActRenamedRemoteN says "Renamed {count, plural, one {# item} other {# items}} on the server"
+// in the language of msgs.
+func (msgs Messages) ActRenamedRemoteN(count int) string {
+	return Catalog.Format(msgs.locale, "ActRenamedRemoteN", map[string]any{"count": count})
+}
+
+// ActRenamedRemoteDetail says "{folder} · renamed on this PC"
+// in the language the app shows.
+func ActRenamedRemoteDetail(folder string) string {
+	return In(i18n.Locale()).ActRenamedRemoteDetail(folder)
+}
+
+// ActRenamedRemoteDetail says "{folder} · renamed on this PC"
+// in the language of msgs.
+func (msgs Messages) ActRenamedRemoteDetail(folder string) string {
+	return Catalog.Format(msgs.locale, "ActRenamedRemoteDetail", map[string]any{"folder": folder})
+}
+
+// ActRenamedLocalN says "Renamed {count, plural, one {# item} other {# items}} on this PC"
+// in the language the app shows.
+func ActRenamedLocalN(count int) string { return In(i18n.Locale()).ActRenamedLocalN(count) }
+
+// ActRenamedLocalN says "Renamed {count, plural, one {# item} other {# items}} on this PC"
+// in the language of msgs.
+func (msgs Messages) ActRenamedLocalN(count int) string {
+	return Catalog.Format(msgs.locale, "ActRenamedLocalN", map[string]any{"count": count})
+}
+
+// ActRenamedLocalDetail says "{folder} · renamed on the server"
+// in the language the app shows.
+func ActRenamedLocalDetail(folder string) string {
+	return In(i18n.Locale()).ActRenamedLocalDetail(folder)
+}
+
+// ActRenamedLocalDetail says "{folder} · renamed on the server"
+// in the language of msgs.
+func (msgs Messages) ActRenamedLocalDetail(folder string) string {
+	return Catalog.Format(msgs.locale, "ActRenamedLocalDetail", map[string]any{"folder": folder})
+}
+
+// ActSwitchFailed says "Switch to {name} didn't happen."
+// in the language the app shows.
+func ActSwitchFailed(name string) string { return In(i18n.Locale()).ActSwitchFailed(name) }
+
+// ActSwitchFailed says "Switch to {name} didn't happen."
+// in the language of msgs.
+func (msgs Messages) ActSwitchFailed(name string) string {
+	return Catalog.Format(msgs.locale, "ActSwitchFailed", map[string]any{"name": name})
+}
+
+// ActSwitchFailedWhy says "Switch to {name} didn't happen: {reason}"
+// in the language the app shows.
+func ActSwitchFailedWhy(name string, reason string) string {
+	return In(i18n.Locale()).ActSwitchFailedWhy(name, reason)
+}
+
+// ActSwitchFailedWhy says "Switch to {name} didn't happen: {reason}"
+// in the language of msgs.
+func (msgs Messages) ActSwitchFailedWhy(name string, reason string) string {
+	return Catalog.Format(msgs.locale, "ActSwitchFailedWhy", map[string]any{"name": name, "reason": reason})
+}
+
+// ReasonSafePoint says "Sync didn't reach a safe point in time."
+// in the language the app shows.
+func ReasonSafePoint() string { return In(i18n.Locale()).ReasonSafePoint() }
+
+// ReasonSafePoint says "Sync didn't reach a safe point in time."
+// in the language of msgs.
+func (msgs Messages) ReasonSafePoint() string {
+	return Catalog.Format(msgs.locale, "ReasonSafePoint", nil)
+}
+
 // AddAddressTitle says "Add an address"
 // in the language the app shows.
 func AddAddressTitle() string { return In(i18n.Locale()).AddAddressTitle() }

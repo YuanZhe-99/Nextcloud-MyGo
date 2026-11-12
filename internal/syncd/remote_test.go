@@ -1343,8 +1343,8 @@ func TestNonNormalStartupCannotBeHealthy(t *testing.T) {
 
 // TestProtocol19StateExample decodes the 1.9 snapshot example: per-account
 // sign-in state, folder phase and progress, address latency, kind and block
-// reason, why an address was chosen, deletion groups, conflicts and the
-// start report all reach the interface's types.
+// reason, why an address was chosen, deletion groups, conflicts, the start
+// report and the 1.10 history kinds all reach the interface's types.
 func TestProtocol19StateExample(t *testing.T) {
 	b, err := os.ReadFile("../../protocol/state.examples.json")
 	if err != nil {
@@ -1391,6 +1391,20 @@ func TestProtocol19StateExample(t *testing.T) {
 	}
 	if c := s.Decisions[1]; c.Kind != DecisionConflict || c.File != "Budget.xlsx" || c.Copy == "" {
 		t.Fatalf("conflict decision: %+v", c)
+	}
+	// Protocol 1.10: local deletions caused by the server, renames both ways
+	// and a refused switch with its addresses and reason reach the history.
+	want := []ActivityKind{ActSwitchFailed, ActDeletedLocal, ActRenamedRemote, ActRenamedLocal}
+	if len(s.Activity) != len(want) {
+		t.Fatalf("history = %+v, want %v", s.Activity, want)
+	}
+	for i, kind := range want {
+		if a := s.Activity[i]; a.Kind != kind || a.Count < 1 || a.At.IsZero() {
+			t.Fatalf("history[%d] = %+v, want %s", i, a, kind)
+		}
+	}
+	if a := s.Activity[0]; a.FromID != s.Endpoints[1].ID || a.ToID != s.Endpoints[0].ID || a.Reason != "QUIESCE_STALLED" || a.Name == "" {
+		t.Fatalf("refused switch = %+v", a)
 	}
 	if r := s.Daemon.StartupReport; r.PreviousSchema != 10 || r.Schema != 11 || r.SelfCheck != "failed" || len(r.ReasonCodes) != 1 || !s.Daemon.Capabilities["engine"] {
 		t.Fatalf("start report and engine capability: %+v", s.Daemon)

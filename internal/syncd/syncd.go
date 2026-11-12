@@ -428,6 +428,17 @@ const (
 	ActDownloaded ActivityKind = "downloaded"
 	ActDeleted    ActivityKind = "deletedRemote"
 	ActSwitched   ActivityKind = "switched"
+	// ActDeletedLocal is files removed on this PC because they were removed
+	// on the server (protocol 1.10).
+	ActDeletedLocal ActivityKind = "deletedLocal"
+	// ActRenamedRemote is renames or moves made on this PC and applied on the
+	// server; ActRenamedLocal the other way (protocol 1.10).
+	ActRenamedRemote ActivityKind = "renamedRemote"
+	ActRenamedLocal  ActivityKind = "renamedLocal"
+	// ActSwitchFailed is a switch the user asked for that did not happen:
+	// FromID stays in use, ToID was asked for, Reason says why (protocol
+	// 1.10; QUIESCE_STALLED when a transfer outlasted the wait).
+	ActSwitchFailed ActivityKind = "switchFailed"
 )
 
 // Activity is one entry of the recent history.

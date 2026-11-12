@@ -105,6 +105,26 @@ func TestApprovalSyncsTheFolder(t *testing.T) {
 	}
 }
 
+// TestRefusedSwitchEndsVisibly: a switch the user asked for that cannot
+// happen keeps the address and the policy and leaves a switchFailed entry
+// with its reason, as SyncD does (INV-06, protocol 1.10; B14 step 6).
+func TestRefusedSwitchEndsVisibly(t *testing.T) {
+	m := NewMock(true, fixed)
+	before := m.Snapshot().Networks[0]
+	if _, err := m.RequestPolicy(before.AccountID, PolicyFixed, "e-vpn"); err != nil {
+		t.Fatal(err)
+	}
+	s := m.Snapshot()
+	n := s.Networks[0]
+	if n.ActiveID != before.ActiveID || n.Policy != before.Policy || n.FixedEndpointID != before.FixedEndpointID {
+		t.Fatalf("network = %+v, want it unchanged from %+v", n, before)
+	}
+	a := s.Activity[0]
+	if a.Kind != ActSwitchFailed || a.FromID != before.ActiveID || a.ToID != "e-vpn" || a.Reason == "" {
+		t.Fatalf("history = %+v, want the refused switch first with its reason", a)
+	}
+}
+
 // TestPrepareUpdateWaitsForSafePoint: an update waits while a deletion
 // waits for the user or files move, each busy with SyncD's own reason
 // (protocol 1.9), and goes ahead when idle (PLAN.md §16.2).

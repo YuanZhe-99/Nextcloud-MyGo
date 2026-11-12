@@ -37,6 +37,8 @@ Nextcloud-MyGo、MyGo、Qt、Microsoft），以及协议与 API 名称（WebDAV�
 | endpoint epoch | 端点 epoch |
 | switch | 切换 |
 | quiescent boundary | 静止边界 |
+| safe point (interface words for a quiescent boundary) | 安全时机 |
+| rename | 重命名 |
 | namespace verification | 命名空间核验 |
 | acknowledge (an origin) | 认可（origin） |
 | credential reference | 凭据引用 |
@@ -57,6 +59,11 @@ Nextcloud-MyGo、MyGo、Qt、Microsoft），以及协议与 API 名称（WebDAV�
 | snapshot | 快照 |
 | rediscovery | 重新发现 |
 | test build | 测试构建 |
+| dependency bootstrap | 依赖引导 |
+| runner (CI) | 运行器 |
+| pre-release | 预发布 |
+| license bundle | 许可证包 |
+| corresponding source | 对应源代码 |
 | version directory | 版本目录 |
 | Apps entry | 应用列表条目 |
 | on-demand files | 按需文件 |

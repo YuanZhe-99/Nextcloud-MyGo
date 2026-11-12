@@ -304,9 +304,12 @@ void Control::restoreFolders() {
   runtime_->serverThrottled = [this](const QString &account, qint64 delayMs) {
     throttleAccount(account, delayMs);
   };
+  // A cycle the previous process stopped at shutdown ended CANCELLED; that is
+  // not a fault of the folder, and its next cycle rediscovers (B14).
   QSqlQuery q(db_);
   q.prepare("UPDATE folders SET status='offline',reason='' WHERE "
-            "status='syncing' OR status='upToDate'");
+            "status='syncing' OR status='upToDate' OR "
+            "(status='error' AND reason='CANCELLED')");
   execute(q);
   QTimer::singleShot(0, &networkTasks_, [this] {
     try {
@@ -396,6 +399,9 @@ void Control::cycleFinished(const QString &id,
       recordActivity(account, id, "uploaded", result.uploaded);
       recordActivity(account, id, "downloaded", result.downloaded);
       recordActivity(account, id, "deletedRemote", result.deletedRemote);
+      recordActivity(account, id, "deletedLocal", result.deletedLocal);
+      recordActivity(account, id, "renamedRemote", result.renamedRemote);
+      recordActivity(account, id, "renamedLocal", result.renamedLocal);
       if (!result.proposalDigest.isEmpty()) {
         q.prepare("INSERT OR REPLACE INTO "
                   "decisions(id,folder_id,digest,boot,expires,local_count,"

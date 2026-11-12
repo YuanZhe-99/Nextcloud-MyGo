@@ -2,7 +2,7 @@
 
 ## 契约
 
-协议 1.9 在本地 Named Pipe 上传输 JSON-RPC 2.0：四字节小端长度后跟 UTF-8 JSON，
+协议 1.10 在本地 Named Pipe 上传输 JSON-RPC 2.0：四字节小端长度后跟 UTF-8 JSON，
 最多 1 MiB、64 层嵌套容器。重复对象键无效。`protocol/contract.json` 记录方法及能力门槛。
 `protocol/fixtures.json` 由 Go 和 C++ 契约测试共享。线上状态投影使用小驼峰字段名。
 夹具的 `valid` 表示 JSON 边界接受与否；RPC 消息外形与方法校验单独测试。
@@ -22,6 +22,19 @@
 不支持的能力返回 `UNSUPPORTED_CAPABILITY`，不模拟成功。
 
 ## 实现范围
+
+协议 1.10 保持 Control schema 11 不变，补全历史记录（schema 见 `protocol/message.schema.json` 的
+`$defs/activity`，示例见 `protocol/state.examples.json`）。活动条目带 `cursor`、`accountId`、`folderId`、
+`at`、`kind`、`count`、`fromId`、`toId` 与 `reason`，切换还带 `name`。新增四种类型：`deletedLocal`
+（因服务器删除而在本机删除的条目）、`renamedRemote` 与 `renamedLocal`（应用到服务器和本机的重命名或
+移动；统计上游完成的重命名项，一个目录计为一项）以及 `switchFailed`：用户请求的切换
+（`endpoints.requestSwitch` 或固定策略的 `endpoints.setPolicy`）没有发生，`fromId` 仍在使用，`toId` 是所请求
+的地址，并带其 `name` 与 `reason` 代码。因此用户的请求总会在历史中结束，为 `switched` 或
+`switchFailed`；等待运行中的周期时，网络显示 `switching`、`why` 含 `postponed`，策略请求还显示
+`requestedEndpointId`。周期超过 30 秒排空窗口时，请求以 `switchFailed` 和 `QUIESCE_STALLED` 结束，
+地址与策略不变（窗口、请求及其回执与之前相同，只有记录是新的）。自动切换不记录失败条目。
+诊断、启动诊断与 `session.hello` 都报告同一个 `Control::protocolMinor`（`testProtocolVersion` 将它们与
+`protocol/contract.json` 比较）。
 
 协议 1.9 与 Control schema 11 增加界面和安装程序需要的内容（示例见 `protocol/state.examples.json`，
 schema 见 `protocol/message.schema.json`）：
@@ -47,12 +60,12 @@ schema 见 `protocol/message.schema.json`）：
   写出一致的 Control 副本 `control.pre-update.<id>.sqlite`（只保留最新一份），回执以 `{"ready": true}`
   成功。保持状态持续十分钟或直到关闭。之后 `daemon.startupReport` 说明一次启动从何迁移
   （`previousVersion`、`previousSchema`、`schema`）以及自检是否通过（`selfCheck`：pending、passed 或
-  failed，并带 `reasonCodes`）。
+  failed，并带 `reasonCodes`）。它只检查本次启动：数据库、每个就绪账号的凭据，以及每个未能重新挂接的目录映射；上一进程最后一个周期留下的原因不算本次失败，关闭时停止的周期（`CANCELLED`）也不再让其目录处于错误状态。
 - `engine` 能力区分链接上游引擎的构建与基础构建。
 - `folders.inspect` 接受尚不存在、但父目录存在的本地目录（`localExists` 为 false）；随后 `folders.add`
   将其创建为空目录。
 
-Go 客户端发送 `minor: 9`，把 `ACCOUNT_EXISTS` 映射为 `ErrAccountExists`、`DECISION_PENDING` 映射为
+Go 客户端发送 `minor: 10`，把 `ACCOUNT_EXISTS` 映射为 `ErrAccountExists`、`DECISION_PENDING` 映射为
 `ErrBusy`，并提供从不启动 SyncD 的 `ConnectRemote`，以及 `Remote.Disconnect`：供诊断使用的稳定短语，
 说明上一次连接为何结束。没有就绪连接时发出的调用返回 `ErrDisconnected`：对界面而言它仍匹配
 `ErrBusy`，但已不在的守护进程绝不会被报告为处于不安全点。`nextcloud-mygo-syncd.exe --version` 输出一行包含版本、协议与 Control schema

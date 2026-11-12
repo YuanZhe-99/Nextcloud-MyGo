@@ -67,7 +67,7 @@ func TestRealPipeUnavailableStopsINV11INV12(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = command.Process.Kill(); _ = command.Wait() })
-		r := NewRemote(ctx, profile, exe)
+		r := ConnectRemote(ctx, profile, exe)
 		t.Cleanup(r.Close)
 		awaitTestSnapshot(t, r, func(s Snapshot) bool { return s.Daemon.StartupState == StartupDatabaseUnavailable })
 		assertUnknownSnapshot(t, r.Snapshot(), StartupDatabaseUnavailable)
@@ -140,7 +140,7 @@ func TestRealPipeINV12INV13(t *testing.T) {
 		return cmd
 	}
 	command := start()
-	r := NewRemote(ctx, profile, exe)
+	r := ConnectRemote(ctx, profile, exe)
 	t.Cleanup(r.Close)
 	awaitConnected(t, r, func(Snapshot) bool { return true })
 	// The server process must match the controlled executable, even within the same user/session.
@@ -174,7 +174,7 @@ func TestRealPipeINV12INV13(t *testing.T) {
 	awaitConnected(t, r, func(s Snapshot) bool { return s.Daemon.AllPaused })
 	r.Close()
 	// Closing the UI transport must leave the same daemon running (INV-11).
-	r = NewRemote(ctx, profile, exe)
+	r = ConnectRemote(ctx, profile, exe)
 	t.Cleanup(r.Close)
 	awaitConnected(t, r, func(s Snapshot) bool { return s.Daemon.AllPaused })
 	if err := r.Shutdown(); err != nil {
@@ -185,7 +185,7 @@ func TestRealPipeINV12INV13(t *testing.T) {
 		t.Fatal(err)
 	}
 	command = start()
-	r = NewRemote(ctx, profile, exe)
+	r = ConnectRemote(ctx, profile, exe)
 	t.Cleanup(r.Close)
 	awaitConnected(t, r, func(s Snapshot) bool { return s.Daemon.AllPaused })
 	if err := r.ResumeAll(); err != nil {
@@ -228,7 +228,7 @@ func TestRealPipeCrashBackoffActivates(t *testing.T) {
 	if err := crashed.Start(); err != nil {
 		t.Fatal(err)
 	}
-	r := NewRemote(ctx, profile, exe)
+	r := ConnectRemote(ctx, profile, exe)
 	awaitConnected(t, r, func(Snapshot) bool { return true })
 	r.Close()
 	// An unclean end: the next start records a crash and waits its 2-second backoff.
@@ -241,7 +241,7 @@ func TestRealPipeCrashBackoffActivates(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = restarted.Process.Kill(); _ = restarted.Wait() })
-	r = NewRemote(ctx, profile, exe)
+	r = ConnectRemote(ctx, profile, exe)
 	t.Cleanup(r.Close)
 	awaitConnected(t, r, func(s Snapshot) bool { return s.Daemon.StartupState == StartupNormal })
 	if err := r.Shutdown(); err != nil {
@@ -332,7 +332,7 @@ func TestRealPrepareUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = command.Process.Kill(); _ = command.Wait() })
-	r := NewRemote(ctx, profile, exe)
+	r := ConnectRemote(ctx, profile, exe)
 	defer r.Close()
 	awaitConnected(t, r, func(s Snapshot) bool { return s.Daemon.StartupReport.SelfCheck == "passed" })
 	report := r.Snapshot().Daemon.StartupReport

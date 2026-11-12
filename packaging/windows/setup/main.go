@@ -47,8 +47,8 @@ func main() {
 	flag.Parse()
 	programs, err := programsDir()
 	if err == nil {
-		// Work from the programs folder so that shutdown's relative path to
-		// SyncD exists (same volume).
+		// Work from the programs folder, outside the install root, so that
+		// the working directory never holds a folder setup removes.
 		err = os.Chdir(programs)
 	}
 	if err == nil {
@@ -101,6 +101,9 @@ func install(root, profile string, start bool) error {
 		return err
 	}
 	fmt.Printf("Nextcloud MyGo %s for %s: TEST BUILD, unsigned, automatic updates off\n", m.Version, m.Arch)
+	if m.TestVersion {
+		fmt.Println("This package's version was stamped for an upgrade test; it is not a release.")
+	}
 
 	native, err := nativeMachine()
 	if err != nil {
@@ -114,8 +117,10 @@ func install(root, profile string, start bool) error {
 		return fmt.Errorf("existing install: %w", err)
 	}
 	var cur *release.Manifest
+	var current string
 	if ok {
 		cur = &installed
+		current = filepath.Join(oldDir, syncdExe)
 		step("installed: %s (%s)", installed.Version, oldDir)
 	}
 	if err := admit(cur, m); err != nil {
@@ -127,7 +132,7 @@ func install(root, profile string, start bool) error {
 	if err := extract(z, m, dir); err != nil {
 		return err
 	}
-	if err := stopApp(root, profile); err != nil {
+	if err := stopApp(root, profile, current, m.Version); err != nil {
 		os.RemoveAll(dir)
 		return fmt.Errorf("%w; the installed version was kept", err)
 	}
@@ -182,30 +187,50 @@ func copyUninstaller(dir, root string) error {
 }
 
 // stopApp stops the interface and SyncD processes running from root.
-// Returns: an error only when a process outlives both the request and termination.
-// Notes: the interface goes first, so that it cannot start SyncD again. SyncD
-// is asked to stop through daemon.shutdown and gets 30 seconds; one that does
-// not stop is terminated, which SyncD recovers from like any crash.
-// daemon.prepareUpdate, the safe-point request of PLAN.md §16.2, replaces the
-// shutdown here once SyncD implements it (doc/en-us/packaging.md).
-func stopApp(root, profile string) error {
+// Inputs: current is the installed version's SyncD and target the version
+// being installed; the uninstall passes "" for both.
+// Returns: an error when the running SyncD does not reach the update safe
+// point (prepare), with SyncD still running and the interface reopened;
+// otherwise an error only when a process outlives both the request and
+// termination.
+// Notes: the interface goes first, so that it cannot start SyncD again, and
+// because SyncD's pipe serves one client at a time. With a target, the
+// profile's SyncD running from current then gets daemon.prepareUpdate
+// (PLAN.md §16.2); on a refusal the closed interface is started again, where
+// a deletion waiting for review can be reviewed. SyncD is asked to stop
+// through daemon.shutdown and gets 30 seconds; one that does not stop is
+// terminated, which SyncD recovers from like any crash.
+func stopApp(root, profile, current, target string) error {
 	ps, err := processesUnder(root)
 	if err != nil {
 		return err
 	}
-	var ui, daemons []process
+	var ui, daemons, toPrepare []process
 	for _, p := range ps {
 		switch {
 		case equalBase(p.path, uiExe):
 			ui = append(ui, p)
 		case equalBase(p.path, syncdExe):
 			daemons = append(daemons, p)
+			if target != "" && strings.EqualFold(filepath.Clean(p.path), filepath.Clean(current)) {
+				toPrepare = append(toPrepare, p)
+			}
 		}
 	}
 	if len(ui) > 0 {
 		step("closing the interface (%d)", len(ui))
 		if left := terminate(ui); len(left) > 0 {
 			return fmt.Errorf("the interface did not close")
+		}
+	}
+	if len(toPrepare) > 0 {
+		if err := prepareUpdate(profile, current, target, toPrepare); err != nil {
+			if len(ui) > 0 {
+				if err := launch(ui[0].path); err != nil {
+					step("could not reopen the interface: %v", err)
+				}
+			}
+			return err
 		}
 	}
 	if len(daemons) == 0 {
@@ -231,27 +256,46 @@ func stopApp(root, profile string) error {
 	return nil
 }
 
+// prepareUpdate brings the profile's SyncD running from executable to the
+// update safe point for target, waiting up to prepareLimit (prepare).
+// Inputs: ps are that SyncD's processes; once they have all exited there is
+// nothing left to prepare.
+// Returns: the refusal to show the person running setup, or nil.
+// Side effects: SyncD starts no new sync cycle, lets the running one finish
+// and saves a copy of its state; it holds there for ten minutes or until it
+// is shut down. Prints setup's progress.
+func prepareUpdate(profile, executable, target string, ps []process) error {
+	step("asking SyncD to get ready for %s", target)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r := syncd.ConnectRemote(ctx, profile, executable)
+	defer r.Close()
+	alive := func() bool { return len(waitExit(ps, 0)) > 0 }
+	waiting := false
+	err := prepare(func() error {
+		err := r.PrepareUpdate(target)
+		if !waiting && syncd.ReasonOf(err) == "QUIESCE_STALLED" {
+			waiting = true
+			step("SyncD is still busy; waiting up to %v for it to finish", prepareLimit)
+		}
+		return err
+	}, alive, time.Now, time.Sleep)
+	if err == nil && alive() {
+		step("SyncD is ready: no sync is running and its state is saved")
+	}
+	return err
+}
+
 // shutdown sends daemon.shutdown to the profile's SyncD over the
 // authenticated pipe, which only a SyncD started from executable answers.
-// Notes: syncd.Remote starts SyncD when no pipe exists, and SyncD may exit
-// between the process scan and the dial. The client therefore gets the
-// executable as a path relative to the working directory: the pipe check
-// resolves it to the same file, while the launcher refuses relative paths,
-// so this call can never start SyncD (doc/en-us/packaging.md asks for a
-// connect-only client instead). It returns once the request completes or
-// every process in ps has exited, whichever comes first.
+// Notes: the client only connects (syncd.ConnectRemote), so a SyncD that
+// exits between the process scan and the dial is never started again. It
+// returns once the request completes or every process in ps has exited,
+// whichever comes first.
 func shutdown(profile, executable string, ps []process) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	wd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-	rel, err := filepath.Rel(wd, executable)
-	if err != nil || filepath.IsAbs(rel) {
-		return fmt.Errorf("no relative path from %s to SyncD", wd)
-	}
-	r := syncd.NewRemote(ctx, profile, rel)
+	r := syncd.ConnectRemote(ctx, profile, executable)
 	defer r.Close()
 	for {
 		if len(waitExit(ps, 0)) == 0 {
@@ -278,7 +322,7 @@ func uninstallApp(root, profile string, removeData bool) error {
 	if err != nil {
 		step("install state unreadable (%v); removing what is there", err)
 	}
-	if err := stopApp(root, profile); err != nil {
+	if err := stopApp(root, profile, "", ""); err != nil {
 		return err
 	}
 	var dataErr error
@@ -360,7 +404,7 @@ func removeUserData(root, profile, executable string) error {
 	if err != nil {
 		step("SyncD stop request: %v", err)
 	}
-	if err := stopApp(root, profile); err != nil {
+	if err := stopApp(root, profile, "", ""); err != nil {
 		return err
 	}
 	if failed > 0 {

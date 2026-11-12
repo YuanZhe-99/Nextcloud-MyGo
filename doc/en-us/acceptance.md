@@ -138,10 +138,10 @@ property, so none is `passed`.
 | 23.2-6 consent, deletion confirm, reauth completable | `partial` | [ipc](ipc.md): real backend runs; B14 ([platform notes](platform-notes.md)): sign-in, address approval, deletion review and conflict completed in the installed interface | Reauthentication through the interface |
 | 23.3-1 naming and icon | `partial` | [packaging](packaging.md): installer, shortcut and Apps entry named Nextcloud-MyGo; executable icon from the upstream icon | Trademark check; tray and window icon |
 | 23.3-2 package architectures and dependencies | `partial` | [packaging](packaging.md): both packages checked; B14: the ARM64 package checked and run | x64 package on x64 hardware |
-| 23.3-3 install, upgrade, downgrade, uninstall, coexistence | `partial` | [packaging](packaging.md): ARM64 install, same-version upgrade, uninstall and coexistence; downgrade refusal unit-tested; B14: same-version reinstall over a running, signed-in copy kept account and folder | x64; upgrade between versions; `daemon.prepareUpdate` |
+| 23.3-3 install, upgrade, downgrade, uninstall, coexistence | `partial` | [packaging](packaging.md): ARM64 install, same-version upgrade, uninstall and coexistence; downgrade refusal unit-tested; B14: same-version reinstall over a running, signed-in copy kept account and folder; package smoke: 0.1.0 → 0.1.1 test-version upgrade over a running SyncD through `daemon.prepareUpdate`, profile state and startup report (previous version, schema, self-check passed) checked, ARM64 | x64; an upgrade between versions with a signed-in account |
 | 23.3-4 matrix, content checks, 24-hour report | `not run` | This document | All of it |
 | 23.3-5 auto-update only with a trusted chain | `not possible on this hardware` | [gui](gui.md): updates stay off in unsigned builds | A trusted signing chain |
-| 23.3-6 §17.1 desktop features | `partial` | [platform notes](platform-notes.md): B14: tray icon and flyout, close to tray, Start menu reopen, Quit and stop syncing | `daemon.prepareUpdate`; notifications; start at sign-in; sleep and resume |
+| 23.3-6 §17.1 desktop features | `partial` | [platform notes](platform-notes.md): B14: tray icon and flyout, close to tray, Start menu reopen, Quit and stop syncing; setup reaches `daemon.prepareUpdate` before stopping SyncD (package smoke) | `daemon.prepareUpdate` refusals with a real deletion waiting; notifications; start at sign-in; sleep and resume |
 | 23.3-7 licenses, source, limits, diagnostics notes | `partial` | [platform notes](platform-notes.md): known limitations | User guide; release source materials |
 | 23.3-8 no unverified capability listed as supported | `partial` | [backend progress](backend-progress.md): `fullSync` and `endpointAutoSwitch` stay `false` | Release list |
 
@@ -165,13 +165,13 @@ Native Windows 11 ARM64, installed package, real window driven by UI Automation,
 | Step | Status | Checked by |
 |---|---|---|
 | 1 install, setup, sign in, folder, first sync | `passed` | interface; the setup's Start step not exercised |
-| 2 local and remote changes, Activity | `partial` | interface and state; Activity lacks local deletions and renames, times in UTC |
+| 2 local and remote changes, Activity | `partial` | interface and state; times in UTC; protocol 1.10 adds `deletedLocal`, `renamedRemote` and `renamedLocal` (`testCycleActivity`), shown by the interface against the Mock (`TestActivityKinds110`), not yet from a real cycle |
 | 3 bulk deletion review | `passed` | interface and server |
 | 4 conflict | `passed` | interface and files |
 | 5 folder pause through pause all and resume all | `passed` | interface and server |
-| 6 addresses and switching | `partial` | interface; fixed/automatic not offered, a switch vanished after a failed cycle |
+| 6 addresses and switching | `partial` | interface; fixed/automatic not offered; a switch held past its drain window now ends as `switchFailed` (`switch-quota`, ARM64, 35.0.2), not run again in the interface |
 | 7 close, reopen, quit from the tray | `passed` | interface and processes |
-| 8 reinstall over the running copy | `partial` | interface and processes; `daemon.shutdown` only, no higher version, self-check `CANCELLED` |
+| 8 reinstall over the running copy | `partial` | interface and processes; since then setup calls `daemon.prepareUpdate`, the self-check no longer fails on `CANCELLED` (`SyncDFolderErrorContracts`) and a 0.1.0 → 0.1.1 test upgrade passed in the package smoke; not run again in the interface |
 | 9 remove the account, uninstall | `passed` | interface, registry, server token list |
 | sleep and resume | `not run` | needs the user |
 

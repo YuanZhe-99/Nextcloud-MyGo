@@ -1,15 +1,19 @@
 #Requires -Version 7
-# Installs a built package for the current user, launches it, reinstalls it over itself, uninstalls it
-# twice (keeping, then removing user data) and proves nothing is left behind (PLAN.md §16, R19/R20).
-# Inputs: -Setup, the installer tools/package.ps1 built for this machine's architecture.
+# Installs a built package for the current user, launches it, reinstalls it over itself, optionally
+# upgrades it to a higher version, uninstalls it twice (keeping, then removing user data) and proves
+# nothing is left behind (PLAN.md §16, R19/R20).
+# Inputs: -Setup, the installer tools/package.ps1 built for this machine's architecture; -UpgradeTo, a
+# higher-version installer of the same architecture (tools/package.ps1 -TestVersion), installed over
+# the running -Setup version through daemon.prepareUpdate.
 # Side effects: a temporary per-user install, Start menu shortcut, Apps entry and startup entry, all
 # removed again; runs under a throwaway interface/SyncD profile, never the default one, and never
 # touches the official Nextcloud client. Refuses to run over an existing Nextcloud-MyGo install.
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$Setup)
+param([Parameter(Mandatory)][string]$Setup, [string]$UpgradeTo = '')
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 $Setup = (Resolve-Path $Setup).Path
+if ($UpgradeTo) { $UpgradeTo = (Resolve-Path $UpgradeTo).Path }
 $programs = [Environment]::GetFolderPath('LocalApplicationData') + '\Programs'
 $root = Join-Path $programs 'Nextcloud-MyGo'
 $appsKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Nextcloud-MyGo'
@@ -33,19 +37,39 @@ Add-Type -Namespace Smoke -Name Native -MemberDefinition @'
 [DllImport("kernel32.dll")] public static extern bool CloseHandle(IntPtr handle);
 '@
 
-# Invoke-Bounded runs a program under the throwaway profile with a deadline.
+# Invoke-Bounded runs a program under the throwaway profile with a deadline; its output is shown and
+# kept in $script:output.
 function Invoke-Bounded([string]$Name, [int]$Seconds, [string]$File, [string[]]$Arguments = @()) {
     $watch = [Diagnostics.Stopwatch]::StartNew()
     $info = [Diagnostics.ProcessStartInfo]::new($File)
     foreach ($a in $Arguments) { $info.ArgumentList.Add($a) }
     $info.UseShellExecute = $false
+    $info.RedirectStandardOutput = $true
     $info.WorkingDirectory = $env:TEMP
     $info.Environment['NEXTCLOUD_MYGO_PROFILE'] = $profileName
     $p = [Diagnostics.Process]::Start($info)
-    if (-not $p.WaitForExit($Seconds * 1000)) { $p.Kill($true); throw "$Name timed out after $Seconds s" }
+    $text = $p.StandardOutput.ReadToEndAsync()
+    $exited = $p.WaitForExit($Seconds * 1000)
+    if (-not $exited) { $p.Kill($true) }
+    $script:output = $text.Result
+    if ($script:output) { Write-Host $script:output.TrimEnd() }
+    if (-not $exited) { throw "$Name timed out after $Seconds s" }
     if ($p.ExitCode -ne 0) { throw "$Name failed with exit code $($p.ExitCode)" }
     Write-Host ("[{0}] {1:n1}s" -f $Name, $watch.Elapsed.TotalSeconds)
 }
+
+# Get-Report reads the running SyncD's version, pause state, counts and startup report through its pipe.
+# SyncD's pipe serves one client at a time, so the interface is closed first; SyncD keeps running.
+function Get-Report([string[]]$Options = @()) {
+    Get-Ours | Where-Object Name -EQ 'Nextcloud-MyGo' | Stop-Process -Force
+    Wait-For 'the interface to close' 20 { -not (Get-Ours | Where-Object Name -EQ 'Nextcloud-MyGo') }
+    $d = Get-Ours | Where-Object Name -EQ 'nextcloud-mygo-syncd' | Select-Object -First 1
+    Invoke-Bounded 'report' 90 $tool (@('report', '-profile', $profileName, '-syncd', $d.Path) + $Options)
+    return $script:output | ConvertFrom-Json
+}
+
+# Get-Manifest returns the manifest of an installed version directory.
+function Get-Manifest([string]$Dir) { Get-Content (Join-Path $Dir 'manifest.json') -Raw | ConvertFrom-Json }
 
 # Wait-For polls a condition until it holds or the deadline passes.
 function Wait-For([string]$What, [int]$Seconds, [scriptblock]$Condition) {
@@ -125,7 +149,10 @@ function Get-Official {
     return "nc=$nc;config=$stamp;apps=$($keys -join ',')"
 }
 
-$arch = switch -Regex ([IO.Path]::GetFileName($Setup)) { '-arm64-test-setup\.exe$' { 'ARM64' } '-x64-test-setup\.exe$' { 'x64' } default { throw 'not a tools/package.ps1 installer' } }
+# Get-Arch returns the architecture a tools/package.ps1 installer's name states.
+function Get-Arch([string]$Path) { switch -Regex ([IO.Path]::GetFileName($Path)) { '-arm64-test-setup\.exe$' { 'ARM64' } '-x64-test-setup\.exe$' { 'x64' } default { throw "$Path is not a tools/package.ps1 installer" } } }
+$arch = Get-Arch $Setup
+if ($UpgradeTo -and (Get-Arch $UpgradeTo) -ne $arch) { throw '-UpgradeTo is for another architecture' }
 $official = Get-Official
 $dirs = { (Get-ChildItem ([Environment]::GetFolderPath('ApplicationData')), ([Environment]::GetFolderPath('LocalApplicationData'))).FullName }
 $before = & $dirs
@@ -140,12 +167,44 @@ try {
     $oldExe = Join-Path $first 'Nextcloud-MyGo.exe'
     New-ItemProperty $runKey -Name $runName -Value "`"$oldExe`" --mygo-opened-at-login" -Force | Out-Null
     Invoke-Bounded 'reinstall' 120 $Setup
+    if ($script:output -notmatch 'SyncD is ready') { throw 'the reinstall did not bring SyncD to the update safe point (daemon.prepareUpdate)' }
     $second = Assert-Installed
     if ($second -eq $first -or (Test-Path $first)) { throw 'the reinstall did not move to a fresh version directory' }
     $run = (Get-ItemProperty $runKey).$runName
     if ($run -ne "`"$(Join-Path $second 'Nextcloud-MyGo.exe')`" --mygo-opened-at-login") { throw "startup entry not moved: $run" }
     Write-Host '  startup entry moved to the new version'
     Assert-Running $second
+    $last = $Setup
+
+    if ($UpgradeTo) {
+        Write-Host '2b. upgrade the running version to the higher test version'
+        $old = Get-Manifest $second
+        $pre = Get-Report @('-pause-all')
+        if (-not $pre.allPaused -or $pre.version -ne $old.version) { throw "unexpected state before the upgrade: $($pre | ConvertTo-Json -Compress)" }
+        Write-Host "  SyncD $($pre.version) running, every folder paused (kept across the upgrade)"
+        $info = [Diagnostics.ProcessStartInfo]::new((Join-Path $second 'Nextcloud-MyGo.exe'))
+        $info.UseShellExecute = $false
+        $info.Environment['NEXTCLOUD_MYGO_PROFILE'] = $profileName
+        [void][Diagnostics.Process]::Start($info)
+        Assert-Running $second
+        $copies = @((Get-ChildItem $data -Filter 'control.pre-update.*.sqlite').Name)
+        Invoke-Bounded 'upgrade' 300 $UpgradeTo
+        if ($script:output -notmatch 'SyncD is ready') { throw 'the upgrade did not bring SyncD to the update safe point (daemon.prepareUpdate)' }
+        if (-not (Get-ChildItem $data -Filter 'control.pre-update.*.sqlite' | Where-Object Name -NotIn $copies)) { throw "the upgrade left no new pre-update Control copy in $data" }
+        $third = Assert-Installed
+        if ($third -eq $second -or (Test-Path $second)) { throw 'the upgrade did not move to a fresh version directory' }
+        $next = Get-Manifest $third
+        if (-not $next.testVersion -or [version]$next.version -le [version]$old.version) { throw "installed $($next.version) is not a higher test version than $($old.version)" }
+        Assert-Running $third
+        $post = Get-Report
+        $r = $post.startupReport
+        if ($post.version -ne $next.version -or $r.previousVersion -ne $old.version -or $r.previousSchema -ne $old.syncd.controlSchema -or
+            $r.schema -ne $next.syncd.controlSchema -or $r.selfCheck -ne 'passed' -or -not $post.allPaused -or $post.accounts -ne $pre.accounts) {
+            throw "startup report after the upgrade is wrong: $($post | ConvertTo-Json -Compress -Depth 4)"
+        }
+        Write-Host "  SyncD $($post.version) reports previous version $($r.previousVersion), schema $($r.previousSchema) -> $($r.schema), self-check $($r.selfCheck); profile state kept"
+        $last = $UpgradeTo
+    }
 
     Write-Host '3. uninstall, keeping user data'
     Invoke-Bounded 'uninstall' 120 (Join-Path $root 'uninstall.exe') @('-uninstall')
@@ -154,7 +213,7 @@ try {
     Write-Host "  kept $data"
 
     Write-Host '4. install again, then uninstall removing user data'
-    Invoke-Bounded 'install' 120 $Setup
+    Invoke-Bounded 'install' 120 $last
     Assert-Running (Assert-Installed)
     Invoke-Bounded 'uninstall -remove-user-data' 180 (Join-Path $root 'uninstall.exe') @('-uninstall', '-remove-user-data')
     Assert-Gone

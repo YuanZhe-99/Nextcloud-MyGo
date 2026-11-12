@@ -351,20 +351,53 @@ func whyWords(s syncd.Snapshot, e syncd.Endpoint, n syncd.Network, r syncd.Reaso
 	return ""
 }
 
-// switchList is the account's recent switches, newest first.
-func (a *App) switchList(c *ui.Context) {
-	p := pal(c)
-	s := a.snap
-	var list []syncd.Switch
-	for _, sw := range s.Switches {
-		if sw.AccountID == a.account {
-			list = append(list, sw)
-		}
-	}
+// switchEntry is one entry of the recent switches, in words.
+type switchEntry struct {
+	at          time.Time
+	title, body string
+}
+
+// switchEntries is the account's recent switches, with the switches it asked
+// for that did not happen (switchFailed activity), newest first.
+func switchEntries(s syncd.Snapshot, accountID string) []switchEntry {
 	name := func(id string) string {
 		e, _ := s.Endpoint(id)
 		return e.Name
 	}
+	var list []switchEntry
+	for _, sw := range s.Switches {
+		if sw.AccountID != accountID {
+			continue
+		}
+		r := switchEntry{at: sw.At, title: name(sw.FromID) + " → " + name(sw.ToID)}
+		switch sw.Reason {
+		case syncd.ReasonJoinedNetwork:
+			r.body = L.SwitchJoined()
+		case syncd.ReasonUnreachable:
+			r.body = L.SwitchUnreachable()
+		case syncd.ReasonUserChoice:
+			r.body = L.SwitchUser()
+		case syncd.ReasonFaster:
+			r.body = L.SwitchFaster()
+		case syncd.ReasonPostponed:
+			r.title, r.body = L.SwitchPostponedTitle(int(sw.Postponed/time.Minute)), L.SwitchPostponedBody()
+		}
+		list = append(list, r)
+	}
+	for _, e := range s.Activity {
+		if e.Kind == syncd.ActSwitchFailed && e.AccountID == accountID {
+			list = append(list, switchEntry{at: e.At, title: switchFailed(s, e)})
+		}
+	}
+	slices.SortStableFunc(list, func(x, y switchEntry) int { return y.at.Compare(x.at) })
+	return list
+}
+
+// switchList is the account's recent switches, newest first.
+func (a *App) switchList(c *ui.Context) {
+	p := pal(c)
+	s := a.snap
+	list := switchEntries(s, a.account)
 	ui.Column(c).Children(func() {
 		ui.Box(c).Margin(0, 0, 8, 0).Children(func() { sectionTitle(c, L.RecentSwitches()) })
 		if len(list) == 0 && stateKnown(s) {
@@ -372,29 +405,16 @@ func (a *App) switchList(c *ui.Context) {
 		}
 		now := time.Now()
 		for i, sw := range list {
-			title, body := name(sw.FromID)+" → "+name(sw.ToID), ""
-			switch sw.Reason {
-			case syncd.ReasonJoinedNetwork:
-				body = L.SwitchJoined()
-			case syncd.ReasonUnreachable:
-				body = L.SwitchUnreachable()
-			case syncd.ReasonUserChoice:
-				body = L.SwitchUser()
-			case syncd.ReasonFaster:
-				body = L.SwitchFaster()
-			case syncd.ReasonPostponed:
-				title, body = L.SwitchPostponedTitle(int(sw.Postponed/time.Minute)), L.SwitchPostponedBody()
-			}
 			r := ui.Row(c).Gap(12).Padding(10, 0).AlignItems(ui.Start)
 			if i < len(list)-1 {
 				r.BorderWidth(0, 0, 1, 0).BorderColor(p.hover)
 			}
 			r.Children(func() {
-				muted(c, clock(sw.At, now), fontSmall).Width(72).Shrink(0)
+				muted(c, clock(sw.at, now), fontSmall).Width(72).Shrink(0)
 				ui.Column(c).Gap(2).Grow(1).MinWidth(0).Children(func() {
-					ui.Text(c, title).FontSize(13).FontWeight(600)
-					if body != "" {
-						muted(c, body, 13).Wrap()
+					ui.Text(c, sw.title).FontSize(13).FontWeight(600).Wrap()
+					if sw.body != "" {
+						muted(c, sw.body, 13).Wrap()
 					}
 				})
 			})

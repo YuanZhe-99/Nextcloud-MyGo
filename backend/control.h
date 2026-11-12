@@ -24,7 +24,12 @@ public:
   /// `PRAGMA user_version=` statement in control.cpp must name the same.
   static constexpr int schemaVersion = 11;
   /// protocolMinor is the protocol 1.x minor version this build speaks.
-  static constexpr int protocolMinor = 9;
+  static constexpr int protocolMinor = 10;
+  /// protocolVersion is the "1.<minor>" text Diagnostics and the startup
+  /// report show; derived from protocolMinor so no copy can drift.
+  static QString protocolVersion() {
+    return QStringLiteral("1.%1").arg(protocolMinor);
+  }
   /// StartupMode selects immediate fixtures, deferred admission or DB-less IPC.
   enum class StartupMode {
     Immediate,

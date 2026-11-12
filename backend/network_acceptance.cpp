@@ -373,7 +373,8 @@ void networkAcceptance(const QString &scenario) {
                  scenario == "network-chunked" ||
                  scenario.section('=', 0, 0) == "network-uncertain" ||
                  scenario == "network-large" || scenario == "file-safety";
-  const bool multi = scenario == "multi-account",
+  const bool multi =
+                 scenario == "multi-account" || scenario == "switch-quota",
              slow = scenario == "slow-server";
   const auto stage = scenario.section('=', 1);
   // One transfer case per process: each starts on healthy endpoints, with no
@@ -596,7 +597,10 @@ void networkAcceptance(const QString &scenario) {
         },
         [&](const QString &id) { return NetworkTestAccess::stable(c, id); }};
     try {
-      multiAccountAcceptance(c, root, account, target, base, calls);
+      if (scenario == "switch-quota")
+        switchQuotaAcceptance(c, root, base, calls);
+      else
+        multiAccountAcceptance(c, root, account, target, base, calls);
     } catch (const std::exception &error) {
       std::fprintf(stderr, "%s\n", error.what());
       settled(c, call(c, "daemon.shutdown", {{"reason", "user"}}));

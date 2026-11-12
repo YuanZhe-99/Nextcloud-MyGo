@@ -205,6 +205,21 @@ void Control::advanceSwitch(const QString &account, qint64 epoch,
                             QDeadlineTimer deadline, bool recovering) {
 #ifdef SYNCD_WITH_ENGINE
   QString operation, target;
+  // A switch the user asked for ends visibly: switched, or switchFailed with
+  // its reason in the history, inside the caller's transaction (protocol
+  // 1.10). Notes: regression for a request that vanished when its drain
+  // window expired during a long upload (B14 step 6).
+  const auto refused = [&](const QString &reason) {
+    QSqlQuery context(db_);
+    context.prepare("SELECT from_id,cause FROM switch_context WHERE "
+                    "account_id=? AND epoch=?");
+    context.addBindValue(account);
+    context.addBindValue(epoch);
+    execute(context);
+    if (context.next() && context.value(1) == "manual")
+      recordActivity(account, {}, "switchFailed", 1, context.value(0).toString(),
+                     target, reason);
+  };
   try {
     QSqlQuery q(db_);
     q.prepare("SELECT operation_id,target_id FROM switch_intents WHERE "
@@ -236,6 +251,7 @@ void Control::advanceSwitch(const QString &account, qint64 epoch,
           else
             SwitchState(db_).defer(account, epoch);
           saveReceipt(db_, receipt(operation, "QUIESCE_STALLED"));
+          refused(QStringLiteral("QUIESCE_STALLED"));
           q.prepare("DELETE FROM pending_policies WHERE operation_id=?");
           q.addBindValue(operation);
           execute(q);
@@ -406,6 +422,8 @@ void Control::advanceSwitch(const QString &account, qint64 epoch,
         saveReceipt(db_, receipt(operation, known.contains(reason)
                                                 ? reason
                                                 : "INTERNAL_ERROR"));
+        refused(known.contains(reason) ? reason
+                                       : QStringLiteral("INTERNAL_ERROR"));
         if (reason == "TLS_ERROR" || reason == "ENDPOINT_IDENTITY_MISMATCH" ||
             reason == "ENDPOINT_UNTRUSTED") {
           QSqlQuery rejected(db_);

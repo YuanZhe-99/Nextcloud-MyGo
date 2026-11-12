@@ -431,6 +431,24 @@ PrintWindow 截图并读回核对。登录使用 Login Flow v2：界面打开浏
 `endpointAutoSwitch` 只有一次被正确推迟到安全点的手动切换和上述消失的切换；`virtualFiles` 未经测试。三者
 都保持 `false`。
 
+### 在 SyncD 和安装程序中修复的 B14 问题
+
+同一台 ARM64 主机，2026-11-12，SyncD 用此源码树为 ARM64 和 x64 重新构建，协议 1.10：
+
+| 问题 | 原因 | 修复与证据 |
+|---|---|---|
+| 诊断显示协议 1.8 | `control_diagnostics.cpp` 与 `startup_control.cpp` 中的字面值 | 两处都使用 `Control::protocolVersion()`；`testProtocolVersion` 将 `contract.json`、`session.hello` 和两种诊断与 `Control::protocolMinor` 比较 |
+| 重装后自检 `failed CANCELLED` | 关闭时停止的周期以 `CANCELLED` 结束并作为目录错误保存；下次启动保留了它，而 `selfCheck` 把每个出错的目录都算作失败 | 启动时把 `CANCELLED` 清为离线，自检只统计未能挂接的目录映射；`SyncDFolderErrorContracts` 中的 `previousCycle`（CANCELLED、SYNC_FAILED） |
+| 切换消失 | 运行中周期超过 30 秒排空窗口时，用户请求被丢弃（回执失败、待定策略被删除），快照中没有任何记录，而界面不轮询回执 | 请求以带原因的 `switchFailed` 活动结束；`switch-quota` 在修复前停在其结果一步，修复后通过，经包装脚本 74.8 秒，Nextcloud 35.0.2 |
+| “活动”没有本地删除或重命名 | 引擎适配器只统计上传、下载和远端删除 | `deletedLocal`、`renamedRemote`、`renamedLocal`；`testCycleActivity`；界面已显示（`TestActivityKinds110`，对照 Mock） |
+| 安装程序只用 `daemon.shutdown`；没有第二个版本 | 见[打包](packaging.md) | 安装程序调用 `daemon.prepareUpdate`；安装包冒烟测试在运行中的 SyncD 上把 0.1.0 升级到 0.1.1 测试包，用时 36.0 秒（无账号） |
+
+运行：ARM64 快速层 38.4 秒通过。仿真 x64 快速层在另一项构建占用主机时两次在
+`TestRealPipeUnavailableStopsINV11INV12` 失败（守护进程在诊断关闭后以 1 退出）；该测试单独运行 3 次均通过，
+全部真实管道测试一起运行也通过，因此记录为未解决，而非通过。ARM64 服务器层在同样负载下停在
+`chunk session resume`，超出其 150 秒预算 2.1 秒（此前为 148.3 秒）；在它之前运行的每个用例都通过。
+B14 各步骤未通过已安装的界面重新运行。
+
 ## 已知限制
 
 原生 Windows ARM64 上的上游 CTest 已通过 SyncJournalDBTest、ConcatUrlTest、

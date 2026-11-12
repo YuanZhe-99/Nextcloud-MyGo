@@ -2,7 +2,7 @@
 
 ## Contract
 
-Protocol 1.9 uses JSON-RPC 2.0 over a local Named Pipe: a four-byte little-endian length followed
+Protocol 1.10 uses JSON-RPC 2.0 over a local Named Pipe: a four-byte little-endian length followed
 by UTF-8 JSON, at most 1 MiB and 64 nested containers. Duplicate object keys are invalid.
 `protocol/contract.json` records methods and capability gates. `protocol/fixtures.json` is shared
 by Go and C++ contract tests. The wire projection uses lower-camel-case field names.
@@ -25,6 +25,22 @@ uncertain; reconnect retries the same key. The client polls `operations.get` for
 Unsupported capabilities return `UNSUPPORTED_CAPABILITY`, never simulated success.
 
 ## Implementation scope
+
+Protocol 1.10, with Control schema 11 unchanged, completes the history (schema `$defs/activity` in
+`protocol/message.schema.json`, examples in `protocol/state.examples.json`). Activity entries carry
+`cursor`, `accountId`, `folderId`, `at`, `kind`, `count`, `fromId`, `toId` and `reason`, and `name`
+for a switch. Four kinds are new: `deletedLocal` (entries removed on this PC because the server
+removed them), `renamedRemote` and `renamedLocal` (renames or moves applied on the server and on
+this PC; each counts upstream's completed rename items, a directory as one), and `switchFailed`: a
+switch the user asked for (`endpoints.requestSwitch` or a fixed `endpoints.setPolicy`) that did not
+happen, with `fromId` still in use, `toId` the address asked for, its `name`, and the `reason` code.
+A user's request therefore always ends in the history, as `switched` or `switchFailed`; while it
+waits for a running cycle the network shows `switching`, `why` with `postponed` and, for a policy,
+`requestedEndpointId`. When the cycle outlasts the 30-second drain window the request ends as
+`switchFailed` with `QUIESCE_STALLED`, the address and policy unchanged (the window, the request
+and its receipt were as before; only the record is new). Automatic switches record no failure entry.
+Diagnostics, the startup diagnostics and `session.hello` all report the one `Control::protocolMinor`
+(`testProtocolVersion` compares them with `protocol/contract.json`).
 
 Protocol 1.9, with Control schema 11, adds what the interface needs and what the installer needs
 (examples in `protocol/state.examples.json`, schema in `protocol/message.schema.json`):
@@ -58,12 +74,12 @@ Protocol 1.9, with Control schema 11, adds what the interface needs and what the
   receipt succeeds with `{"ready": true}`. The hold lasts ten minutes or until shutdown.
   `daemon.startupReport` then says what a start migrated from (`previousVersion`,
   `previousSchema`, `schema`) and whether its self-check passed (`selfCheck`: pending, passed or
-  failed, with `reasonCodes`).
+  failed, with `reasonCodes`). It checks only this start: the database, every ready account's credential and every mapping that did not attach again; a reason the previous process's last cycle left is not a failure of it, and a cycle stopped at shutdown (`CANCELLED`) no longer leaves its folder in error.
 - The `engine` capability separates a build linked to the upstream engine from a foundation build.
 - `folders.inspect` accepts a local folder that does not exist yet when its parent does
   (`localExists` false); `folders.add` then creates it empty.
 
-The Go client sends `minor: 9`, maps `ACCOUNT_EXISTS` to `ErrAccountExists` and `DECISION_PENDING`
+The Go client sends `minor: 10`, maps `ACCOUNT_EXISTS` to `ErrAccountExists` and `DECISION_PENDING`
 to `ErrBusy`, and offers `ConnectRemote`, which never starts SyncD, and `Remote.Disconnect`, a
 stable phrase for Diagnostics saying why the last connection ended. A call made while no
 connection is ready returns `ErrDisconnected`: it still matches `ErrBusy` for the interface, but a

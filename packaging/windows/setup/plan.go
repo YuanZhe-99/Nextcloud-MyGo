@@ -2,18 +2,70 @@ package main
 
 import (
 	"archive/zip"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/YuanZhe-99/Nextcloud-MyGo/internal/release"
+	"github.com/YuanZhe-99/Nextcloud-MyGo/internal/syncd"
 	"github.com/YuanZhe-99/Nextcloud-MyGo/internal/version"
 )
+
+// prepareLimit bounds how long setup waits for a running SyncD to reach the
+// update safe point.
+const prepareLimit = 2 * time.Minute
+
+// Why setup stops before replacing anything, worded for the person running it.
+var (
+	errDeletionPending = errors.New("Nextcloud MyGo is waiting for you to review a deletion. Open Nextcloud MyGo, review it, then run setup again")
+	errNotQuiet        = errors.New("Nextcloud MyGo is still busy (signing in, checking or switching a server address, or finishing a sync) and did not get ready within 2 minutes. Wait a few minutes, then run setup again")
+	errNoAnswer        = errors.New("Nextcloud MyGo's background sync is running but did not answer within 2 minutes. Quit Nextcloud MyGo from its tray icon, then run setup again")
+	errNotPrepared     = errors.New("Nextcloud MyGo could not get ready for the update. Quit Nextcloud MyGo from its tray icon, then run setup again")
+)
+
+// prepare asks a running SyncD for the update safe point (daemon.prepareUpdate,
+// PLAN.md §16.2) until it is ready.
+// Inputs: ask sends the request; running reports whether that SyncD's process
+// is still alive; now and sleep are the clock.
+// Returns: nil once SyncD is ready, or when its process has gone and there is
+// nothing left to prepare; errDeletionPending at once when a deletion waits
+// for the user; errNotQuiet (still busy) or errNoAnswer (never connected) once
+// prepareLimit has passed; errNotPrepared at once for any other refusal.
+// Notes: installing never makes a deletion decision for the user, so that
+// refusal is final; QUIESCE_STALLED (a switch, renewal, address check or
+// sign-in running, or the running cycle not finished in SyncD's own bound), a
+// missing connection, a configuration revision that moved meanwhile and the
+// client's own request deadline are retried.
+func prepare(ask func() error, running func() bool, now func() time.Time, sleep func(time.Duration)) error {
+	deadline := now().Add(prepareLimit)
+	for {
+		err := ask()
+		switch {
+		case err == nil:
+			return nil
+		case syncd.ReasonOf(err) == "DECISION_PENDING":
+			return errDeletionPending
+		case !running():
+			return nil
+		case !errors.Is(err, syncd.ErrBusy) && !errors.Is(err, syncd.ErrStale) && !errors.Is(err, context.DeadlineExceeded):
+			return errNotPrepared
+		case !now().Before(deadline):
+			if errors.Is(err, syncd.ErrDisconnected) {
+				return errNoAnswer
+			}
+			return errNotQuiet
+		}
+		sleep(time.Second)
+	}
+}
 
 // state is install.json at the install root: the one version directory the
 // shortcut, the Apps entry and the startup entry point to.

@@ -59,7 +59,7 @@ QJsonArray Control::activityProjection(const QJsonObject &params) const {
                      {"fromId", q.value(6).toString()},
                      {"toId", q.value(7).toString()},
                      {"reason", q.value(8).toString()}};
-    if (q.value(4) == "switched") {
+    if (q.value(4) == "switched" || q.value(4) == "switchFailed") {
       QSqlQuery endpoint(db_);
       endpoint.prepare(
           "SELECT name FROM endpoints WHERE account_id=? AND id=? UNION ALL "

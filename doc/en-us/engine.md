@@ -59,7 +59,7 @@ accounts/managers/replies, freshly verifies the target UID and every mapped root
 binding with admission still closed. Runtime rebinding retains journals and root leases. Only matching
 successful new-epoch cycles consume reconciliation membership; paused folders remain pending until
 the user resumes them. Failure after retirement leaves a durable block, never an implicit resume.
-`endpoints.requestSwitch` returns a running receipt; completion is observed through `operations.get`.
+`endpoints.requestSwitch` returns a running receipt; completion is observed through `operations.get`. Every user request also ends in Activity: `switched`, or `switchFailed` with its reason, such as `QUIESCE_STALLED` when the running cycle outlasts the 30 seconds and the address and policy stay ([ipc](ipc.md), protocol 1.10).
 Automatic policy activation and complete fault recovery are still unfinished.
 
 Interrupted-switch startup recovery uses the last committed endpoint, not an uncommitted target.

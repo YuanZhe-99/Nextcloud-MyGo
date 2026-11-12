@@ -19,10 +19,10 @@ SyncD 连通基础已实现；完整同步尚未完成。见 [IPC](../ipc.md) �
 | `backend/endpoint_policy.*` | 确定性的仅提议评分、代次隔离、去抖、隔离及熔断恢复 | `EndpointPolicy`、`beginProbe`、`observe`、`choose` |
 | `backend/control_network.cpp`, `backend/network_*` | 原生通知排空、有界健康序列、持久策略、冻结切换证据及新 epoch 恢复提案 | `NetworkMonitor`、`evaluateNetwork`、`networkOutcome`、`policyMutation`、`switchEvidence`、`switchFailed` |
 | `backend/network_tunnel.*`, `backend/network_acceptance.h`, `backend/network_transfer_acceptance.cpp` | 仅验收使用的有界加密中继（限速、扣留回复、丢弃回复、延迟回复）、慢速服务器健康用例、真实映射传输故障、回复丢失的 MOVE/DELETE/最终 MOVE 用例、切换阶段杀进程及重启检查、文件安全用例，父进程负责远程清理 | `NetworkTunnel`、`TransferFaults`、`SwitchFacts`、`networkTransferAcceptance`、`switchKillAcceptance`、`switchRecoverAcceptance`、`cleanupNetworkContent` |
-| `backend/multi_account_acceptance.cpp` | 仅验收使用、在一次性服务器上运行的 2 个账号 × 2 个目录：拒绝重复账号、各账号独立绑定、一个账号的切换不暂停其他账号、服务器配额已满时守护进程继续服务且固定策略能提交、移除一个账号，第二个服务器用户由父进程清理 | `multiAccountAcceptance`、`AcceptanceCalls`、`cleanupOwnedUser` |
+| `backend/multi_account_acceptance.cpp` | 仅验收使用、在一次性服务器上运行的 2 个账号 × 2 个目录：拒绝重复账号、各账号独立绑定、一个账号的切换不暂停其他账号、服务器配额已满时守护进程继续服务且固定策略能提交、移除一个账号，第二个服务器用户由父进程清理；以及 switch-quota 运行：上传被挂起超过排空窗口时请求的切换以 `switchFailed` 结束，配额已满时再次请求则完成切换 | `multiAccountAcceptance`、`switchQuotaAcceptance`、`AcceptanceCalls`、`cleanupOwnedUser` |
 | `backend/control_diagnostics.cpp` | 不含路径/凭据的运行时计数及原子、有界本地支持包 | `diagnosticsProjection`、`exportDiagnostics` |
 | `backend/startup*` | 配置所有权、单调时钟崩溃/退避准入、诊断 IPC、延迟激活及已验证迁移备份 | `Startup`、`engineAllowed`、`recordStopIntent`、`finishClean`、`backupControlBeforeMigration`、`Control::activate`、`startupDispatch` |
-| `backend/control_activity.cpp` | 有界、按游标过滤的已确认条目汇总及已提交切换历史 | `activityProjection`、`recordActivity` |
+| `backend/control_activity.cpp` | 有界、按游标过滤的已确认条目汇总（双向的传输、删除与重命名）及切换历史：已提交的切换与被拒绝的用户请求 | `activityProjection`、`recordActivity` |
 | `backend/watcher*` | Windows 递归变化通知、溢出核对及取消排空 | `RootWatcher`、`ready`、`arm` |
 | `backend/request_lifetime.*` | 回复完成/销毁计数及粘滞的结果不明写入观察 | `RequestLifetime`、`observe`、`Counts` |
 | `backend/resume_context.*` | 只读 ETag 下载、带校验和单 PUT 及分块 v2 会话准入；保留被阻塞轮询/v1 分块索引及损坏 journal | `resumeContextError` |
@@ -30,12 +30,15 @@ SyncD 连通基础已实现；完整同步尚未完成。见 [IPC](../ipc.md) �
 | `backend/platform/windows/ondemand*` | Cloud Files 同步根注册、归属检查、切换所等待的按需请求闸门、注销，以及真实服务器按需验收程序（[按需文件](../on-demand.md)） | `OnDemandRoot`、`ownershipError`、`close`、`busy`、`unregister`、`EngineAdapter::quiescent` |
 | `protocol/` | 协议 1.8 清单、schema 及共享恶意输入夹具 | `contract.json`、`message.schema.json`、`folders.schema.json`、`endpoints.schema.json`、`switch.schema.json`、`reauthentication.schema.json`、`policy.schema.json`、`startup.examples.json`、`constraints.examples.json`、`fixtures.json` |
 | `tools/build-syncd.ps1` | ARM64/x64 SyncD 构建与核心契约测试 | 脚本参数 |
-| `tools/pkg`、`tools/package.ps1`、`tools/package-smoke.ps1` | DLL 闭包暂存、安装包清单、原生架构 PE 检查与真实安装测试（[打包](../packaging.md)） | `stageCommand`、`check`、`inspect`、`native` |
-| `packaging/windows/setup` | 按版本目录的当前用户安装、协调的双进程停止、卸载及可选的用户数据删除 | `install`、`stopApp`、`shutdown`、`uninstallApp`、`admit`、`extract` |
+| `tools/pkg`、`tools/package.ps1`、`tools/package-smoke.ps1` | 带必需许可证包的 DLL 闭包暂存、安装包清单、原生架构 PE 检查、运行中 SyncD 的启动报告、测试版本安装包以及真实安装与升级测试（[打包](../packaging.md)） | `stageCommand`、`requireNotices`、`reportCommand`、`check`、`inspect`、`native` |
+| `packaging/windows/setup` | 按版本目录的当前用户安装、替换文件前的更新安全点、协调的双进程停止、卸载及可选的用户数据删除 | `install`、`stopApp`、`prepare`、`prepareUpdate`、`shutdown`、`uninstallApp`、`admit`、`extract` |
 | `internal/release` | `tools/pkg` 写入、安装器校验的安装包清单 | `Manifest`、`Parse`、`Verify` |
 | `locales` | 界面字符串（en、zh-Hans）及生成的访问函数 | `en.json`、`In` |
 | `internal/version` | 产品版本 | `Version`、`Older` |
 | `tools/checkdocs` | 文档镜像检查 | `main` |
+| `tools/bootstrap-deps.ps1` | 按记录的版本与提交精确组装原生依赖前缀（Qt、vcpkg 端口、ECM、QtKeychain、KDSingleApplication、KArchive、libp11、pkgconf、许可证文本）（[CI](../ci.md)） | `Get-Source`、`CMakeProject`、标记文件与 `env-<arch>.json` |
+| `tools/licenses.ps1` | 根据安装包实际构建所用的前缀和 Go 模块生成其许可证与声明包，并指明对应源代码 | `SOURCE.txt`、`Copy-Into` |
+| `.github/workflows/` | 推送与拉取请求的 CI、带缓存的原生 x64 与 ARM64 构建，以及 `v*` 标签的预发布（[CI](../ci.md)） | `build.yml`、`ci.yml`、`release.yml` |
 | `tools/build-upstream.ps1` | 对记录中的干净上游快照执行 M0 引擎与测试构建 | 脚本参数与依赖前缀检查 |
 | `patches/nextcloud/` | 记录上游构建、生命周期、UTC 日期及测试隔离修正 | `build-lock.json` 中的有序哈希；后端进度中的证据 |
 | `tools/test-upstream.ps1` | 隔离的真实服务器 M0 测试与清理 | `Invoke-TestCycle`、`Invoke-TestDav` |

@@ -45,6 +45,7 @@ about to change, verify against the code, then fix the docs in the same commit.
 | Engine adapter ownership and serial scheduling | `doc/en-us/engine.md` |
 | On-demand files: Cloud Files registration, hydration, the switch boundary and removal | `doc/en-us/on-demand.md` |
 | Environment, commands, dev loop | `doc/en-us/development.md` |
+| GitHub Actions CI, the dependency bootstrap, caches, the release workflow and its license bundle | `doc/en-us/ci.md` |
 | Installer, package layout, architecture check, upgrade and uninstall | `doc/en-us/packaging.md` |
 | English→Chinese terminology | `doc/en-us/translation-guide.md` |
 | Past releases and the upstream versions they used | `doc/en-us/version-history.md` |

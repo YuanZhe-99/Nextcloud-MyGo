@@ -6,7 +6,9 @@ import "strings"
 // Version is the product version. mygo.json must carry the same value
 // (checked by TestManifestMatches); release tags are "v" + Version. SyncD
 // reports this version too; the two halves ship as one verified combination.
-const Version = "0.1.0"
+// Notes: a variable only so that tools/package.ps1 -TestVersion can stamp a
+// test package with -ldflags -X; nothing else changes it.
+var Version = "0.1.0"
 
 // Older reports whether version a ("0.1.0", "v0.1.2") is older than b.
 func Older(a, b string) bool {

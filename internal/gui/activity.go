@@ -186,7 +186,7 @@ func (a *App) recentList(c *ui.Context) {
 	ui.Box(c).Margin(0, 0, 4, 0).Children(func() { sectionTitle(c, L.Recent()) })
 	var list []syncd.Activity
 	for _, e := range s.Activity {
-		isNet := e.Kind == syncd.ActSwitched
+		isNet := e.Kind == syncd.ActSwitched || e.Kind == syncd.ActSwitchFailed
 		if (a.filter == filterFiles && isNet) || (a.filter == filterNetwork && !isNet) {
 			continue
 		}
@@ -221,8 +221,16 @@ func (a *App) recentList(c *ui.Context) {
 			if e.Name == "" {
 				title = L.ActDeletedN(e.Count)
 			}
+		case syncd.ActDeletedLocal:
+			icon, title, detail = icTrash, L.ActDeletedLocalN(e.Count), L.ActDeletedLocalDetail(f.Name)
+		case syncd.ActRenamedRemote:
+			icon, title, detail = icFile, L.ActRenamedRemoteN(e.Count), L.ActRenamedRemoteDetail(f.Name)
+		case syncd.ActRenamedLocal:
+			icon, title, detail = icFile, L.ActRenamedLocalN(e.Count), L.ActRenamedLocalDetail(f.Name)
 		case syncd.ActSwitched:
 			icon, title, detail = icGlobe, L.ActSwitched(e.Name), ""
+		case syncd.ActSwitchFailed:
+			icon, title, detail = icWarn, switchFailed(s, e), ""
 		}
 		r := ui.Row(c.Key(i)).FillWidth().Gap(12).Padding(10, 0).AlignItems(ui.Start)
 		if i < len(list)-1 {
@@ -231,7 +239,12 @@ func (a *App) recentList(c *ui.Context) {
 		r.Children(func() {
 			ui.Icon(c, icon).FontSize(16).TextColor(p.muted)
 			ui.Column(c).Grow(1).MinWidth(0).Children(func() {
-				ui.Text(c, title).FontSize(13).Ellipsis("…").MaxLines(1)
+				if e.Kind == syncd.ActSwitchFailed {
+					// The reason is the point of the entry; it is never cut off.
+					ui.Text(c, title).FontSize(13).Wrap()
+				} else {
+					ui.Text(c, title).FontSize(13).Ellipsis("…").MaxLines(1)
+				}
 				if detail != "" {
 					muted(c, detail, fontSmall)
 				}

@@ -71,6 +71,19 @@ struct NetworkTestAccess {
   }
   /// db exposes the fixture's Control connection for setup and checks.
   static QSqlDatabase db(Control &control) { return control.db_; }
+  /// quiet prevents health probes of a Control reopened on a seeded profile.
+  static void quiet(Control &control) {
+    control.network_ = std::make_unique<Control::NetworkState>();
+    control.network_->clock.start();
+  }
+  /// credential names the seeded account's owned vault reference.
+  static QString credential(const Control &control, const QString &account) {
+    return control.credentialReference(account);
+  }
+  /// report returns the start's self-check verdict and its reasons.
+  static QJsonObject report(const Control &control) {
+    return control.startupReport();
+  }
   /// addFolder maps one more existing local root of the same account.
   static QString addFolder(Control &control, const QString &account,
                            const QString &local) {
@@ -175,6 +188,52 @@ void startupReasons(const QString &kind, const QString &expected) {
   require(folders.size() == 1 &&
               folders.first().toObject().value("reasonCode") == expected,
           "normal projection lost the stable folder reason");
+  const auto report = NetworkTestAccess::report(control);
+  require(report.value("selfCheck") == "failed" &&
+              report.value("reasonCodes").toArray().contains(expected),
+          "the self-check passed a mapping that did not attach");
+}
+/// previousCycle reopens a profile whose last cycle left its folder in error:
+/// CANCELLED (stopped at shutdown) clears to offline, a server failure stays
+/// on the folder, and neither fails the self-check of a start whose
+/// database, credential and attachment are fine (PLAN §16.2; B14 step 8).
+/// Side effects: one fixture secret in the current user's vault under the
+/// seeded account's own reference, removed again even on failure.
+/// Notes: regression for "self-check failed CANCELLED" after a reinstall.
+void previousCycle(const QString &left, const QString &status) {
+  QTemporaryDir profile, local;
+  require(profile.isValid() && local.isValid(), "reopen fixture unavailable");
+  const auto root = QDir::cleanPath(local.path());
+  QString folder, reference;
+  {
+    Control first(profile.filePath("control.sqlite"));
+    folder = NetworkTestAccess::seed(first, root, RootLease(root).identity(),
+                                     false);
+    QSqlQuery q(NetworkTestAccess::db(first));
+    require(q.exec("SELECT account_id FROM folders") && q.next(),
+            "reopen fixture account missing");
+    reference = NetworkTestAccess::credential(first, q.value(0).toString());
+    q.finish();
+    q.prepare("UPDATE folders SET status='error',reason=?");
+    q.addBindValue(left);
+    require(q.exec(), "previous cycle fixture failed");
+  }
+  // The engine adapter needs the account's credential to attach.
+  writeCredential(reference, "fixture-login", "fixture-only-secret");
+  const std::unique_ptr<const QString, void (*)(const QString *)> vault(
+      &reference, [](const QString *owned) { removeCredential(*owned); });
+  Control second(profile.filePath("control.sqlite"));
+  NetworkTestAccess::quiet(second);
+  NetworkTestAccess::pump(second);
+  require(!NetworkTestAccess::stopped(second), "reopening stopped SyncD");
+  QSqlQuery q(NetworkTestAccess::db(second));
+  q.prepare("SELECT status,reason FROM folders WHERE id=?");
+  q.addBindValue(folder);
+  require(q.exec() && q.next() && q.value(0) == status,
+          "the previous cycle's folder state was not handled as expected");
+  const auto report = NetworkTestAccess::report(second);
+  require(report.value("selfCheck") == "passed",
+          "the previous process's cycle result failed this start's self-check");
 }
 /// failClosed rejects unexpected engine-binding errors and failed Control
 /// persistence without manufacturing a root-change explanation (INV-10).
@@ -338,6 +397,10 @@ int main(int argc, char **argv) {
   run("unsupported",
       [] { startupReasons("unsupported", "UNSUPPORTED_FOLDER_MODE"); });
   run("changed", [] { startupReasons("changed", "FOLDER_ROOT_CHANGED"); });
+  run("cancelled at shutdown",
+      [] { previousCycle("CANCELLED", "offline"); });
+  run("server failure before restart",
+      [] { previousCycle("SYNC_FAILED", "error"); });
   run("internal", [] { failClosed(false); });
   run("persistence", [] { failClosed(true); });
   run("removal while stuck", [] { removalWhileStuck(); });

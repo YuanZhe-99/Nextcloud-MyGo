@@ -60,7 +60,8 @@ func startReal(t *testing.T, ctx context.Context) *realApp {
 	}
 	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
 	r := &realApp{t: t, queue: make(chan func(), 256), profile: profile, exe: exe}
-	r.remote = syncd.NewRemote(ctx, profile, exe)
+	// The test starts SyncD itself; NewRemote could race it with a second daemon.
+	r.remote = syncd.ConnectRemote(ctx, profile, exe)
 	t.Cleanup(r.remote.Close)
 	r.App = New(r.remote, t.TempDir())
 	r.later = func(fn func()) { r.queue <- fn }

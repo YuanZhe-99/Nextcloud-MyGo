@@ -8,7 +8,14 @@ add_library(syncd_core STATIC control.cpp control_login.cpp control_reauth.cpp c
 target_sources(syncd_core PRIVATE network_windows.cpp control_network.cpp control_diagnostics.cpp control_activity.cpp startup.cpp startup_control.cpp)
 target_link_libraries(syncd_core PUBLIC Qt6::Core Qt6::Sql Qt6::Network advapi32 cldapi iphlpapi user32 ws2_32)
 target_include_directories(syncd_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_definitions(syncd_core PUBLIC SYNCD_VERSION="${PROJECT_VERSION}")
+# A test package (tools/package.ps1 -TestVersion) stamps another version into
+# its own build tree; every other build reports PROJECT_VERSION.
+set(SYNCD_TEST_VERSION "" CACHE STRING "Version a test package's SyncD reports instead of PROJECT_VERSION")
+if(SYNCD_TEST_VERSION)
+  target_compile_definitions(syncd_core PUBLIC SYNCD_VERSION="${SYNCD_TEST_VERSION}")
+else()
+  target_compile_definitions(syncd_core PUBLIC SYNCD_VERSION="${PROJECT_VERSION}")
+endif()
 set(SYNCD_UPSTREAM_BUILD "" CACHE PATH "Verified patched upstream engine build directory")
 if(SYNCD_UPSTREAM_BUILD)
   load_cache("${SYNCD_UPSTREAM_BUILD}" READ_WITH_PREFIX UPSTREAM_ CMAKE_HOME_DIRECTORY SQLite3_INCLUDE_DIR OPENSC-LIBP11_INCLUDE_DIRS)

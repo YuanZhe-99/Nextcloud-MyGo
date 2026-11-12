@@ -6,7 +6,8 @@
 #   -Large adds the opt-in above-4-GiB chunk scenario (about 30 min, outside the budget).
 #   -SharedServer adds the paired-daemon login fixture against the already approved server in
 #   NEXTCLOUD_TEST_* (outside the budget: the paired daemon trusts only a publicly trusted chain).
-# Side effects: builds nothing; runs the built SyncD of build/syncd-<arch>, owned profiles and, for the
+#   -Build selects the SyncD tree (default build/syncd-<arch>).
+# Side effects: builds nothing; runs the built SyncD of that tree, owned profiles and, for the
 #   server tier, one disposable container that it removes afterwards. Everything runs inside one
 #   kill-on-close Job Object, so no daemon, probe or test executable outlives this script.
 # Notes: Stops at the first failure; a failed scenario is never rerun, on this or another architecture.
@@ -17,22 +18,26 @@ param(
     [ValidateSet('wslc', 'docker')][string]$Runtime = 'wslc',
     [ValidatePattern('^\d+\.\d+\.\d+$')][string]$ServerVersion = '35.0.2',
     [switch]$Large,
-    [switch]$SharedServer
+    [switch]$SharedServer,
+    [string]$Build = ''
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'test-job.ps1')
 if (-not (Enter-OwnedJob)) { Invoke-InOwnedJob $PSCommandPath $PSBoundParameters; if ($LASTEXITCODE) { throw 'Test tier failed.' }; return }
 $root = Split-Path $PSScriptRoot -Parent
+Set-Location $root # the Go steps test the module this script belongs to, wherever it was started from
 $budget = if ($Tier -eq 'fast') { 120 } else { 600 }
 $scenarioBudget = 150
 
-# The build records which Qt and upstream build it used; the tests use exactly those DLLs.
-$build = Join-Path $root "build/syncd-$Architecture"
+# The build records which Qt and upstream build it used, and the upstream build its dependency
+# prefixes after Qt; the tests use exactly those DLLs.
+$build = if ($Build) { $Build } else { Join-Path $root "build/syncd-$Architecture" }
 $cache = Get-Content -LiteralPath (Join-Path $build 'CMakeCache.txt')
 $qt = (($cache | Select-String '^CMAKE_PREFIX_PATH:[A-Z]+=(.+)$').Matches[0].Groups[1].Value) -replace '/', '\'
 $upstream = (($cache | Select-String '^SYNCD_UPSTREAM_BUILD:[A-Z]+=(.+)$').Matches[0].Groups[1].Value) -replace '/', '\'
-$native = if ($Architecture -eq 'ARM64') { 'arm64' } else { 'x64' }
-$env:PATH = "$qt\bin;$upstream\bin\Release;$root\.dev\native\$native\bin;$root\.dev\vcpkg\installed\$native-windows\bin;$env:PATH"
+$deps = (Get-Content -LiteralPath (Join-Path $upstream 'CMakeCache.txt') | Select-String '^CMAKE_PREFIX_PATH:[A-Z]+=(.+)$').Matches[0].Groups[1].Value -split ';' |
+    Select-Object -Skip 1 | ForEach-Object { (Join-Path $_ 'bin') -replace '/', '\' }
+$env:PATH = "$qt\bin;$upstream\bin\Release;$($deps -join ';');$env:PATH"
 $env:QT_PLUGIN_PATH = "$qt\plugins"
 $release = Join-Path $build 'Release'
 $env:SYNCD_TEST_EXE = Join-Path $release 'nextcloud-mygo-syncd.exe'
@@ -165,7 +170,7 @@ try {
             # every lane. Most of a case's time is the daemon's own failover and recovery timing.
             Lanes @(
                 , @(@('active upload', 'network-active', 'upload'), @('active download', 'network-active', 'download'), @('active lost PUT reply', 'network-active', 'unacknowledged-upload'))
-                , @(@('lost MOVE reply', 'network-uncertain', 'move'), @('lost DELETE reply', 'network-uncertain', 'delete'), @('lost final MOVE reply', 'network-uncertain', 'final-move'))
+                , @(@('lost MOVE reply', 'network-uncertain', 'move'), @('lost DELETE reply', 'network-uncertain', 'delete'), @('lost final MOVE reply', 'network-uncertain', 'final-move'), @('switch held past its window', 'switch-quota', ''))
                 , @(@('kill at prepared', 'switch-kill', 'prepared'), @('kill at quiescing', 'switch-kill', 'quiescing'), @('kill at verifying', 'switch-kill', 'verifying'))
                 , @(@('kill at committed', 'switch-kill', 'committed'), @('kill at reconciling', 'switch-kill', 'reconciling'), @('file safety', 'file-safety', ''))
                 , @(@('chunk session resume', 'network-chunked', ''), @('held revocation', 'held-revocation', ''), @('slow server stays healthy', 'slow-server', ''))

@@ -135,10 +135,10 @@
 | 23.2-6 认可、删除确认、重新认证可完成 | `partial` | [IPC](ipc.md)：后端真实运行；B14（[平台说明](platform-notes.md)）：登录、地址认可、删除审核和冲突在已安装的界面中完成 | 通过界面重新认证 |
 | 23.3-1 名称和图标 | `partial` | [打包](packaging.md)：安装器、快捷方式与应用列表条目名为 Nextcloud-MyGo；可执行文件图标取自上游图标 | 商标核对；托盘与窗口图标 |
 | 23.3-2 包架构和依赖 | `partial` | [打包](packaging.md)：两个包均已检查；B14：ARM64 包经检查并运行 | x64 硬件上的 x64 包 |
-| 23.3-3 安装、升级、降级、卸载、共存 | `partial` | [打包](packaging.md)：ARM64 安装、同版本升级、卸载与共存；降级拒绝由单元测试覆盖；B14：在运行中且已登录的副本上同版本重装，账号和目录保留 | x64；不同版本间升级；`daemon.prepareUpdate` |
+| 23.3-3 安装、升级、降级、卸载、共存 | `partial` | [打包](packaging.md)：ARM64 安装、同版本升级、卸载与共存；降级拒绝由单元测试覆盖；B14：在运行中且已登录的副本上同版本重装，账号和目录保留；安装包冒烟测试：在运行中的 SyncD 上经 `daemon.prepareUpdate` 从 0.1.0 升级到测试版本 0.1.1，核对了配置状态与启动报告（上一版本、schema、自检通过），ARM64 | x64；带已登录账号的不同版本间升级 |
 | 23.3-4 矩阵、内容核验、24 小时报告 | `not run` | 本文档 | 全部 |
 | 23.3-5 仅在可信链就绪后自动更新 | `not possible on this hardware` | [界面](gui.md)：未签名构建保持更新关闭 | 可信签名链 |
-| 23.3-6 §17.1 桌面功能 | `partial` | [平台说明](platform-notes.md)：B14：托盘图标与弹出面板、关闭到托盘、从开始菜单重新打开、“退出并停止同步” | `daemon.prepareUpdate`；通知；登录时启动；休眠与唤醒 |
+| 23.3-6 §17.1 桌面功能 | `partial` | [平台说明](platform-notes.md)：B14：托盘图标与弹出面板、关闭到托盘、从开始菜单重新打开、“退出并停止同步”；安装程序在停止 SyncD 前调用 `daemon.prepareUpdate`（安装包冒烟测试） | 真实删除等待时 `daemon.prepareUpdate` 的拒绝；通知；登录时启动；休眠与唤醒 |
 | 23.3-7 许可证、源码、限制、诊断说明 | `partial` | [平台说明](platform-notes.md)：已知限制 | 用户指南；发布源码材料 |
 | 23.3-8 未验证能力不列为已支持 | `partial` | [后端进度](backend-progress.md)：`fullSync` 和 `endpointAutoSwitch` 保持 `false` | 发布清单 |
 
@@ -162,13 +162,13 @@
 | 步骤 | 状态 | 核对方式 |
 |---|---|---|
 | 1 安装、设置、登录、目录、首次同步 | `passed` | 界面；设置的“开始”一步未经过 |
-| 2 本地和远端改动、“活动” | `partial` | 界面和状态；“活动”缺少本地删除和重命名，时间为 UTC |
+| 2 本地和远端改动、“活动” | `partial` | 界面和状态；时间为 UTC；协议 1.10 增加 `deletedLocal`、`renamedRemote` 与 `renamedLocal`（`testCycleActivity`），界面已能对照 Mock 显示（`TestActivityKinds110`），尚未在真实周期中显示 |
 | 3 批量删除审核 | `passed` | 界面和服务器 |
 | 4 冲突 | `passed` | 界面和文件 |
 | 5 目录暂停经过全部暂停和全部恢复 | `passed` | 界面和服务器 |
-| 6 地址与切换 | `partial` | 界面；不提供固定/自动，一次周期失败后切换消失 |
+| 6 地址与切换 | `partial` | 界面；不提供固定/自动；超过排空窗口的切换现在以 `switchFailed` 结束（`switch-quota`，ARM64，35.0.2），未在界面中重新运行 |
 | 7 关闭、重新打开、从托盘退出 | `passed` | 界面和进程 |
-| 8 在运行中的副本上重装 | `partial` | 界面和进程；只用 `daemon.shutdown`，无更高版本，自检 `CANCELLED` |
+| 8 在运行中的副本上重装 | `partial` | 界面和进程；此后安装程序调用 `daemon.prepareUpdate`，自检不再因 `CANCELLED` 失败（`SyncDFolderErrorContracts`），安装包冒烟测试中 0.1.0 → 0.1.1 测试升级通过；未在界面中重新运行 |
 | 9 移除账号、卸载 | `passed` | 界面、注册表、服务器令牌列表 |
 | 休眠与唤醒 | `not run` | 需要用户 |
 

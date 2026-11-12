@@ -13,6 +13,12 @@
 保持检出源码不变；构建树与依赖下载放在被忽略的 `.dev/` 或 `build/` 中。
 当前 M0 状态见 [backend-progress.md](backend-progress.md)。
 
+`tools/bootstrap-deps.ps1 -Architecture ARM64`（再运行 `x64`）下载 Qt，并按 `build-lock.json` 的记录精确构建
+其他原生依赖到 `.dev/deps`，最后输出 `.dev/deps/env-<arch>.json` 的路径：其中的 `QtPrefix`、`QtHostPrefix` 和
+`DependencyPrefix` 就是下文的参数，`PkgConfig` 则作为 `PKG_CONFIG` 供 `tools/build-upstream.ps1` 使用。CI 运行同一个
+脚本（[CI](ci.md)）。`tools/build-upstream.ps1 -BuildRoot`、`tools/build-syncd.ps1 -Build` 和
+`tools/test-all.ps1 -Build` 可把构建树放到别处，例如在常用构建树之外针对第二个依赖前缀构建。
+
 ```bash
 gofmt -l cmd internal tools
 go vet ./...
@@ -33,7 +39,9 @@ go run ./tools/checkdocs           # doc/en-us and doc/zh-cn mirror each other
 
 用 `tools/package.ps1 -Arch ARM64`（或 `x64`）打包已构建的 SyncD；`go run ./tools/pkg check -arch
 ARM64 <package dir>` 重新运行架构检查。`tools/package-smoke.ps1 -Setup <installer>` 以一次性 profile
-为当前用户真实安装、重装和卸载该包，并再次删除所有内容；已有安装时拒绝运行。见[打包](packaging.md)。
+为当前用户真实安装、重装和卸载该包，并再次删除所有内容；已有安装时拒绝运行。要测试两个版本之间的升级，
+用 `tools/package.ps1 -Arch ARM64 -TestVersion 0.1.1` 构建第二个安装包（使用自己的 SyncD 构建树；已提交的
+版本文件保持不变），并将其作为 `-UpgradeTo` 传入。见[打包](packaging.md)。
 
 M0 的仅上游构建入口为 `tools/build-upstream.ps1`。在 PowerShell 中传入
 `-Architecture ARM64`（或 `x64`）、`-Mode engine`（或 `tests`）、`-QtPrefix`、`-QtHostPrefix`
@@ -137,6 +145,15 @@ R05）。它再次登录夹具用户并要求得到 `ACCOUNT_EXISTS`，用随机
 固定策略，要求第一个账号继续同步、守护进程继续服务，并在第一个账号继续同步时移除第二个账号。它需要允许夹具用户
 创建用户的服务器，因此只在服务器层运行。
 
+`-Scenario switch-quota` 在一次性服务器上重现 B14 第 6 步中消失的切换。它创建一个自有服务器用户（与
+`multi-account` 一样记录在 `owned-user.json`），登录该用户，批准备用地址并映射一个目录，用
+`NetworkTunnel::setStallAfter` 让主地址上的 64 MiB 上传保持未完成，再像“使用此地址”那样请求备用地址
+（固定策略的 `endpoints.setPolicy`）。上传被挂起期间，网络必须显示待处理的请求（`switching`、
+`requestedEndpointId`、`postponed`）；30 秒排空窗口过后，请求必须以带 `QUIESCE_STALLED`、两个地址及名称
+的 `switchFailed` 活动结束，绑定与策略不变，回执失败。随后放行上传，通过 provisioning API 给该用户 1 MB
+配额，使下一次上传为 `REMOTE_QUOTA_EXCEEDED`，再次请求并要求切换发生且被记录，最后移除账号和用户。
+修复之前，请求消失且没有任何记录，运行停在其结果一步。
+
 `-Scenario slow-server` 让中继对客户端的每一轮发送都晚 1.5 秒应答（`NetworkTunnel::setReplyDelay`；新连接上的
 一次健康探测因此约需 4.5 秒），并要求两个地址都保持健康：可达但应答缓慢的服务器不是 `NETWORK_UNAVAILABLE`。
 引入 `metadataDeadline` 之前，它在 15 秒内失败。
@@ -186,8 +203,8 @@ M0 CTest 运行排除 `UtilityTest`，因为其中的启动测试会实际创建
 | `fast` | 2 分钟，无服务器 | `gofmt`、`go vet`、包含真实 Go↔C++ 管道测试的 `go test ./...`、全部 SyncD CTest 目标 | 为 amd64 构建的 `go test ./...`、全部 SyncD CTest 目标 |
 | `server` | 10 分钟，含容器 | 下文所有真实服务器场景，分六个并行通道 | 一个冒烟场景（在 `committed` 阶段的 `switch-kill`） |
 
-服务器层用 `tools/test-server.ps1 -Start` 启动自己的一次性 Nextcloud（默认 `wslc`，托管运行器上用
-`-Runtime docker`），结束后用 `-Stop` 删除：一个带标签、使用匿名卷、只监听回环端口的容器；仅当本次运行拉取了镜像时才删除镜像；
+服务器层用 `tools/test-server.ps1 -Start` 启动自己的一次性 Nextcloud（默认 `wslc`，在 Docker 能运行 Linux
+容器的地方用 `-Runtime docker`；GitHub 的 Windows 运行器不能，因此 [CI](ci.md) 只运行快速层），结束后用 `-Stop` 删除：一个带标签、使用匿名卷、只监听回环端口的容器；仅当本次运行拉取了镜像时才删除镜像；
 夹具本地根证书和管理员密码在此之前保存在被忽略的 `build/test-server-<id>/` 中。该根证书只在各验收进程内部受信任
 （`SYNCD_TEST_CA_*`）；不修改任何信任存储、hosts 文件或代理设置，TLS 检查始终开启。客户端通过夹具中继以
 `primary.syncd.test` 和 `alternate.syncd.test` 访问服务器，清理步骤和 `lifetime` 用例使用直接回环源。

@@ -301,6 +301,7 @@ struct EngineAdapter::State {
   Requests requestBaseline;
   RequestLifetime::Counts lifetimeBaseline;
   quint64 uploaded = 0, downloaded = 0, deletedRemote = 0;
+  quint64 deletedLocal = 0, renamedRemote = 0, renamedLocal = 0;
   // The held proposal's summary by top-level entry (protocol 1.9).
   QByteArray groups;
   // Files the current cycle completed so far (protocol 1.9 progress).
@@ -535,6 +536,7 @@ void EngineAdapter::start() {
     });
   };
   s.uploaded = s.downloaded = s.deletedRemote = s.done = 0;
+  s.deletedLocal = s.renamedRemote = s.renamedLocal = 0;
   s.cycleNetworkGeneration =
       s.binding.networkGeneration ? *s.binding.networkGeneration : 0;
   s.stopping = false;
@@ -704,9 +706,21 @@ void EngineAdapter::start() {
                        return;
                      if (!item->isDirectory())
                        ++state_->done;
-                     if (item->_instruction == CSYNC_INSTRUCTION_REMOVE &&
-                         item->_direction == OCC::SyncFileItem::Up)
+                     const bool up =
+                         item->_direction == OCC::SyncFileItem::Up;
+                     const bool down =
+                         item->_direction == OCC::SyncFileItem::Down;
+                     if (item->_instruction == CSYNC_INSTRUCTION_REMOVE && up)
                        ++state_->deletedRemote;
+                     else if (item->_instruction == CSYNC_INSTRUCTION_REMOVE &&
+                              down)
+                       ++state_->deletedLocal;
+                     else if (item->_instruction == CSYNC_INSTRUCTION_RENAME &&
+                              up)
+                       ++state_->renamedRemote;
+                     else if (item->_instruction == CSYNC_INSTRUCTION_RENAME &&
+                              down)
+                       ++state_->renamedLocal;
                      else if (!item->isDirectory() &&
                               (item->_instruction == CSYNC_INSTRUCTION_NEW ||
                                item->_instruction == CSYNC_INSTRUCTION_SYNC)) {
@@ -772,6 +786,9 @@ void EngineAdapter::start() {
             state_->cycleNetworkGeneration,
             retryAfter,
             state_->proposal.isEmpty() ? QByteArray{} : state_->groups};
+        result.deletedLocal = state_->deletedLocal;
+        result.renamedRemote = state_->renamedRemote;
+        result.renamedLocal = state_->renamedLocal;
         // finalize clears its propagator after emitting finished. Never destroy
         // from inside that signal.
         QTimer::singleShot(0, this, [this, result]() mutable {

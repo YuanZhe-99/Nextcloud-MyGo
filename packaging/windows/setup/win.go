@@ -134,6 +134,11 @@ var (
 )
 
 // vcall calls method index of a COM object's vtable.
+// Notes: like LazyProc.Call, pointers converted to uintptr in the call
+// expression stay alive and do not move until vcall returns; arguments built
+// earlier must be kept alive by the caller.
+//
+//go:uintptrescapes
 func vcall(obj unsafe.Pointer, index int, args ...uintptr) error {
 	vtbl := *(*unsafe.Pointer)(obj)
 	fn := *(*uintptr)(unsafe.Add(vtbl, index*int(unsafe.Sizeof(uintptr(0)))))
@@ -159,13 +164,22 @@ func writeShortcut(exe string) error {
 		return err
 	}
 	defer windows.CoUninitialize()
-	var sl, pf unsafe.Pointer
+	// Heap cells, so COM's out-parameter writes never land on a moved stack.
+	sl, pf := new(unsafe.Pointer), new(unsafe.Pointer)
 	if hr, _, _ := coCreateInstance.Call(uintptr(unsafe.Pointer(&clsidShellLink)), 0, windows.CLSCTX_INPROC_SERVER,
-		uintptr(unsafe.Pointer(&iidShellLinkW)), uintptr(unsafe.Pointer(&sl))); int32(hr) < 0 {
+		uintptr(unsafe.Pointer(&iidShellLinkW)), uintptr(unsafe.Pointer(sl))); int32(hr) < 0 || *sl == nil {
 		return fmt.Errorf("CoCreateInstance: %w", syscall.Errno(hr))
 	}
-	defer vcall(sl, 2) // Release
-	str := func(s string) uintptr { p, _ := windows.UTF16PtrFromString(s); return uintptr(unsafe.Pointer(p)) }
+	defer vcall(*sl, 2) // Release
+	// The UTF-16 strings are passed as uintptr, so keep them reachable until
+	// every call that reads them has returned.
+	var keep []*uint16
+	defer func() { runtime.KeepAlive(keep) }()
+	str := func(s string) uintptr {
+		p, _ := windows.UTF16PtrFromString(s)
+		keep = append(keep, p)
+		return uintptr(unsafe.Pointer(p))
+	}
 	// IShellLinkW: SetDescription 7, SetWorkingDirectory 9, SetIconLocation 17, SetPath 20.
 	for _, c := range []struct {
 		index int
@@ -176,15 +190,18 @@ func writeShortcut(exe string) error {
 		{7, []uintptr{str(displayName + " (test build)")}},
 		{17, []uintptr{str(exe), 0}},
 	} {
-		if err := vcall(sl, c.index, c.args...); err != nil {
+		if err := vcall(*sl, c.index, c.args...); err != nil {
 			return err
 		}
 	}
-	if err := vcall(sl, 0, uintptr(unsafe.Pointer(&iidPersistFile)), uintptr(unsafe.Pointer(&pf))); err != nil {
+	if err := vcall(*sl, 0, uintptr(unsafe.Pointer(&iidPersistFile)), uintptr(unsafe.Pointer(pf))); err != nil {
 		return err
 	}
-	defer vcall(pf, 2)
-	return vcall(pf, 6, str(link), 1) // IPersistFile::Save(path, remember)
+	if *pf == nil {
+		return errors.New("IShellLink did not return IPersistFile")
+	}
+	defer vcall(*pf, 2)
+	return vcall(*pf, 6, str(link), 1) // IPersistFile::Save(path, remember)
 }
 
 // writeAppsEntry registers the per-user entry in Settings > Apps.

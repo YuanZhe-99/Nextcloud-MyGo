@@ -14,6 +14,7 @@ Nextcloud-MyGo 是一款 Windows 桌面 Nextcloud 文件同步客户端。它在
 | [third-party.md](third-party.md) | 复用的代码与依赖、许可证与义务 |
 | [platform-notes.md](platform-notes.md) | 各平台已实现与已验证的内容 |
 | [development.md](development.md) | 环境、命令、开发流程 |
+| [ci.md](ci.md) | GitHub Actions：原生 x64 与 ARM64 检查、依赖引导、缓存、发布 |
 | [translation-guide.md](translation-guide.md) | 镜像规则与术语表 |
 | [version-history.md](version-history.md) | 各版本及其实际使用的上游版本 |
 | [functions/INDEX.md](functions/INDEX.md) | 各包与各模块的职责和关键声明 |

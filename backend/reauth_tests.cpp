@@ -870,7 +870,7 @@ int main(int argc, char **argv) {
     if (isolated || scenario == "network" || scenario == "network-lifetime" ||
         scenario.section('=', 0, 0) == "network-active" ||
         scenario == "file-safety" || scenario == "multi-account" ||
-        scenario == "slow-server" ||
+        scenario == "switch-quota" || scenario == "slow-server" ||
         scenario.startsWith("switch-kill=") ||
         scenario.startsWith("switch-recover=")) {
       // Chunk sessions and destructive lost-reply cases need a server of

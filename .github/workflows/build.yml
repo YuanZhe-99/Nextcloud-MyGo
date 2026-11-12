@@ -1,0 +1,188 @@
+# Builds and tests Nextcloud-MyGo natively on x64 and ARM64; with `package`, also builds the installers.
+# Called by ci.yml (every push and pull request) and release.yml (v* tags). See doc/en-us/ci.md.
+name: Build
+
+on:
+  workflow_call:
+    inputs:
+      package:
+        description: Build, check and upload the per-architecture installers and license bundles.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+          - arch: ARM64
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      DEPS: ${{ github.workspace }}\.dev\deps
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Toolchain
+        id: toolchain
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.CMake.Project -format json | ConvertFrom-Json
+          if (-not $vs -or -not $vs[0].installationVersion.StartsWith('18.')) { throw 'Visual Studio 2026 (18.x) with the C++ CMake tools is required.' }
+          $msvc = (Get-Content (Join-Path $vs[0].installationPath 'VC/Auxiliary/Build/Microsoft.VCToolsVersion.default.txt')).Trim()
+          Write-Output "Visual Studio $($vs[0].installationVersion), MSVC $msvc, host $([Runtime.InteropServices.RuntimeInformation]::OSArchitecture)"
+          go version
+          Write-Output "cgo: $(go env CGO_ENABLED)"
+          "msvc=$msvc" >> $env:GITHUB_OUTPUT
+
+      - name: Go checks
+        run: |
+          $bad = gofmt -l cmd internal tools
+          if ($bad) { $bad; throw 'gofmt reports files' }
+          go vet ./...;               if ($LASTEXITCODE) { throw 'go vet' }
+          go test ./...;              if ($LASTEXITCODE) { throw 'go test' }
+          $env:CGO_ENABLED = '0'
+          go test ./...;              if ($LASTEXITCODE) { throw 'go test without cgo' }
+          Remove-Item env:CGO_ENABLED
+          go tool mygo vet .;         if ($LASTEXITCODE) { throw 'mygo vet' }
+          go tool mygo i18n check;    if ($LASTEXITCODE) { throw 'i18n check' }
+          go run ./tools/checkdocs;   if ($LASTEXITCODE) { throw 'checkdocs' }
+
+      # Keys follow what each cache holds: Qt's archives the Qt version and the bootstrap script; the native
+      # prefix also the recorded dependencies and the compiler; the upstream build also the snapshot commit,
+      # the patch hashes and the build script.
+      - name: Cache keys
+        id: keys
+        run: |
+          function Hash([string]$s) { [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($s))).Substring(0, 16).ToLower() }
+          $lock = Get-Content build-lock.json -Raw | ConvertFrom-Json
+          $boot = (Get-FileHash tools/bootstrap-deps.ps1).Hash
+          $deps = Hash ("$boot|${{ steps.toolchain.outputs.msvc }}|" + ($lock.preparedDependencies | ConvertTo-Json -Depth 8 -Compress))
+          $submodule = git rev-parse HEAD:third_party/nextcloud
+          $patches = ($lock.nextcloudDesktop.patches.sha256 -join ':')
+          $upstream = Hash "$deps|$submodule|$($lock.nextcloudDesktop.commit)|$patches|$((Get-FileHash tools/build-upstream.ps1).Hash)"
+          "qt=qt-$($lock.preparedDependencies.qt.version)-${{ matrix.arch }}-$(Hash $boot)" >> $env:GITHUB_OUTPUT
+          "deps=deps-${{ matrix.arch }}-$deps" >> $env:GITHUB_OUTPUT
+          "upstream=upstream-${{ matrix.arch }}-$upstream" >> $env:GITHUB_OUTPUT
+
+      - name: Restore Qt archives
+        id: qt
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .dev/deps/downloads
+          key: ${{ steps.keys.outputs.qt }}
+
+      - name: Restore native dependencies
+        id: deps
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .dev/deps/native
+            .dev/deps/vcpkg/installed
+            .dev/deps/tools
+            .dev/deps/env-*.json
+          key: ${{ steps.keys.outputs.deps }}
+
+      - name: Bootstrap dependencies
+        run: |
+          $file = ./tools/bootstrap-deps.ps1 -Architecture ${{ matrix.arch }} -Prefix $env:DEPS | Select-Object -Last 1
+          "DEPS_ENV=$file" >> $env:GITHUB_ENV
+
+      - name: Save Qt archives
+        if: steps.qt.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .dev/deps/downloads
+          key: ${{ steps.keys.outputs.qt }}
+
+      - name: Save native dependencies
+        if: steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .dev/deps/native
+            .dev/deps/vcpkg/installed
+            .dev/deps/tools
+            .dev/deps/env-*.json
+          key: ${{ steps.keys.outputs.deps }}
+
+      - name: Restore upstream engine
+        id: upstream
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            build/src-*
+            build/?e-*
+          key: ${{ steps.keys.outputs.upstream }}
+
+      # Engine mode: libsync, csync and the CFAPI plugin SyncD links; upstream's own test suite stays a local tier.
+      - name: Build upstream engine
+        if: steps.upstream.outputs.cache-hit != 'true'
+        run: |
+          $e = Get-Content $env:DEPS_ENV -Raw | ConvertFrom-Json
+          $env:PKG_CONFIG = $e.PkgConfig
+          ./tools/build-upstream.ps1 -Architecture ${{ matrix.arch }} -Mode engine -QtPrefix $e.QtPrefix -QtHostPrefix $e.QtHostPrefix -DependencyPrefix $e.DependencyPrefix
+          # Only what SyncD reads stays: the cache, generated headers, import libraries and DLLs.
+          Get-ChildItem build -Directory -Filter '?e-*' | ForEach-Object {
+            Get-ChildItem $_.FullName -Recurse -File -Include '*.obj', '*.pch', '*.pdb', '*.ilk', '*.iobj', '*.ipdb', '*.tlog', '*.lastbuildstate' | Remove-Item -Force
+          }
+
+      - name: Save upstream engine
+        if: steps.upstream.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            build/src-*
+            build/?e-*
+          key: ${{ steps.keys.outputs.upstream }}
+
+      - name: Build SyncD
+        run: |
+          $e = Get-Content $env:DEPS_ENV -Raw | ConvertFrom-Json
+          $upstream = @(Get-ChildItem build -Directory -Filter "$('${{ matrix.arch }}'.Substring(0, 1).ToLower())e-*")
+          if ($upstream.Count -ne 1) { throw "expected one upstream engine build, found $($upstream.Count)" }
+          $env:PATH = (@((Join-Path $upstream[0].FullName 'bin/Release')) + @($e.DependencyPrefix | ForEach-Object { Join-Path $_ 'bin' }) -join ';') + ";$env:PATH"
+          ./tools/build-syncd.ps1 -Architecture ${{ matrix.arch }} -QtPrefix $e.QtPrefix -QtHostPrefix $e.QtHostPrefix -UpstreamBuild $upstream[0].FullName
+
+      - name: Fast tier
+        run: ./tools/test-all.ps1 -Tier fast -Architecture ${{ matrix.arch }}
+
+      - name: Package
+        if: inputs.package
+        run: |
+          ./tools/package.ps1 -Arch ${{ matrix.arch }}
+          $version = (Get-Content mygo.json -Raw | ConvertFrom-Json).version
+          go run ./tools/pkg check -arch ${{ matrix.arch }} "build/package/${{ matrix.arch }}/Nextcloud-MyGo-$version-${{ matrix.arch }}"
+          if ($LASTEXITCODE) { throw 'pkg check' }
+          # The release's license bundle is the one package.ps1 staged into this installer.
+          New-Item -ItemType Directory -Force build/release | Out-Null
+          Copy-Item -Recurse build/package/${{ matrix.arch }}/notices build/release/licenses-${{ matrix.arch }}
+          Copy-Item "build/package/Nextcloud-MyGo-$version-$('${{ matrix.arch }}'.ToLower())-test-setup.exe" build/release/
+
+      - name: Upload package
+        if: inputs.package
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package-${{ matrix.arch }}
+          path: build/release/
+          if-no-files-found: error
+          retention-days: 7

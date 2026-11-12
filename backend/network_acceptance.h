@@ -104,6 +104,14 @@ struct AcceptanceCalls {
 void multiAccountAcceptance(Control &c, const QString &root,
                             const QString &first, const QString &target,
                             const QUrl &base, const AcceptanceCalls &calls);
+/// switchQuotaAcceptance asks for a switch while an upload of an owned user
+/// is held unfinished past the drain window, then lets it fill the user's
+/// quota (B14 step 6): the request ends visibly, as a switchFailed entry with
+/// QUIESCE_STALLED and an unchanged binding and policy, and a second request
+/// at a safe point while the quota refuses uploads switches.
+/// Side effects: one owned server user, removed again.
+void switchQuotaAcceptance(Control &c, const QString &root, const QUrl &base,
+                           const AcceptanceCalls &calls);
 /// cleanupOwnedUser removes the second server user a failed multi-account
-/// run left behind, named only by its own reservation.
+/// or switch-quota run left behind, named only by its own reservation.
 void cleanupOwnedUser(const QString &root);

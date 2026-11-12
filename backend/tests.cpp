@@ -221,8 +221,8 @@ void testFolderMode() {
                   .toObject()
                   .value("protocol")
                   .toObject()
-                  .value("minor") == 9,
-          "protocol 1.9 not negotiated");
+                  .value("minor") == Control::protocolMinor,
+          "this build's protocol not negotiated");
   QFile file(
       QFileInfo(PROTOCOL_FIXTURES).dir().filePath("folders.examples.json"));
   require(file.open(QIODevice::ReadOnly), "folder examples missing");
@@ -501,12 +501,106 @@ void testQuotaReconciles() {
   }
 #endif
 }
+/// testCycleActivity: a finished cycle records local deletions caused by the
+/// server and renames both ways next to its transfers (protocol 1.10).
+/// Notes: regression for an Activity without local deletions or renames (B14
+/// step 2).
+void testCycleActivity() {
+#ifdef SYNCD_WITH_ENGINE
+  QTemporaryDir dir;
+  Control control(dir.filePath("control.sqlite"));
+  const auto connection = QUuid::createUuid().toString();
+  {
+    auto db = QSqlDatabase::addDatabase("QSQLITE", connection);
+    db.setDatabaseName(dir.filePath("control.sqlite"));
+    require(db.open(), "activity observer open failed");
+    QSqlQuery q(db);
+    for (const auto *sql :
+         {"INSERT INTO accounts(id,session_id,operation_id,endpoint_id,"
+          "base_url,credential_ref,state) VALUES('account','session','op',"
+          "'endpoint','https://cloud.example.invalid/','unused','ready')",
+          "INSERT INTO folders(id,account_id,local_path,remote_path,"
+          "local_identity,remote_identity,journal_path,status) VALUES("
+          "'folder','account','unused-local','/fixture','local-id',"
+          "'remote-id','unused-journal','syncing')",
+          "INSERT INTO endpoint_bindings VALUES('account','endpoint',1,1)"})
+      require(q.exec(QString::fromLatin1(sql)), "activity fixture failed");
+    db.close();
+  }
+  QSqlDatabase::removeDatabase(connection);
+  EngineAdapter::Result result;
+  result.success = true;
+  result.epoch = 1;
+  result.uploaded = 1;
+  result.deletedLocal = 2;
+  result.renamedRemote = 3;
+  result.renamedLocal = 4;
+  control.cycleFinished("folder", result);
+  bool negotiated = true, subscribed = false;
+  std::map<QString, int> counts;
+  for (const auto &entry :
+       control.dispatch(request("activity.list"), negotiated, subscribed)
+           .toObject()
+           .value("result")
+           .toArray())
+    counts[entry.toObject().value("kind").toString()] =
+        entry.toObject().value("count").toInt();
+  require(counts == std::map<QString, int>{{"uploaded", 1},
+                                           {"deletedLocal", 2},
+                                           {"renamedRemote", 3},
+                                           {"renamedLocal", 4}},
+          "a cycle's local deletions or renames are missing from Activity");
+#endif
+}
+/// testProtocolVersion: the contract's version, session.hello, Diagnostics and
+/// the startup diagnostics all report Control::protocolMinor (§20 IPC).
+/// Notes: regression for Diagnostics reporting 1.8 while SyncD spoke 1.9 (B14).
+void testProtocolVersion() {
+  QFile file(QFileInfo(PROTOCOL_FIXTURES).dir().filePath("contract.json"));
+  require(file.open(QIODevice::ReadOnly), "contract missing");
+  const auto contract =
+      QJsonDocument::fromJson(file.readAll()).object().value("protocol");
+  require(contract.toObject().value("major") == 1 &&
+              contract.toObject().value("minor") == Control::protocolMinor,
+          "protocol/contract.json and Control::protocolMinor differ");
+  const auto text = QStringLiteral("1.%1").arg(Control::protocolMinor);
+  QTemporaryDir dir;
+  require(dir.isValid(), "temporary database missing");
+  for (const auto mode :
+       {Control::StartupMode::Immediate, Control::StartupMode::Deferred}) {
+    Control control(dir.filePath("control.sqlite"), mode);
+    bool negotiated = false, subscribed = false;
+    const auto hello =
+        control
+            .dispatch(request("session.hello",
+                              {{"protocol", QJsonObject{{"major", 1}}}}),
+                      negotiated, subscribed)
+            .toObject()
+            .value("result")
+            .toObject()
+            .value("protocol")
+            .toObject();
+    require(hello.value("minor") == Control::protocolMinor,
+            "session.hello reports another protocol");
+    const auto diagnostics =
+        control.dispatch(request("diagnostics.snapshot"), negotiated, subscribed)
+            .toObject()
+            .value("result")
+            .toObject();
+    require(diagnostics.value("stateAvailable") ==
+                (mode == Control::StartupMode::Immediate),
+            "diagnostics fixture reached the wrong startup state");
+    require(diagnostics.value("protocol") == text,
+            "diagnostics report another protocol");
+  }
+}
 /// main runs real core contracts against a disposable database, without server
 /// or Shell side effects.
 int main(int argc, char **argv) {
   QCoreApplication app(argc, argv);
   try {
     testWire();
+    testProtocolVersion();
     testPersistence();
     testSwitch();
     testDecisionEnvelope();
@@ -515,6 +609,7 @@ int main(int argc, char **argv) {
     testSchema11Migration();
     testCyclePersistence();
     testQuotaReconciles();
+    testCycleActivity();
     std::puts("PASS shared framing; persistence and cycle storage faults; "
               "switch guards; decision envelope");
     return 0;

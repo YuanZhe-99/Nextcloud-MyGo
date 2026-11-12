@@ -14,6 +14,14 @@ Initialize the recorded upstream snapshot with `git submodule update --init thir
 Keep that checkout unmodified; build trees and dependency downloads belong in ignored `.dev/`
 or `build/`. The current M0 status is in [backend-progress.md](backend-progress.md).
 
+`tools/bootstrap-deps.ps1 -Architecture ARM64` (then `x64`) downloads Qt and builds the other native
+dependencies at exactly what `build-lock.json` records into `.dev/deps`, and prints the path of
+`.dev/deps/env-<arch>.json`: its `QtPrefix`, `QtHostPrefix` and `DependencyPrefix` are the arguments
+below, and its `PkgConfig` goes into `PKG_CONFIG` for `tools/build-upstream.ps1`. CI runs the same
+script ([ci](ci.md)). `tools/build-upstream.ps1 -BuildRoot`, `tools/build-syncd.ps1 -Build` and
+`tools/test-all.ps1 -Build` put a build tree somewhere else, for example to build against a second
+dependency prefix beside the usual trees.
+
 ```bash
 gofmt -l cmd internal tools
 go vet ./...
@@ -34,7 +42,9 @@ a unique profile and remove it afterward. These commands neither install nor reg
 Package a built SyncD with `tools/package.ps1 -Arch ARM64` (or `x64`); `go run ./tools/pkg check -arch
 ARM64 <package dir>` re-runs the architecture check. `tools/package-smoke.ps1 -Setup <installer>`
 really installs, reinstalls and uninstalls the package for the current user under a throwaway
-profile and removes everything again; it refuses to run over an existing install. See
+profile and removes everything again; it refuses to run over an existing install. For an upgrade
+between two versions, build a second package with `tools/package.ps1 -Arch ARM64 -TestVersion 0.1.1`
+(its own SyncD tree; committed version files stay unchanged) and pass it as `-UpgradeTo`. See
 [packaging](packaging.md).
 
 M0's upstream-only build entry point is `tools/build-upstream.ps1`. From PowerShell, pass
@@ -163,6 +173,18 @@ commits a fixed policy for that account while its quota is full, requires the fi
 syncing and the daemon to keep serving, and removes the second account while the first keeps syncing.
 It needs a server where the fixture user may create users, so it runs only in the server tier.
 
+`-Scenario switch-quota` reproduces the switch that vanished in B14 step 6 against the disposable
+server. It creates an owned server user (recorded in `owned-user.json` like `multi-account`), signs
+it in, approves the alternate address and maps one folder, holds a 64 MiB upload unfinished on the
+primary with `NetworkTunnel::setStallAfter`, and asks for the alternate as "Use this one" does (a
+fixed `endpoints.setPolicy`). While the upload is held the network must show the pending request
+(`switching`, `requestedEndpointId`, `postponed`); once the 30-second drain window passes, the
+request must end as a `switchFailed` activity with `QUIESCE_STALLED`, its addresses and name, the
+binding and policy unchanged and the receipt failed. It then releases the upload, gives the user a
+1 MB quota through the provisioning API so the next upload is `REMOTE_QUOTA_EXCEEDED`, asks again
+and requires the switch to happen and be recorded, then removes the account and the user. Before the
+fix the request disappeared without any record and the run stopped at its outcome step.
+
 `-Scenario slow-server` makes the relay answer every client flight 1.5 s late
 (`NetworkTunnel::setReplyDelay`; a health probe on a fresh connection then takes about 4.5 s) and
 requires both addresses to stay healthy: a reachable server that is slow to answer is not
@@ -221,7 +243,8 @@ the same or on the other architecture.
 | `server` | 10 min including the container | every real-server scenario below, in six parallel lanes | one smoke scenario (`switch-kill` at `committed`) |
 
 The server tier starts its own disposable Nextcloud with `tools/test-server.ps1 -Start` (`wslc` by
-default, `-Runtime docker` for hosted runners) and removes it with `-Stop` afterwards: one labelled
+default, `-Runtime docker` where Docker runs Linux containers; GitHub's Windows runners cannot, so
+[CI](ci.md) runs the fast tier only) and removes it with `-Stop` afterwards: one labelled
 container with an anonymous volume on a loopback port, the image only if this run pulled it, and a
 fixture-local root and admin password kept in ignored `build/test-server-<id>/` until then. The
 root is trusted only inside each acceptance process (`SYNCD_TEST_CA_*`); no trust store, hosts

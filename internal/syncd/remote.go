@@ -16,7 +16,7 @@ import (
 
 // protocolMinor is the protocol 1.x minor version this client speaks
 // (protocol/contract.json).
-const protocolMinor = 9
+const protocolMinor = 10
 
 // Remote projects a real SyncD connection into the existing UI Client contract.
 // Side effects: reconnects and bootstraps; Close never shuts down the daemon.

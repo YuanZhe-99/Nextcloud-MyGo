@@ -508,6 +508,61 @@ func TestRefusedPasswordAsksToSignIn(t *testing.T) {
 	shoot(t, tt, "real-folders-signin")
 }
 
+// TestActivityKinds110: protocol 1.10's activity kinds each show in
+// Activity under their filter, a failed switch also in the Network page's
+// recent switches, and no reason code is ever shown.
+func TestActivityKinds110(t *testing.T) {
+	cases := []struct {
+		name string
+		e    syncd.Activity
+		want func() string
+		net  bool
+	}{
+		{"deleted local", syncd.Activity{Kind: syncd.ActDeletedLocal, FolderID: "fold", Count: 2}, func() string { return L.ActDeletedLocalN(2) }, false},
+		{"renamed remote", syncd.Activity{Kind: syncd.ActRenamedRemote, FolderID: "fold", Count: 1}, func() string { return L.ActRenamedRemoteN(1) }, false},
+		{"renamed local", syncd.Activity{Kind: syncd.ActRenamedLocal, FolderID: "fold", Count: 3}, func() string { return L.ActRenamedLocalN(3) }, false},
+		{"switch stalled", syncd.Activity{Kind: syncd.ActSwitchFailed, AccountID: "acc", FromID: "ep-main", ToID: "ep-alt", Name: "Alternate", Reason: "QUIESCE_STALLED"},
+			func() string { return L.ActSwitchFailedWhy("Alternate", L.ReasonSafePoint()) }, true},
+		{"switch refused, name from the address", syncd.Activity{Kind: syncd.ActSwitchFailed, AccountID: "acc", FromID: "ep-main", ToID: "ep-alt", Reason: "TLS_ERROR"},
+			func() string { return L.ActSwitchFailedWhy("Alternate", L.ReasonTLS()) }, true},
+		{"switch failed, unknown reason", syncd.Activity{Kind: syncd.ActSwitchFailed, AccountID: "acc", FromID: "ep-main", ToID: "ep-alt", Name: "Alternate", Reason: "SOMETHING_NEW"},
+			func() string { return L.ActSwitchFailed("Alternate") }, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := realSnapshot()
+			s.Daemon.ProtocolMinor = 10
+			c.e.At = time.Now().Add(-time.Minute)
+			s.Activity = []syncd.Activity{c.e}
+			a := snapApp(t, s)
+			a.page = pageActivity
+			tt := ui.NewTester(a.view, 1200, 780)
+			own, other := filterFiles, filterNetwork
+			if c.net {
+				own, other = other, own
+			}
+			for _, f := range []int{filterAll, own, other} {
+				a.filter = f
+				tt.Frame()
+				if tt.HasText(c.want()) != (f != other) {
+					t.Errorf("filter %d: shown %v", f, f == other)
+				}
+				if c.e.Reason != "" && tt.HasText(c.e.Reason) {
+					t.Errorf("filter %d shows the code %s", f, c.e.Reason)
+				}
+			}
+			if !c.net {
+				return
+			}
+			a.page = pageNetwork
+			tt.Frame()
+			if !tt.HasText(c.want()) || tt.HasText(L.NoSwitches()) {
+				t.Error("the failed switch is not among the recent switches")
+			}
+		})
+	}
+}
+
 // TestReasonCodesHaveWords: every reason code of the protocol is put into
 // words without showing the code (AGENTS.md: no codes in the interface).
 func TestReasonCodesHaveWords(t *testing.T) {

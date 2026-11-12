@@ -408,6 +408,25 @@ func reasonText(code string) string {
 	return ""
 }
 
+// switchFailed says that a switch the user asked for did not happen, to
+// which address, and why in words.
+// Notes: QUIESCE_STALLED has its own words here, since a toast's "try again
+// in a moment" does not fit the history; the code is never shown.
+func switchFailed(s syncd.Snapshot, e syncd.Activity) string {
+	name := e.Name
+	if ep, ok := s.Endpoint(e.ToID); ok && name == "" {
+		name = ep.Name
+	}
+	why := reasonText(e.Reason)
+	if e.Reason == "QUIESCE_STALLED" {
+		why = L.ReasonSafePoint()
+	}
+	if why == "" {
+		return L.ActSwitchFailed(name)
+	}
+	return L.ActSwitchFailedWhy(name, why)
+}
+
 // startupWord is why SyncD runs without its state, in words.
 func startupWord(st syncd.StartupState) string {
 	switch st {

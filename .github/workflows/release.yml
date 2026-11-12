@@ -1,0 +1,89 @@
+# Publishes a v* tag as a GitHub pre-release: both installers built and tested natively, SHA256SUMS and the
+# license bundle. Every package is an unsigned test build with automatic updates off until a trusted
+# signing chain exists (PLAN.md §16.2); nothing here signs anything. See doc/en-us/ci.md.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Tag matches the version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compare
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          go=$(sed -n 's/^var Version = "\(.*\)"$/\1/p' internal/version/version.go)
+          json=$(jq -r .version mygo.json)
+          echo "tag $tag, internal/version $go, mygo.json $json"
+          [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::tag $GITHUB_REF_NAME is not vX.Y.Z"; exit 1; }
+          [[ "$tag" == "$go" && "$tag" == "$json" ]] || { echo "::error::tag, internal/version and mygo.json disagree"; exit 1; }
+
+  build:
+    needs: version
+    uses: ./.github/workflows/build.yml
+    with:
+      package: true
+
+  publish:
+    name: Publish pre-release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: package-*
+          path: artifacts
+
+      - name: Assemble
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p release licenses
+          cp artifacts/package-*/Nextcloud-MyGo-*-test-setup.exe release/
+          for arch in ARM64 x64; do cp -r "artifacts/package-$arch/licenses-$arch" "licenses/$arch"; done
+          (cd licenses && zip -qr "../release/Nextcloud-MyGo-$version-licenses.zip" .)
+          (cd release && sha256sum -- * > SHA256SUMS && cat SHA256SUMS)
+          [ "$(ls release/*-test-setup.exe | wc -l)" -eq 2 ] || { echo "::error::expected two installers"; exit 1; }
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          cat > notes.md <<EOF
+          **Unsigned test build.** Nextcloud MyGo $version for Windows 11, one per-user installer per
+          architecture: \`arm64\` for Windows on Arm (native ARM64 only), \`x64\` for x64 PCs. The
+          installers are not code-signed and automatic updates are off; Windows SmartScreen may warn.
+          Check each download against \`SHA256SUMS\`.
+
+          Both packages were built and passed the fast test tier natively on GitHub's Windows x64 and
+          ARM64 runners, and every PE file in them passed the architecture check. The real-server test
+          tier runs outside GitHub Actions.
+
+          Licenses: Nextcloud MyGo is GPL-3.0. \`Nextcloud-MyGo-$version-licenses.zip\` holds the
+          license texts of Nextcloud Desktop, Qt, OpenSSL, SQLite, zlib, QtKeychain, KArchive, libp11
+          and the Go modules, and \`SOURCE.txt\` names the corresponding source: this tag of the
+          repository, its \`third_party/nextcloud\` submodule and the patches in \`patches/nextcloud/\`.
+          EOF
+          gh release create "$GITHUB_REF_NAME" release/* --verify-tag --prerelease \
+            --title "Nextcloud MyGo $version (unsigned test build)" --notes-file notes.md

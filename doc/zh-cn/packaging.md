@@ -14,24 +14,60 @@ ARM64 与 x64 上原生运行，通过 `internal/syncd` 与 SyncD 通信，并�
 | 组成 | 路径 | 作用 |
 |---|---|---|
 | 打包脚本 | `tools/package.ps1` | 构建界面，暂存并检查安装包，构建安装器 |
-| 检查与暂存工具 | `tools/pkg` | DLL 闭包、清单、PE 架构检查 |
+| 检查与暂存工具 | `tools/pkg` | DLL 闭包、清单、PE 架构检查、运行中 SyncD 的报告 |
 | 安装/卸载程序 | `packaging/windows/setup` | 当前用户安装、升级与卸载 |
 | 清单 | `internal/release` | 包内文件及其两半所用的契约 |
-| 安装测试 | `tools/package-smoke.ps1` | 在本机真实安装、重装和卸载 |
+| 安装测试 | `tools/package-smoke.ps1` | 在本机真实安装、重装、升级和卸载 |
 
 ## 构建安装包
 
 ```powershell
+./tools/bootstrap-deps.ps1 -Architecture ARM64   # prints .dev/deps/env-arm64.json
 ./tools/build-syncd.ps1 -Architecture ARM64 -QtPrefix <target Qt> -QtHostPrefix <host Qt>
 ./tools/package.ps1 -Arch ARM64        # or x64; SyncD from build/syncd-<Arch>
 go run ./tools/pkg check -arch ARM64 build/package/ARM64/Nextcloud-MyGo-0.1.0-ARM64
 ./tools/package-smoke.ps1 -Setup build/package/Nextcloud-MyGo-0.1.0-arm64-test-setup.exe
 ```
 
+测试两个版本之间的升级：
+
+```powershell
+./tools/package.ps1 -Arch ARM64 -TestVersion 0.1.1
+./tools/package-smoke.ps1 -Setup build/package/Nextcloud-MyGo-0.1.0-arm64-test-setup.exe `
+    -UpgradeTo build/package/Nextcloud-MyGo-0.1.1-testversion-arm64-test-setup.exe
+```
+
 `tools/package.ps1` 从 SyncD 构建的 `CMakeCache.txt` 读取其上游构建，再读取该构建的前缀（Qt、原生
 依赖、vcpkg），因此 DLL 只来自 SyncD 实际链接的构建树，外加已安装 Visual Studio 中最新的 Visual C++
 运行库。每一步都有时限。它写出 `build/package/<Arch>/Nextcloud-MyGo-<version>-<Arch>/` 与
-`build/package/Nextcloud-MyGo-<version>-<arch>-test-setup.exe`，不安装任何东西。
+`build/package/Nextcloud-MyGo-<version>-<arch>-test-setup.exe`，不安装任何东西。暂存之后，它运行已暂存
+SyncD 的 `--version`，其版本、Control schema 或协议与清单不一致时即失败，因此安装包绝不会把界面与由其他
+源码构建的 SyncD 配在一起。
+
+### 测试版本
+
+`-TestVersion X.Y.Z` 为升级测试构建另一个版本的安装包，不修改 `mygo.json` 或 `internal/version`。它配置
+一个独立的 SyncD 构建树 `build/syncd-<Arch>-testversion`，使用 `-SyncDBuild` 的 CMake 缓存中的 Qt 前缀、
+宿主 Qt 与上游构建，并设置 `BUILD_TESTING=OFF` 与 `SYNCD_TEST_VERSION=X.Y.Z`（以它代替 `PROJECT_VERSION`
+作为 `SYNCD_VERSION`），在其中只构建 SyncD 与 CFAPI 插件；从不写入 `-SyncDBuild`。界面以
+`MYGO_LDFLAGS=-X .../internal/version.Version=X.Y.Z` 链接（`Version` 为此是变量），暂存工具收到
+`-test-version`，据此设置清单的版本与 `testVersion: true`。输出为 `build/package/<Arch>-testversion/` 与
+`Nextcloud-MyGo-X.Y.Z-testversion-<arch>-test-setup.exe`；其安装器会说明版本是为测试而标记的。界面可执行
+文件的文件属性仍为 `mygo.json` 的版本。这样的安装包绝不是发布版本。
+
+### 许可证文本
+
+没有其所含内容的许可证文本，就不生成安装包（GPL 义务，PLAN.md §16.5）。`tools/package.ps1` 为该 SyncD 构建运行
+`tools/licenses.ps1`（[CI](ci.md)），并把结果作为 `-notices` 传给暂存工具。`-notices` 缺失，或缺少
+`LICENSE.txt`、`THIRD_PARTY_NOTICES.md`、`SOURCE.txt`、Nextcloud Desktop 的 `COPYING`、Qt 模块 qtbase、qt5compat、
+qtsvg 与 qtwebsockets 的文本、OpenSSL、SQLite、zlib、QtKeychain、KArchive 与 libp11 的文本以及 Go 许可证中的任何一项时，
+`pkg stage` 在写入任何东西之前就拒绝。原生文本只存在于由 `tools/bootstrap-deps.ps1` 构建的前缀中，因此安装包从这些
+前缀构建；手工组装的 `.dev` 树不能作为安装包的来源，`tools/licenses.ps1` 会提示用引导脚本重新构建。
+
+安装后的副本把许可证包保存在其版本目录中：`LICENSE.txt`（GPL-3.0）、`THIRD_PARTY_NOTICES.md`、`SOURCE.txt`
+（对应源代码的位置）以及 `licenses\<component>\`。这些文件与其他文件一样在 `manifest.json` 中列出并记录哈希，
+因此安装器会校验它们，升级或卸载时随目录一起替换或删除。发布中的 `Nextcloud-MyGo-<version>-licenses.zip`
+为每个架构包含同样的许可证包。
 
 暂存工具从两个可执行文件、Qt 插件 `tls/qopensslbackend.dll` 与 `sqldrivers/qsqlite.dll` 以及
 `uninstall.exe` 出发，跟随所有普通导入与延迟加载导入，复制在搜索目录中找到的每个 DLL；遇到既不在搜索
@@ -52,7 +88,7 @@ go run ./tools/pkg check -arch ARM64 build/package/ARM64/Nextcloud-MyGo-0.1.0-AR
     Qt6*.dll, nextcloudsync.dll, qt6keychain.dll, libssl-3-*.dll, sqlite3.dll, MSVCP140*.dll, ...
     plugins\tls\qopensslbackend.dll
     plugins\sqldrivers\qsqlite.dll
-    qt.conf, sync-exclude.lst, manifest.json, LICENSE.txt, licenses\
+    qt.conf, sync-exclude.lst, manifest.json, LICENSE.txt, THIRD_PARTY_NOTICES.md, SOURCE.txt, licenses\
 ```
 
 用户数据留在各进程自己的位置，不在安装目录内：SyncD 的 profile 位于
@@ -61,6 +97,7 @@ go run ./tools/pkg check -arch ARM64 build/package/ARM64/Nextcloud-MyGo-0.1.0-AR
 ## 清单
 
 `manifest.json` 记录产品、版本与架构；`testBuild: true`、`signed: false` 与 `autoUpdate: false`；
+仅 `-TestVersion` 安装包带有 `testVersion: true`；
 每一半的可执行文件与协议版本（取自 `protocol/contract.json`）；SyncD 的 Control schema（读取
 `backend/control.cpp` 中唯一一处 `PRAGMA user_version=` 赋值，不是恰好一处则暂存失败）；以及每个文件的
 大小和 SHA-256。安装器先按清单校验解出的文件，新版本才可能成为当前版本。
@@ -93,12 +130,30 @@ PE 文件，因此 CI 可在任何平台运行。
 否则按以下顺序安装、重装或升级：
 
 1. 解压到新的 `versions\<version>-<random>.partial`，按清单校验后再重命名。失败只删除这个 partial 目录。
-2. 关闭界面（无状态客户端），使其无法再次启动 SyncD；再向 SyncD 发送 `daemon.shutdown` 并最多等待 30
-   秒；未停止的 SyncD 被终止，它会像处理任何崩溃一样恢复。若仍有进程存活，删除新目录，已安装版本保持
-   为当前版本。
-3. 把 `uninstall.exe` 复制到根目录，让 `install.json`、开始菜单快捷方式与应用列表条目指向新目录，并把
+2. 关闭界面（无状态客户端），使其无法再次启动 SyncD；SyncD 的管道一次只服务一个客户端，因此这也为安装器
+   腾出管道。
+3. 若已安装版本的 SyncD 正为此 profile 运行，则连接它（`syncd.ConnectRemote`，从不启动 SyncD），请求更新
+   安全点 `daemon.prepareUpdate(<要安装的版本>)`。有删除等待复核（`DECISION_PENDING`）时立即停止安装：
+   安装从不替用户作出该决定。切换、续期、地址检查或登录仍在进行、运行中的周期尚未结束
+   （`QUIESCE_STALLED`）或尚无应答时，每秒重试，最长 2 分钟；之后与其他任何拒绝一样停止安装。期间退出的
+   SyncD 无需准备。停止时删除新目录，重新启动已关闭的界面并让 SyncD 继续运行；安装器会说明原因（见下文）。
+4. 向 SyncD 发送 `daemon.shutdown` 并最多等待 30 秒；未停止的 SyncD 被终止，它会像处理任何崩溃一样恢复。
+   若仍有进程存活，删除新目录，已安装版本保持为当前版本。
+5. 把 `uninstall.exe` 复制到根目录，让 `install.json`、开始菜单快捷方式与应用列表条目指向新目录，并把
    启动此安装的开机启动项改为启动新界面，保留其参数以及用户在任务管理器中的启用/禁用选择。
-4. 删除其他版本目录，然后启动新界面，由它启动自己的 SyncD。
+6. 删除其他版本目录，然后启动新界面，由它启动自己的 SyncD。
+
+安装器在第 3 步停止时输出以下信息，其后均接 "the installed version was kept"：
+
+| 情形 | 信息 |
+|---|---|
+| 删除等待复核 | Nextcloud MyGo is waiting for you to review a deletion. Open Nextcloud MyGo, review it, then run setup again |
+| 2 分钟后仍忙 | Nextcloud MyGo is still busy (signing in, checking or switching a server address, or finishing a sync) and did not get ready within 2 minutes. Wait a few minutes, then run setup again |
+| 2 分钟后仍无应答 | Nextcloud MyGo's background sync is running but did not answer within 2 minutes. Quit Nextcloud MyGo from its tray icon, then run setup again |
+| 其他任何拒绝 | Nextcloud MyGo could not get ready for the update. Quit Nextcloud MyGo from its tray icon, then run setup again |
+
+只有从已安装版本目录运行的本 profile 的 SyncD 会被准备；安装根目录下的其他 SyncD 进程（其他 profile 的）
+只按第 4 步停止。卸载按第 2 步与第 4 步停止 SyncD，不经过安全点。
 
 新的 SyncD 从不与其他版本的 Qt DLL 共用目录，旧版本只在新版本完整且已成为当前版本后才删除。同样的规则
 使同版本重装也完整切换到一个全新目录。
@@ -134,25 +189,32 @@ ARM64（ARM64 硬件上的 Windows 11），2026-11-12：
   SyncD 而无需终止，删除旧目录并迁移开机启动项；卸载后不留进程、开机启动项、快捷方式、应用列表条目或
   程序文件，并保留 profile 数据；再次安装后 `-remove-user-data` 删除了 profile 数据与设置；官方客户端的
   `nc` 注册、配置目录与应用列表条目均未改变；
-- x64 安装器拒绝在 ARM64 上运行。
+- x64 安装器拒绝在 ARM64 上运行；
+- 更新安全点与两个版本之间的升级（`tools/package-smoke.ps1 -UpgradeTo`，36 秒）：0.1.0 安装包（其 SyncD
+  构建于本次修改之前）与以已提交源码加本次修改构建的 `-TestVersion 0.1.1` 安装包（SyncD 构建树已构建时
+  16 秒；该构建树首次构建用时 56 秒）。同版本重装（3.7 秒）与在运行中副本上的升级（3.8 秒）都在
+  `daemon.shutdown` 之前输出 `SyncD is ready`；升级写入了新的 `control.pre-update.*.sqlite`；新 SyncD
+  报告版本 0.1.1，`startupReport` 的 `previousVersion` 为 0.1.0，schema 从 11 到 11，自检 `passed`；升级前
+  设置的暂停所有目录得以保留；随后卸载不留任何内容。在改为先关闭界面之前，一次重装在 2 分钟后以无应答
+  信息停止，删除了其新目录并保留已安装版本：SyncD 的管道一次只服务一个客户端。
 
 未验证：安装 x64 包（需要 x64 硬件）；SyncD 首次网络请求时加载哪个 TLS 后端（本次没有服务器）；对已登录
-账号执行 `-remove-user-data`；真实硬件上的安装失败（仅单元测试覆盖）；两个不同版本之间的升级。
+账号执行 `-remove-user-data`；真实硬件上的安装失败（仅单元测试覆盖）；真实安装中安全点的删除等待与仍忙
+拒绝（仅单元测试 `TestPrepare`）；带已登录账号或 Control schema 变更的升级。
 
 ## 需要 SyncD 提供的内容
 
-SyncD 现已提供前四项；安装器与暂存工具尚未采用，许可证包仍未完成：
+SyncD 现已提供全部四项。安装器使用 `daemon.prepareUpdate` 与 `ConnectRemote`（第 3 步），`tools/package.ps1`
+按清单检查 `--version`：
 
 - `daemon.prepareUpdate(targetVersion)`（[IPC](ipc.md)）：PLAN.md §16.2 的安全点（不再开始新周期、运行中的
-  周期已结束、一致的 Control 副本 `control.pre-update.<id>.sqlite`），用于替换第 2 步中的 `daemon.shutdown`，
-  之后再发送 `daemon.shutdown`；新 SyncD 启动后，`snapshot.daemon.startupReport` 给出之前的版本与 schema、
-  新 schema 以及自检结果和原因代码。
+  周期已结束、一致的 Control 副本 `control.pre-update.<id>.sqlite`），在第 3 步中先于 `daemon.shutdown` 发送；
+  新 SyncD 启动后，`snapshot.daemon.startupReport` 给出之前的版本与 schema、新 schema 以及自检结果和原因代码
+  （`go run ./tools/pkg report` 输出它）。
 - `internal/syncd.ConnectRemote(ctx, profile, executable)`：从不启动 SyncD 的客户端。
 - `nextcloud-mygo-syncd.exe --version` 不使用 profile，输出一行 JSON：`{"version", "protocol": {"major",
-  "minor"}, "controlSchema", "engine"}`，暂存因此可以不再从源码读取 schema。启动时据此校验清单属于暂存工具。
+  "minor"}, "controlSchema", "engine"}`。清单的 schema 仍从源码读取；两者不一致时打包失败。
 - 可执行文件旁有 `qt.conf`（安装布局）时，SyncD 在加载任何东西之前调用
   `SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32)` 与
   `SetDllDirectory("")`，并移除 `QT_PLUGIN_PATH`，使 DLL 与 Qt 插件只来自版本目录和 Windows；开发构建没有
   `qt.conf`，保留其 PATH。尚未在已安装的包中验证。
-- 许可证包：Qt、QtKeychain、OpenSSL、SQLite、zlib、KArchive 与 libp11 的许可证文本尚未与
-  `LICENSE.txt` 及 Nextcloud Desktop 的 `COPYING` 一起提供。

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/YuanZhe-99/Nextcloud-MyGo/protocol/message.schema.json",
-  "title": "SyncD protocol 1.9 message or bounded batch",
+  "title": "SyncD protocol 1.10 message or bounded batch",
   "oneOf": [
     {"$ref": "#/$defs/message"},
     {"type": "array", "minItems": 1, "maxItems": 32, "items": {"$ref": "#/$defs/message"}}
@@ -89,6 +89,19 @@
         "copy": {"type": "string", "description": "1.9 conflict: the copy upstream kept beside it"}
       }
     },
+    "activity": {
+      "type": "object", "required": ["cursor", "accountId", "folderId", "at", "kind", "count", "fromId", "toId", "reason"],
+      "properties": {
+        "cursor": {"type": "string", "pattern": "^[1-9][0-9]*$"},
+        "at": {"type": "string", "format": "date-time"},
+        "kind": {"description": "1.10 adds deletedLocal (removed here because the server removed them), renamedRemote and renamedLocal (renames or moves applied on the server and here) and switchFailed (a switch the user asked for that did not happen).", "enum": ["uploaded", "downloaded", "deletedRemote", "deletedLocal", "renamedRemote", "renamedLocal", "switched", "switchFailed"]},
+        "count": {"type": "integer", "minimum": 1},
+        "fromId": {"type": "string", "description": "switched, switchFailed: the address in use before"},
+        "toId": {"type": "string", "description": "switched: the address now in use; switchFailed: the address asked for"},
+        "reason": {"type": "string", "description": "switched: a network reason; switchFailed: the reasonCode, QUIESCE_STALLED when a transfer outlasted the wait"},
+        "name": {"type": "string", "description": "switched, switchFailed: the name of toId"}
+      }
+    },
     "operationKey": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
     "revision": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},
     "settingsUpdate": {
@@ -125,7 +138,7 @@
             "networks": {"type": "array", "items": {"$ref": "#/$defs/network"}},
             "switches": {"type": "array"},
             "decisions": {"type": "array", "items": {"$ref": "#/$defs/decision"}},
-            "activity": {"type": "array"}
+            "activity": {"type": "array", "items": {"$ref": "#/$defs/activity"}}
           },
           "allOf": [{
             "if": {"properties": {"daemon": {"properties": {"stateAvailable": {"const": true}}}}},

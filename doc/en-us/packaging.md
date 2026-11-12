@@ -17,25 +17,66 @@ program needs nothing beyond the Go toolchain, runs natively on ARM64 and x64, t
 | Piece | Path | Role |
 |---|---|---|
 | Package script | `tools/package.ps1` | builds the UI, stages and checks a package, builds the installer |
-| Checker and stager | `tools/pkg` | DLL closure, manifest, PE architecture check |
+| Checker and stager | `tools/pkg` | DLL closure, manifest, PE architecture check, a running SyncD's report |
 | Installer / uninstaller | `packaging/windows/setup` | per-user install, upgrade and uninstall |
 | Manifest | `internal/release` | what a package contains and which contracts it speaks |
-| Install test | `tools/package-smoke.ps1` | real install, reinstall and uninstall on this machine |
+| Install test | `tools/package-smoke.ps1` | real install, reinstall, upgrade and uninstall on this machine |
 
 ## Building a package
 
 ```powershell
+./tools/bootstrap-deps.ps1 -Architecture ARM64   # prints .dev/deps/env-arm64.json
 ./tools/build-syncd.ps1 -Architecture ARM64 -QtPrefix <target Qt> -QtHostPrefix <host Qt>
 ./tools/package.ps1 -Arch ARM64        # or x64; SyncD from build/syncd-<Arch>
 go run ./tools/pkg check -arch ARM64 build/package/ARM64/Nextcloud-MyGo-0.1.0-ARM64
 ./tools/package-smoke.ps1 -Setup build/package/Nextcloud-MyGo-0.1.0-arm64-test-setup.exe
 ```
 
+For an upgrade test between two versions:
+
+```powershell
+./tools/package.ps1 -Arch ARM64 -TestVersion 0.1.1
+./tools/package-smoke.ps1 -Setup build/package/Nextcloud-MyGo-0.1.0-arm64-test-setup.exe `
+    -UpgradeTo build/package/Nextcloud-MyGo-0.1.1-testversion-arm64-test-setup.exe
+```
+
 `tools/package.ps1` reads the SyncD build's `CMakeCache.txt` for its upstream build and that build's
 prefixes (Qt, native dependencies, vcpkg), so DLLs come only from the trees SyncD was linked against,
 plus the newest Visual C++ runtime of the installed Visual Studio. Every step has a deadline. It writes
 `build/package/<Arch>/Nextcloud-MyGo-<version>-<Arch>/` and
-`build/package/Nextcloud-MyGo-<version>-<arch>-test-setup.exe`, and installs nothing.
+`build/package/Nextcloud-MyGo-<version>-<arch>-test-setup.exe`, and installs nothing. After staging it
+runs the staged SyncD's `--version` and fails unless its version, Control schema and protocol match the
+manifest, so a package never pairs a UI with a SyncD built from other sources.
+
+### Test version
+
+`-TestVersion X.Y.Z` builds a package of another version for upgrade tests, without editing
+`mygo.json` or `internal/version`. It configures a SyncD tree of its own, `build/syncd-<Arch>-testversion`,
+with the Qt prefix, host Qt and upstream build of `-SyncDBuild`'s CMake cache, `BUILD_TESTING=OFF` and
+`SYNCD_TEST_VERSION=X.Y.Z` (which replaces `PROJECT_VERSION` as `SYNCD_VERSION`), and builds only SyncD and
+the CFAPI plugin there; `-SyncDBuild` is never written. The UI is linked with
+`MYGO_LDFLAGS=-X .../internal/version.Version=X.Y.Z` (`Version` is a variable for this), and the stager
+gets `-test-version`, which sets the manifest's version and `testVersion: true`. The output is
+`build/package/<Arch>-testversion/` and `Nextcloud-MyGo-X.Y.Z-testversion-<arch>-test-setup.exe`; its
+installer says the version was stamped for a test. The UI executable's file properties keep
+`mygo.json`'s version. Such a package is never a release.
+
+### License texts
+
+No package is made without the license texts of what it ships (GPL obligations, PLAN.md §16.5).
+`tools/package.ps1` runs `tools/licenses.ps1` for the SyncD build ([CI](ci.md#license-bundle)) and passes
+the result to the stager as `-notices`. `pkg stage` refuses before writing anything when `-notices` is
+missing or lacks one of `LICENSE.txt`, `THIRD_PARTY_NOTICES.md`, `SOURCE.txt`, Nextcloud Desktop's
+`COPYING`, the texts of the Qt modules qtbase, qt5compat, qtsvg and qtwebsockets, of OpenSSL, SQLite, zlib,
+QtKeychain, KArchive and libp11, and the Go license. The native texts exist only in prefixes built by
+`tools/bootstrap-deps.ps1`, so packages are built from those; the hand-assembled `.dev` trees are not a
+source for packages, and `tools/licenses.ps1` says to rebuild with the bootstrap.
+
+The installed copy keeps the bundle in its version directory: `LICENSE.txt` (GPL-3.0),
+`THIRD_PARTY_NOTICES.md`, `SOURCE.txt` (where the corresponding source is) and `licenses\<component>\`.
+These files are listed and hashed in `manifest.json` like every other file, so the installer verifies them,
+and an upgrade or uninstall replaces or removes them with the directory. The release's
+`Nextcloud-MyGo-<version>-licenses.zip` holds the same bundle per architecture.
 
 The stager starts from the two executables, the Qt plugins `tls/qopensslbackend.dll` and
 `sqldrivers/qsqlite.dll` and `uninstall.exe`, follows every normal and delay-load import, copies each
@@ -59,7 +100,7 @@ It writes `qt.conf` so that Qt loads plugins only from the version directory's `
     Qt6*.dll, nextcloudsync.dll, qt6keychain.dll, libssl-3-*.dll, sqlite3.dll, MSVCP140*.dll, ...
     plugins\tls\qopensslbackend.dll
     plugins\sqldrivers\qsqlite.dll
-    qt.conf, sync-exclude.lst, manifest.json, LICENSE.txt, licenses\
+    qt.conf, sync-exclude.lst, manifest.json, LICENSE.txt, THIRD_PARTY_NOTICES.md, SOURCE.txt, licenses\
 ```
 
 User data stays where the processes keep it, outside the install folder: SyncD's profile under
@@ -69,7 +110,7 @@ User data stays where the processes keep it, outside the install folder: SyncD's
 ## Manifest
 
 `manifest.json` records the product, version and architecture; `testBuild: true`, `signed: false` and
-`autoUpdate: false`; each half's executable and protocol version (from `protocol/contract.json`);
+`autoUpdate: false`; `testVersion: true` only in a `-TestVersion` package; each half's executable and protocol version (from `protocol/contract.json`);
 SyncD's Control schema (read from the one `PRAGMA user_version=` assignment in `backend/control.cpp`;
 staging fails if there is not exactly one); and every file's size and SHA-256. The installer verifies
 the extracted files against it before the new version can become current.
@@ -104,14 +145,36 @@ Otherwise it installs, reinstalls or upgrades in this order:
 
 1. Extract into a new `versions\<version>-<random>.partial`, verify it against the manifest, then
    rename it. A failure removes only the partial directory.
-2. Close the interface (a stateless client) so that it cannot start SyncD again, then send
-   `daemon.shutdown` to SyncD and wait up to 30 seconds; a SyncD that does not stop is terminated,
-   which it recovers from like any crash. If a process survives, the new directory is removed and the
-   installed version stays current.
-3. Copy `uninstall.exe` to the root, point `install.json`, the Start menu shortcut and the Apps entry
+2. Close the interface (a stateless client) so that it cannot start SyncD again; SyncD's pipe serves
+   one client at a time, so this also frees it for setup.
+3. If the installed version's SyncD runs for this profile, connect to it without ever starting one
+   (`syncd.ConnectRemote`) and ask for the update safe point, `daemon.prepareUpdate(<version being
+   installed>)`. A deletion waiting for review (`DECISION_PENDING`) stops the install at once:
+   installing never decides it. A switch, renewal, address check or sign-in still running, the
+   running cycle not yet finished (`QUIESCE_STALLED`) or no answer yet is retried every second for up
+   to 2 minutes; then, like any other refusal, the install stops. A SyncD that exits meanwhile needs
+   nothing. A stop removes the new directory, starts the closed interface again and leaves SyncD
+   running; setup says why (below).
+4. Send `daemon.shutdown` to SyncD and wait up to 30 seconds; a SyncD that does not stop is
+   terminated, which it recovers from like any crash. If a process survives, the new directory is
+   removed and the installed version stays current.
+5. Copy `uninstall.exe` to the root, point `install.json`, the Start menu shortcut and the Apps entry
    at the new directory, and move startup entries that start this install to the new UI, keeping
    their arguments and the user's Task Manager on/off choice.
-4. Remove the other version directories, then start the new UI, which starts its own SyncD.
+6. Remove the other version directories, then start the new UI, which starts its own SyncD.
+
+What setup prints when it stops at step 3, each followed by "the installed version was kept":
+
+| Case | Message |
+|---|---|
+| deletion waiting | Nextcloud MyGo is waiting for you to review a deletion. Open Nextcloud MyGo, review it, then run setup again |
+| still busy after 2 minutes | Nextcloud MyGo is still busy (signing in, checking or switching a server address, or finishing a sync) and did not get ready within 2 minutes. Wait a few minutes, then run setup again |
+| no answer after 2 minutes | Nextcloud MyGo's background sync is running but did not answer within 2 minutes. Quit Nextcloud MyGo from its tray icon, then run setup again |
+| any other refusal | Nextcloud MyGo could not get ready for the update. Quit Nextcloud MyGo from its tray icon, then run setup again |
+
+Only the profile's SyncD running from the installed version directory is prepared; another SyncD
+process under the install root (another profile's) is only stopped as in step 4. The uninstall
+stops SyncD as in steps 2 and 4, without the safe point.
 
 A new SyncD never shares a directory with another version's Qt DLLs, and the previous version is
 removed only after the new one is complete and current. The same rules make a same-version
@@ -157,31 +220,40 @@ ARM64 (Windows 11 on ARM64 hardware), 2026-11-12:
   shortcut, Apps entry or program file and kept the profile data; a second install and
   `-remove-user-data` removed the profile data and settings; the official client's `nc` registration,
   configuration folder and Apps entries were unchanged;
-- the x64 installer refuses to run on ARM64.
+- the x64 installer refuses to run on ARM64;
+- the update safe point and an upgrade between two versions (`tools/package-smoke.ps1 -UpgradeTo`,
+  36 s): the 0.1.0 package (SyncD built before this change) and a `-TestVersion 0.1.1` package (16 s
+  with its SyncD tree already built; a first build of that tree took 56 s) built from the committed
+  sources plus this change. The same-version reinstall (3.7 s) and the upgrade over the running copy
+  (3.8 s) each printed `SyncD is ready` before `daemon.shutdown`; the upgrade wrote a new
+  `control.pre-update.*.sqlite`; the new SyncD reported version 0.1.1 and `startupReport`
+  `previousVersion` 0.1.0, schema 11 to 11, self-check `passed`; the pause of every folder set before
+  the upgrade was kept; uninstall then left nothing. Before the interface was closed first, a reinstall
+  stopped after 2 minutes with the no-answer message, removed its new directory and kept the
+  installed version: SyncD's pipe serves one client at a time.
 
 Not verified: installing the x64 package (needs x64 hardware); which TLS backend SyncD loads at its
 first network request (no server in this run); `-remove-user-data` with a signed-in account; a
-failed install on real hardware (covered by unit tests only); an upgrade between two different
-versions.
+failed install on real hardware (covered by unit tests only); the deletion-waiting and still-busy
+refusals of the safe point on a real install (unit tests only, `TestPrepare`); an upgrade with a
+signed-in account or a Control schema change.
 
 ## What SyncD needs to provide
 
-SyncD now provides the first four; the installer and stager have not adopted them yet, and the
-license bundle is still open:
+SyncD now provides all four. The installer uses `daemon.prepareUpdate` and `ConnectRemote`
+(step 3) and `tools/package.ps1` checks `--version` against the manifest:
 
 - `daemon.prepareUpdate(targetVersion)` ([IPC](ipc.md)): the safe point of PLAN.md §16.2 (no new
-  cycle, the running one finished, a consistent Control copy `control.pre-update.<id>.sqlite`), to
-  replace `daemon.shutdown` in step 2 followed by `daemon.shutdown`; after the new SyncD starts,
+  cycle, the running one finished, a consistent Control copy `control.pre-update.<id>.sqlite`), sent
+  in step 3 before `daemon.shutdown`; after the new SyncD starts,
   `snapshot.daemon.startupReport` gives the previous version and schema, the new schema and the
-  self-check result with its reason codes.
+  self-check result with its reason codes (`go run ./tools/pkg report` prints it).
 - `internal/syncd.ConnectRemote(ctx, profile, executable)`: a client that never starts SyncD.
 - `nextcloud-mygo-syncd.exe --version` prints one JSON line, `{"version", "protocol": {"major",
-  "minor"}, "controlSchema", "engine"}`, without a profile, so staging can stop reading the schema
-  from source. A startup check of the manifest against it is the stager's part.
+  "minor"}, "controlSchema", "engine"}`, without a profile. The manifest's schema is still read from
+  source; packaging fails when the two differ.
 - With a `qt.conf` beside the executable (the installed layout) SyncD calls
   `SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32)`
   and `SetDllDirectory("")` before loading anything and removes `QT_PLUGIN_PATH`, so DLLs and Qt
   plugins come only from the version directory and Windows; a development build has no `qt.conf`
   and keeps its PATH. Not yet verified in an installed package.
-- The license bundle: Qt, QtKeychain, OpenSSL, SQLite, zlib, KArchive and libp11 texts are not yet
-  shipped next to `LICENSE.txt` and the Nextcloud Desktop `COPYING`.

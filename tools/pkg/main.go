@@ -3,14 +3,17 @@
 // its architecture (PLAN.md §15.2, §16.1).
 //
 //	go run ./tools/pkg stage -arch ARM64 -out <dir> -search <dir;dir> -plugins <Qt plugins> \
-//	    -plugin tls/qopensslbackend.dll -file Nextcloud-MyGo.exe=<path> ...
+//	    -plugin tls/qopensslbackend.dll -notices <tools/licenses.ps1 output> -file Nextcloud-MyGo.exe=<path> ...
 //	go run ./tools/pkg check -arch ARM64 <dir or file>...
+//	go run ./tools/pkg report -profile <profile> -syncd <running SyncD> [-pause-all]
 //
-// It needs no server and no Windows APIs, so CI runs it anywhere.
+// stage and check need no server and no Windows APIs, so CI runs them
+// anywhere; report reads a running SyncD for tools/package-smoke.ps1.
 package main
 
 import (
 	"archive/zip"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -22,15 +25,17 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/YuanZhe-99/Nextcloud-MyGo/internal/release"
+	"github.com/YuanZhe-99/Nextcloud-MyGo/internal/syncd"
 	"github.com/YuanZhe-99/Nextcloud-MyGo/internal/version"
 )
 
-// main dispatches the stage and check commands; a failed check exits 1.
+// main dispatches the stage, check and report commands; a failed command exits 1.
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: pkg stage|check -arch ARM64|x64 ...")
+		fmt.Fprintln(os.Stderr, "usage: pkg stage|check -arch ARM64|x64 ... | pkg report -profile <profile> -syncd <exe>")
 		os.Exit(2)
 	}
 	var err error
@@ -39,6 +44,8 @@ func main() {
 		err = stageCommand(os.Args[2:])
 	case "check":
 		err = checkCommand(os.Args[2:])
+	case "report":
+		err = reportCommand(os.Args[2:])
 	default:
 		err = fmt.Errorf("unknown command %q", os.Args[1])
 	}
@@ -46,6 +53,58 @@ func main() {
 		fmt.Fprintln(os.Stderr, "pkg:", err)
 		os.Exit(1)
 	}
+}
+
+// reportCommand prints, as one JSON line, what a running SyncD of a profile
+// says about itself: its version, whether every folder is paused, its account
+// and folder counts and its startup report, once the self-check has finished.
+// Inputs: -profile and -syncd, the running SyncD's executable, which the pipe
+// check compares; -pause-all first pauses every folder, a setting that must
+// survive an upgrade; -wait bounds the whole command.
+// Side effects: never starts SyncD (syncd.ConnectRemote); -pause-all changes
+// the profile's state.
+func reportCommand(args []string) error {
+	fl := flag.NewFlagSet("report", flag.ExitOnError)
+	profile := fl.String("profile", "", "the SyncD profile")
+	exe := fl.String("syncd", "", "the running SyncD's executable")
+	pause := fl.Bool("pause-all", false, "pause every folder before reporting")
+	wait := fl.Duration("wait", time.Minute, "how long to wait for the connection and the self-check")
+	fl.Parse(args)
+	if *exe == "" {
+		return errors.New("report needs -syncd")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), *wait)
+	defer cancel()
+	r := syncd.ConnectRemote(ctx, *profile, *exe)
+	defer r.Close()
+	for {
+		s := r.Snapshot()
+		if check := s.Daemon.StartupReport.SelfCheck; s.Daemon.Connected && check != "" && check != "pending" {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("no finished self-check from SyncD within %v (connected %v)", *wait, s.Daemon.Connected)
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	if *pause {
+		if err := r.PauseAll(); err != nil {
+			return fmt.Errorf("pause all: %w", err)
+		}
+		for !r.Snapshot().Daemon.AllPaused {
+			select {
+			case <-ctx.Done():
+				return errors.New("SyncD accepted the pause but its state does not show it")
+			case <-time.After(200 * time.Millisecond):
+			}
+		}
+	}
+	s := r.Snapshot()
+	return json.NewEncoder(os.Stdout).Encode(map[string]any{
+		"version": s.Daemon.Version, "allPaused": s.Daemon.AllPaused,
+		"accounts": len(s.Accounts), "folders": len(s.Folders), "startupReport": s.Daemon.StartupReport,
+	})
 }
 
 // list collects a repeated flag.
@@ -156,10 +215,11 @@ func check(root, arch string) (int, []string, error) {
 	return len(pes), problems, nil
 }
 
-// stageCommand copies the named files, the Qt plugins they need and the
-// transitive DLL closure into a package directory with qt.conf and the
-// manifest, then checks the result.
+// stageCommand copies the named files, the license bundle, the Qt plugins they
+// need and the transitive DLL closure into a package directory with qt.conf
+// and the manifest, then checks the result.
 // Side effects: replaces -out.
+// Notes: refuses before writing anything when -notices is missing or incomplete.
 func stageCommand(args []string) error {
 	fl := flag.NewFlagSet("stage", flag.ExitOnError)
 	arch := fl.String("arch", "", "ARM64 or x64")
@@ -169,6 +229,8 @@ func stageCommand(args []string) error {
 	contract := fl.String("contract", "protocol/contract.json", "protocol manifest")
 	control := fl.String("control", "backend/control.cpp", "source that sets the Control schema (PRAGMA user_version)")
 	zipTo := fl.String("zip", "", "also write the checked package as this zip (the installer payload)")
+	testVersion := fl.String("test-version", "", "stamp this version instead of mygo.json's and mark the manifest testVersion (upgrade tests only)")
+	notices := fl.String("notices", "", "the license and notice bundle tools/licenses.ps1 writes, copied into the package root (required)")
 	var files, plugs, runtimes list
 	fl.Var(&files, "file", "dest=source: a file to package, by slash path in the package (repeatable)")
 	fl.Var(&plugs, "plugin", "a Qt plugin, relative to -plugins (repeatable)")
@@ -180,10 +242,17 @@ func stageCommand(args []string) error {
 	if *out == "" || len(files) == 0 {
 		return errors.New("stage needs -out and -file")
 	}
+	// No package without its license texts (GPL obligations, PLAN.md §16.5).
+	if err := requireNotices(*notices); err != nil {
+		return err
+	}
 	m := release.Manifest{
 		Product: "Nextcloud-MyGo", Version: version.Version, Arch: *arch, TestBuild: true,
 		UI:    release.Half{Executable: "Nextcloud-MyGo.exe"},
 		SyncD: release.Half{Executable: "nextcloud-mygo-syncd.exe"},
+	}
+	if *testVersion != "" {
+		m.Version, m.TestVersion = *testVersion, true
 	}
 	var err error
 	if m.UI.Protocol, err = protocol(*contract); err != nil {
@@ -219,6 +288,15 @@ func stageCommand(args []string) error {
 		if err := add(dest, src); err != nil {
 			return err
 		}
+	}
+	if err := filepath.WalkDir(*notices, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, _ := filepath.Rel(*notices, p)
+		return add(filepath.ToSlash(rel), p)
+	}); err != nil {
+		return err
 	}
 	for _, p := range plugs {
 		if err := add("plugins/"+filepath.ToSlash(p), filepath.Join(*plugins, p)); err != nil {
@@ -303,6 +381,43 @@ func stageCommand(args []string) error {
 		return nil
 	}
 	return writeZip(*out, *zipTo)
+}
+
+// noticesRequired lists what every package's license bundle must contain: the
+// product's license and the texts of everything it ships (tools/licenses.ps1).
+var noticesRequired = []string{
+	"LICENSE.txt", "THIRD_PARTY_NOTICES.md", "SOURCE.txt",
+	"licenses/Nextcloud-Desktop/COPYING", "licenses/Qt/qtbase", "licenses/Qt/qt5compat",
+	"licenses/Qt/qtsvg", "licenses/Qt/qtwebsockets", "licenses/OpenSSL", "licenses/SQLite",
+	"licenses/zlib", "licenses/QtKeychain", "licenses/KArchive", "licenses/libp11", "licenses/Go/LICENSE",
+}
+
+// requireNotices fails unless dir is a complete license bundle.
+// Returns: an error naming every missing entry (a directory counts only with
+// at least one file) and how to make the bundle.
+func requireNotices(dir string) error {
+	if dir == "" {
+		return errors.New("stage needs -notices, the license bundle of tools/licenses.ps1")
+	}
+	var missing []string
+	for _, rel := range noticesRequired {
+		p := filepath.Join(dir, filepath.FromSlash(rel))
+		info, err := os.Stat(p)
+		if err == nil && info.IsDir() {
+			entries, _ := os.ReadDir(p)
+			if len(entries) == 0 {
+				err = fs.ErrNotExist
+			}
+		}
+		if err != nil {
+			missing = append(missing, rel)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("license bundle %s lacks %s: make it with tools/licenses.ps1 from dependencies built by tools/bootstrap-deps.ps1",
+			dir, strings.Join(missing, ", "))
+	}
+	return nil
 }
 
 // writeZip archives dir's files under their slash paths, the installer's payload.

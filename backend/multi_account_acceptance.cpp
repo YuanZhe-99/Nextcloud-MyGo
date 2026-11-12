@@ -3,6 +3,7 @@
 
 #include "control.h"
 #include "login.h"
+#include "network_tunnel.h"
 #include <QDir>
 #include <QEventLoop>
 #include <QFile>
@@ -76,6 +77,57 @@ QJsonObject folderState(Control &c, const QString &folder) {
 struct Mapped {
   QString account, folder, local, remote, login, secret, uid;
 };
+/// ownedUser creates a second user of the disposable server with a random
+/// password and returns its name and password.
+/// Side effects: reserves owned-user.json first, so this run and, after any
+/// failure, the parent's cleanup remove the user again.
+std::pair<QString, QString> ownedUser(const QString &root, const QUrl &base) {
+  const auto user = "mygo-multi-" + QFileInfo(root).fileName().right(12);
+  QByteArray random(24, Qt::Uninitialized);
+  QRandomGenerator::system()->fillRange(
+      reinterpret_cast<quint32 *>(random.data()), random.size() / 4);
+  const auto password =
+      QString::fromLatin1(random.toBase64(QByteArray::Base64UrlEncoding |
+                                          QByteArray::OmitTrailingEquals)) +
+      "!aA1";
+  {
+    QFile owned(QDir(root).filePath("owned-user.json"));
+    require(owned.open(QIODevice::WriteOnly) &&
+                owned.write(QJsonDocument(QJsonObject{{"user", user}})
+                                .toJson(QJsonDocument::Compact)) > 0,
+            "owned user reservation failed");
+  }
+  require(davRequest(base, "POST", "ocs/v2.php/cloud/users?format=json",
+                     qEnvironmentVariable("NEXTCLOUD_TEST_USER"),
+                     qEnvironmentVariable("NEXTCLOUD_TEST_PASSWORD"),
+                     "userid=" + QUrl::toPercentEncoding(user) +
+                         "&password=" + QUrl::toPercentEncoding(password),
+                     nullptr, "application/x-www-form-urlencoded") == 200,
+          "owned second fixture user could not be created");
+  return {user, password};
+}
+/// setQuota gives an owned user a quota through the admin provisioning API.
+void setQuota(const QUrl &base, const QString &user, const QByteArray &quota) {
+  require(davRequest(base, "PUT",
+                     "ocs/v2.php/cloud/users/" +
+                         QString::fromLatin1(QUrl::toPercentEncoding(user)),
+                     qEnvironmentVariable("NEXTCLOUD_TEST_USER"),
+                     qEnvironmentVariable("NEXTCLOUD_TEST_PASSWORD"),
+                     "key=quota&value=" + QUrl::toPercentEncoding(quota),
+                     nullptr, "application/x-www-form-urlencoded") == 200,
+          "owned fixture user quota could not be set");
+}
+/// removeOwnedUser deletes the owned user and its reservation.
+void removeOwnedUser(const QString &root, const QUrl &base,
+                     const QString &user) {
+  require(davRequest(base, "DELETE",
+                     "ocs/v2.php/cloud/users/" +
+                         QString::fromLatin1(QUrl::toPercentEncoding(user)),
+                     qEnvironmentVariable("NEXTCLOUD_TEST_USER"),
+                     qEnvironmentVariable("NEXTCLOUD_TEST_PASSWORD")) == 200 &&
+              QFile::remove(QDir(root).filePath("owned-user.json")),
+          "owned second fixture user could not be removed");
+}
 } // namespace
 
 void multiAccountAcceptance(Control &c, const QString &root,
@@ -92,27 +144,8 @@ void multiAccountAcceptance(Control &c, const QString &root,
             "as ACCOUNT_EXISTS");
   // A second user of the disposable server, removed again by this run and,
   // after any failure, by the parent's cleanup (owned-user.json).
-  const auto user = "mygo-multi-" + QFileInfo(root).fileName().right(12);
-  QByteArray random(24, Qt::Uninitialized);
-  QRandomGenerator::system()->fillRange(
-      reinterpret_cast<quint32 *>(random.data()), random.size() / 4);
-  const auto password =
-      QString::fromLatin1(random.toBase64(QByteArray::Base64UrlEncoding |
-                                          QByteArray::OmitTrailingEquals)) +
-      "!aA1";
-  {
-    QFile owned(QDir(root).filePath("owned-user.json"));
-    require(owned.open(QIODevice::WriteOnly) &&
-                owned.write(QJsonDocument(QJsonObject{{"user", user}})
-                                .toJson(QJsonDocument::Compact)) > 0,
-            "owned user reservation failed");
-  }
-  require(davRequest(base, "POST", "ocs/v2.php/cloud/users?format=json", admin,
-                     adminPassword,
-                     "userid=" + QUrl::toPercentEncoding(user) +
-                         "&password=" + QUrl::toPercentEncoding(password),
-                     nullptr, "application/x-www-form-urlencoded") == 200,
-          "owned second fixture user could not be created");
+  const auto owned = ownedUser(root, base);
+  const auto &user = owned.first, &password = owned.second;
   const auto added = calls.login(user, password);
   require(added.value("state") == "succeeded",
           "a second account on the same server was refused");
@@ -290,12 +323,7 @@ void multiAccountAcceptance(Control &c, const QString &root,
   // failure: the folder names it, a fixed policy still commits, the daemon
   // keeps serving and the other account keeps syncing (shared server,
   // 2026-11-12: the daemon stopped itself here).
-  require(davRequest(base, "PUT",
-                     "ocs/v2.php/cloud/users/" +
-                         QString::fromLatin1(QUrl::toPercentEncoding(user)),
-                     admin, adminPassword, "key=quota&value=1%20KB", nullptr,
-                     "application/x-www-form-urlencoded") == 200,
-          "owned second fixture user quota could not be set");
+  setQuota(base, user, "1 KB");
   {
     QFile file(mapped[2].local + "/full.bin");
     require(file.open(QIODevice::WriteOnly) &&
@@ -358,14 +386,214 @@ void multiAccountAcceptance(Control &c, const QString &root,
   calls.call("folders.syncNow", {{"folderId", mapped[0].folder}});
   calls.wait([&] { return onServer(mapped[0], "after.txt"); },
              "the remaining account stopped syncing after the other's removal");
-  require(davRequest(base, "DELETE",
-                     "ocs/v2.php/cloud/users/" +
-                         QString::fromLatin1(QUrl::toPercentEncoding(user)),
-                     admin, adminPassword) == 200 &&
-              QFile::remove(QDir(root).filePath("owned-user.json")),
-          "owned second fixture user could not be removed");
+  removeOwnedUser(root, base, user);
   std::puts("PASS multi-account: removing one account kept the other syncing, "
             "its files on both sides and its address");
+}
+
+void switchQuotaAcceptance(Control &c, const QString &root, const QUrl &base,
+                           const AcceptanceCalls &calls) {
+  const auto owned = ownedUser(root, base);
+  const auto &user = owned.first, &password = owned.second;
+  const auto added = calls.login(user, password);
+  require(added.value("state") == "succeeded",
+          "the owned user could not sign in");
+  const auto account = added.value("accountId").toString();
+  auto receipt = calls.settled(calls.call(
+      "endpoints.stage",
+      {{"accountId", account},
+       {"name", "Owned alternate"},
+       {"baseUrl", qEnvironmentVariable("NEXTCLOUD_TEST_ALTERNATE_URL")}}));
+  require(receipt.value("state") == "succeeded",
+          "the owned user's alternate could not be staged");
+  receipt = calls.settled(calls.call(
+      "endpoints.approveOrigin",
+      {{"stagingId",
+        receipt.value("result").toObject().value("id").toString()}}));
+  require(receipt.value("state") == "succeeded",
+          "the owned user's alternate could not be approved");
+  const auto alternate =
+      receipt.value("result").toObject().value("endpointId").toString();
+  const auto primary = calls.binding(account).first;
+  QByteArray body;
+  require(davRequest(base, "GET", "ocs/v2.php/cloud/user?format=json", user,
+                     password, {}, &body) == 200,
+          "owned fixture user metadata unavailable");
+  const auto uid = QJsonDocument::fromJson(body)
+                       .object()
+                       .value("ocs")
+                       .toObject()
+                       .value("data")
+                       .toObject()
+                       .value("id")
+                       .toString();
+  const auto local = root + "/quota/local";
+  require(davRequest(base, "MKCOL", home(uid) + "quota", user, password) ==
+                  201 &&
+              QDir().mkpath(local),
+          "owned quota folder could not be created");
+  const auto token = calls
+                         .call("folders.inspect", {{"accountId", account},
+                                                   {"remotePath", "/quota"},
+                                                   {"localPath", local}})
+                         .value("result")
+                         .toObject()
+                         .value("inspectToken")
+                         .toString();
+  require(!token.isEmpty() &&
+              calls.settled(calls.call("folders.add", {{"inspectToken", token}}))
+                      .value("state") == "succeeded",
+          "owned quota folder could not be added");
+  QString folder;
+  for (const auto &entry :
+       c.projection().value("snapshot").toObject().value("folders").toArray())
+    if (entry.toObject().value("accountId") == account)
+      folder = entry.toObject().value("id").toString();
+  calls.wait([&] { return folderState(c, folder).value("state") == "upToDate"; },
+             "the owned quota folder did not reconcile");
+  const auto network = [&] {
+    for (const auto &entry : c.projection()
+                                 .value("snapshot")
+                                 .toObject()
+                                 .value("networks")
+                                 .toArray())
+      if (entry.toObject().value("accountId") == account)
+        return entry.toObject();
+    return QJsonObject{};
+  };
+  const auto latest = [&](const char *kind) {
+    for (const auto &entry : c.projection()
+                                 .value("snapshot")
+                                 .toObject()
+                                 .value("activity")
+                                 .toArray())
+      if (entry.toObject().value("accountId") == account &&
+          entry.toObject().value("kind") == QLatin1String(kind))
+        return entry.toObject();
+    return QJsonObject{};
+  };
+  const auto counter = [&](const char *name) {
+    for (const auto &entry : calls.call("diagnostics.snapshot", {})
+                                 .value("result")
+                                 .toObject()
+                                 .value("folders")
+                                 .toArray())
+      if (entry.toObject().value("folderId") == folder)
+        return entry.toObject().value(name).toString().toULongLong();
+    return 0ULL;
+  };
+  // What "Use this one" sends: a fixed policy for the alternate address.
+  const auto useAlternate = [&] {
+    return calls.call("endpoints.setPolicy", {{"accountId", account},
+                                              {"policy", "fixed"},
+                                              {"fixedEndpointId", alternate}});
+  };
+  // A 64 MiB upload held unfinished on the primary past the drain window.
+  const auto policy = network();
+  const auto sent = counter("uploadBytes");
+  NetworkTunnel::setStallAfter(2 * 1048576);
+  {
+    QByteArray content(64 * 1048576, Qt::Uninitialized);
+    QRandomGenerator::system()->fillRange(
+        reinterpret_cast<quint32 *>(content.data()), content.size() / 4);
+    QFile file(local + "/large.bin");
+    require(file.open(QIODevice::WriteOnly) &&
+                file.write(content) == content.size(),
+            "owned large local write failed");
+  }
+  calls.call("folders.syncNow", {{"folderId", folder}});
+  calls.wait(
+      [&] {
+        return counter("activeUploads") > 0 &&
+               counter("uploadBytes") >= sent + 1048576;
+      },
+      "the owned upload was not held unfinished");
+  const auto first = useAlternate()
+                         .value("result")
+                         .toObject()
+                         .value("operationId")
+                         .toString();
+  require(!first.isEmpty(), "the switch request was refused at once");
+  calls.wait(
+      [&] {
+        const auto n = network();
+        return n.value("switching").toBool() &&
+               n.value("requestedEndpointId") == alternate &&
+               n.value("why").toArray().contains(QJsonValue("postponed"));
+      },
+      "the switch did not show as postponed during the transfer");
+  try {
+    calls.wait([&] { return !latest("switchFailed").isEmpty(); },
+               "the switch request ended without a visible outcome");
+  } catch (...) {
+    // Sanitized state for the report: identifiers, states and reason codes.
+    std::printf(
+        "  network %s\n  receipt %s\n",
+        QJsonDocument(network()).toJson(QJsonDocument::Compact).constData(),
+        QJsonDocument(calls.call("operations.get", {{"operationId", first}})
+                          .value("result")
+                          .toObject())
+            .toJson(QJsonDocument::Compact)
+            .constData());
+    throw;
+  }
+  const auto failed = latest("switchFailed");
+  const auto n = network();
+  require(failed.value("reason") == "QUIESCE_STALLED" &&
+              failed.value("fromId") == primary &&
+              failed.value("toId") == alternate &&
+              !failed.value("name").toString().isEmpty(),
+          "the refused switch did not name its reason and addresses");
+  require(calls.binding(account).first == primary &&
+              !n.value("switching").toBool() &&
+              n.value("requestedEndpointId").toString().isEmpty() &&
+              n.value("policy") == policy.value("policy") &&
+              n.value("fixedEndpointId") == policy.value("fixedEndpointId"),
+          "a refused switch changed the address or the policy");
+  require(calls
+              .call("operations.get", {{"operationId", first}})
+              .value("result")
+              .toObject()
+              .value("state") == "failed",
+          "the refused switch's receipt did not fail");
+  std::puts("PASS switch-quota: a switch asked for during an upload held past "
+            "the drain window ends as switchFailed with QUIESCE_STALLED, on "
+            "the same address and policy");
+  // The held upload finishes and fills the user's quota; the next one is
+  // refused. The server sizes a PUT's room when it opens it, so a quota
+  // lowered during the held upload does not refuse that one.
+  NetworkTunnel::setStallAfter(0);
+  calls.wait([&] { return folderState(c, folder).value("state") == "upToDate"; },
+             "the held upload did not finish once released");
+  setQuota(base, user, "1 MB");
+  {
+    QFile file(local + "/after.bin");
+    require(file.open(QIODevice::WriteOnly) &&
+                file.write(QByteArray(256 * 1024, 'q')) == 256 * 1024,
+            "owned local write failed");
+  }
+  calls.call("folders.syncNow", {{"folderId", folder}});
+  calls.wait(
+      [&] {
+        return folderState(c, folder).value("reasonCode") ==
+               "REMOTE_QUOTA_EXCEEDED";
+      },
+      "the next upload was not refused by the user's quota");
+  std::puts("PASS switch-quota: the held upload finished once released and "
+            "filled the quota; the next upload names the full server");
+  // Asked again at the safe point, with the quota still full, it switches.
+  receipt = calls.settled(useAlternate());
+  require(receipt.value("state") == "succeeded" &&
+              calls.binding(account).first == alternate &&
+              latest("switched").value("toId") == alternate,
+          "the switch asked for again after the quota refusal did not happen");
+  require(!c.shutdownRequested(), "the full quota stopped the daemon");
+  std::puts("PASS switch-quota: asked again at the safe point with the quota "
+            "full, the switch happens and is recorded");
+  require(calls.settled(calls.call("accounts.remove", {{"accountId", account}}))
+                  .value("state") == "succeeded",
+          "the owned account could not be removed");
+  removeOwnedUser(root, base, user);
 }
 
 void cleanupOwnedUser(const QString &root) {

@@ -67,13 +67,17 @@ kept there.
   answers (`latencyMs`), Verify now, Use this one, a pending switch, and Remove this address; why
   the address in use was chosen (`network.why`: verified, faster with both answer times, stable,
   your choice, the network joined, the others not answering, a postponed switch) and when and why
-  the last switch happened; the recent switches. A switch is requested (`endpoints.setPolicy`) and
-  shown pending until SyncD reaches a safe point.
+  the last switch happened; the recent switches, with each requested switch that did not happen
+  (`switchFailed`: "Switch to the address didn't happen", and why in words). A switch is requested
+  (`endpoints.setPolicy`) and shown pending until SyncD reaches a safe point.
 - **Activity:** every deletion review (how many files, each direction with its count, the groups
   SyncD names with their file counts, when the proposal expires; Decide later first, Open folder,
   and Allow the deletions only after a second question; nothing else answers a review); conflicts,
   each closed with Mark as resolved (`resolved`, both copies stay); what else needs the user; the
-  recent history, filtered. Its times, like the Network page's recent switches, are on the local
+  recent history, filtered: uploads, downloads, deletions and renames (protocol 1.10) each with the
+  side they happened on and their count, under Files; switches and switches that did not happen,
+  with why in words (a sync that did not reach a safe point in time for `QUIESCE_STALLED`), under
+  Network. Its times, like the Network page's recent switches, are on the local
   clock (SyncD reports UTC): today as a time, then Yesterday, then a date.
 
 ## Dialogs

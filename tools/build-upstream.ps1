@@ -1,5 +1,6 @@
 # Builds the recorded upstream engine or its real test suite without installing it.
-# Inputs: target architecture, build mode, and existing native dependency prefixes.
+# Inputs: target architecture, build mode, and existing native dependency prefixes (tools/bootstrap-deps.ps1
+#   writes them); -BuildRoot, where the build tree goes (default build/; the patched source stays in build/).
 # Side effects: writes only the build tree; tests execute only in tests mode.
 [CmdletBinding()]
 param(
@@ -7,7 +8,8 @@ param(
     [Parameter(Mandatory)][ValidateSet('engine', 'tests')][string]$Mode,
     [Parameter(Mandatory)][string]$QtPrefix,
     [Parameter(Mandatory)][string]$QtHostPrefix,
-    [Parameter(Mandatory)][string[]]$DependencyPrefix
+    [Parameter(Mandatory)][string[]]$DependencyPrefix,
+    [string]$BuildRoot = ''
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -74,7 +76,8 @@ if ($LASTEXITCODE -ne 0 -or -not $vs) { throw 'Visual Studio CMake tools are req
 $cmake = Join-Path $vs 'Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe'
 $ctest = Join-Path (Split-Path $cmake -Parent) 'ctest.exe'
 $fingerprint = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($sourceId))).Substring(0, 12)
-$build = Join-Path $root "build/$($Architecture.Substring(0, 1).ToLowerInvariant())$($Mode.Substring(0, 1))-$fingerprint"
+if (-not $BuildRoot) { $BuildRoot = Join-Path $root 'build' }
+$build = Join-Path $BuildRoot "$($Architecture.Substring(0, 1).ToLowerInvariant())$($Mode.Substring(0, 1))-$fingerprint"
 $gui = if ($Mode -eq 'tests') { 'ON' } else { 'OFF' }
 $prefixes = (@($QtPrefix) + $DependencyPrefix) -join ';'
 & $cmake -S $source -B $build -G 'Visual Studio 18 2026' -A $Architecture `

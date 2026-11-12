@@ -128,6 +128,12 @@ func sampleState(now time.Time) Snapshot {
 			{At: now.Add(-13 * time.Minute), Kind: ActDownloaded, FolderID: "f-docs", Count: 6},
 			{At: now.Add(-20 * time.Minute), Kind: ActSwitched, Name: "Home network"},
 			{At: now.Add(-27 * time.Minute), Kind: ActDeleted, FolderID: "f-docs", Name: "old-draft.docx"},
+			// Protocol 1.10: what the server's changes did here, renames both
+			// ways, and a switch that could not happen.
+			{At: now.Add(-34 * time.Minute), Kind: ActDeletedLocal, FolderID: "f-docs", Count: 2},
+			{At: now.Add(-41 * time.Minute), Kind: ActRenamedRemote, FolderID: "f-projects", Count: 1},
+			{At: now.Add(-48 * time.Minute), Kind: ActRenamedLocal, FolderID: "f-docs", Count: 3},
+			{At: now.Add(-55 * time.Minute), Kind: ActSwitchFailed, AccountID: "a-home", FromID: "e-wan", ToID: "e-lan", Name: "Home network", Reason: "QUIESCE_STALLED"},
 		},
 	}
 }
@@ -498,10 +504,21 @@ func (m *Mock) RequestPolicy(accountID string, p Policy, fixed string) (string, 
 			if n.AccountID != accountID {
 				continue
 			}
+			old := *n
 			n.Policy, n.FixedEndpointID = p, ""
 			if p == PolicyFixed {
 				if fixed == "" {
 					fixed = n.ActiveID
+				}
+				// A switch that cannot happen ends visibly, as SyncD's does:
+				// the policy and the address stay, the history says why.
+				for _, e := range m.s.Endpoints {
+					if e.ID == fixed && e.Blocked && fixed != n.ActiveID {
+						n.Policy, n.FixedEndpointID = old.Policy, old.FixedEndpointID
+						m.s.Activity = slices.Insert(m.s.Activity, 0, Activity{At: m.now(), Kind: ActSwitchFailed, AccountID: accountID, FromID: n.ActiveID, ToID: fixed, Name: e.Name, Reason: e.BlockedReason})
+						op = m.id("op")
+						return
+					}
 				}
 				n.FixedEndpointID = fixed
 				if fixed != n.ActiveID {
@@ -631,7 +648,7 @@ func (m *Mock) Shutdown() error { return nil }
 // Diagnostics reports the sample folders with no transfers.
 func (m *Mock) Diagnostics(context.Context) (RuntimeDiagnostics, error) {
 	s := m.Snapshot()
-	d := RuntimeDiagnostics{Version: s.Daemon.Version, Protocol: "1.9", NetworkGeneration: "1", AllPaused: s.Daemon.AllPaused, StateAvailable: true, StartupState: StartupNormal}
+	d := RuntimeDiagnostics{Version: s.Daemon.Version, Protocol: fmt.Sprintf("1.%d", protocolMinor), NetworkGeneration: "1", AllPaused: s.Daemon.AllPaused, StateAvailable: true, StartupState: StartupNormal}
 	for _, f := range s.Folders {
 		d.Folders = append(d.Folders, FolderDiagnostics{FolderID: f.ID, AccountID: f.AccountID, Epoch: "1", State: string(f.State), ReasonCode: f.ReasonCode, UserPaused: f.UserPaused})
 	}

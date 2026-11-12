@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -11,8 +12,10 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/YuanZhe-99/Nextcloud-MyGo/internal/release"
+	"github.com/YuanZhe-99/Nextcloud-MyGo/internal/syncd"
 )
 
 // TestAdmit covers §16.3: reinstall and upgrade proceed; a downgrade, an
@@ -39,6 +42,56 @@ func TestAdmit(t *testing.T) {
 		if c.refused == "" && err != nil || c.refused != "" && (err == nil || !strings.Contains(err.Error(), c.refused)) {
 			t.Errorf("%s: admit = %v, want refusal %q", c.name, err, c.refused)
 		}
+	}
+}
+
+// TestPrepare covers §16.2's safe point before files are replaced: a deletion
+// waiting for the user stops the install at once (installing never decides
+// it), a busy SyncD is waited for up to prepareLimit, and a SyncD that has
+// gone needs nothing. The clock is fake; SyncD's refusals come from the Mock,
+// which carries SyncD's own reason codes.
+func TestPrepare(t *testing.T) {
+	pending := syncd.NewMock(true, nil).PrepareUpdate("0.1.1")
+	busy := syncd.NewMock(true, nil)
+	if err := busy.ResolveDecision("d-photos", "sha256:photos-142", syncd.ActionApproveDeletion); err != nil {
+		t.Fatal(err)
+	}
+	stalled := busy.PrepareUpdate("0.1.1")
+	if syncd.ReasonOf(pending) != "DECISION_PENDING" || syncd.ReasonOf(stalled) != "QUIESCE_STALLED" {
+		t.Fatalf("Mock refusals: %v, %v", pending, stalled)
+	}
+	for _, c := range []struct {
+		name    string
+		replies []error // the last one repeats
+		alive   bool
+		want    error
+		asks    int // 0: more than one minute's worth
+	}{
+		{"not running", []error{syncd.ErrDisconnected}, false, nil, 1},
+		{"ready", []error{nil}, true, nil, 1},
+		{"deletion pending", []error{pending}, true, errDeletionPending, 1},
+		{"stalled then ready", []error{syncd.ErrDisconnected, stalled, context.DeadlineExceeded, stalled, nil}, true, nil, 5},
+		{"stalled past deadline", []error{stalled}, true, errNotQuiet, 0},
+		{"never answers", []error{syncd.ErrDisconnected}, true, errNoAnswer, 0},
+		{"refused otherwise", []error{syncd.ErrRefused}, true, errNotPrepared, 1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			clock := time.Date(2026, 11, 12, 9, 0, 0, 0, time.UTC)
+			start, asks := clock, 0
+			err := prepare(func() error {
+				asks++
+				return c.replies[min(asks, len(c.replies))-1]
+			}, func() bool { return c.alive }, func() time.Time { return clock }, func(d time.Duration) { clock = clock.Add(d) })
+			if err != c.want {
+				t.Fatalf("prepare = %v, want %v", err, c.want)
+			}
+			if c.asks > 0 && asks != c.asks {
+				t.Errorf("asked %d times, want %d", asks, c.asks)
+			}
+			if c.asks == 0 && (asks < 60 || clock.Sub(start) < prepareLimit || clock.Sub(start) > prepareLimit+time.Second) {
+				t.Errorf("gave up after %d asks and %v, want after %v", asks, clock.Sub(start), prepareLimit)
+			}
+		})
 	}
 }
 

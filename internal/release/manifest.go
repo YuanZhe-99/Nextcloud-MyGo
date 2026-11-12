@@ -21,17 +21,20 @@ const ManifestName = "manifest.json"
 // Manifest records what a package contains and which contracts its halves speak.
 // Notes: TestBuild, Signed and AutoUpdate state the release posture plainly
 // (PLAN.md §16.2): until a trusted signing chain exists every package is an
-// unsigned test build with automatic updates off.
+// unsigned test build with automatic updates off. TestVersion marks a package
+// whose Version was stamped for an upgrade test (tools/package.ps1
+// -TestVersion) instead of taken from mygo.json; it is never a release.
 type Manifest struct {
-	Product    string `json:"product"`
-	Version    string `json:"version"`
-	Arch       string `json:"arch"` // "ARM64" or "x64"
-	TestBuild  bool   `json:"testBuild"`
-	Signed     bool   `json:"signed"`
-	AutoUpdate bool   `json:"autoUpdate"`
-	UI         Half   `json:"ui"`
-	SyncD      Half   `json:"syncd"`
-	Files      []File `json:"files"`
+	Product     string `json:"product"`
+	Version     string `json:"version"`
+	Arch        string `json:"arch"` // "ARM64" or "x64"
+	TestBuild   bool   `json:"testBuild"`
+	TestVersion bool   `json:"testVersion,omitempty"`
+	Signed      bool   `json:"signed"`
+	AutoUpdate  bool   `json:"autoUpdate"`
+	UI          Half   `json:"ui"`
+	SyncD       Half   `json:"syncd"`
+	Files       []File `json:"files"`
 }
 
 // Half names one process of the combination and the contracts it speaks.

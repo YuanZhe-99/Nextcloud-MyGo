@@ -1,12 +1,14 @@
 # Builds and tests the connected SyncD unit without installation or Shell registration.
-# Inputs: architecture and existing Qt target/host prefixes.
-# Side effects: writes build/syncd-<architecture> and runs disposable core contract tests.
+# Inputs: architecture, existing Qt target/host prefixes, the upstream build to link, and -Build, the
+#   output tree (default build/syncd-<architecture>).
+# Side effects: writes the build tree and runs disposable core contract tests.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][ValidateSet('ARM64','x64')][string]$Architecture,
     [Parameter(Mandatory)][string]$QtPrefix,
     [Parameter(Mandatory)][string]$QtHostPrefix,
-    [string]$UpstreamBuild = ''
+    [string]$UpstreamBuild = '',
+    [string]$Build = ''
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -15,7 +17,7 @@ $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Componen
 if ($LASTEXITCODE -ne 0 -or -not $vs) { throw 'Visual Studio CMake tools are required.' }
 $cmake = Join-Path $vs 'Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe'
 $ctest = Join-Path (Split-Path $cmake -Parent) 'ctest.exe'
-$build = Join-Path $root "build/syncd-$Architecture"
+$build = if ($Build) { $Build } else { Join-Path $root "build/syncd-$Architecture" }
 & $cmake -S (Join-Path $root 'backend') -B $build -G 'Visual Studio 18 2026' -A $Architecture "-DCMAKE_PREFIX_PATH=$QtPrefix" "-DQT_HOST_PATH=$QtHostPrefix" "-DSYNCD_UPSTREAM_BUILD=$UpstreamBuild" -DBUILD_TESTING=ON
 if ($LASTEXITCODE -ne 0) { throw 'SyncD configure failed.' }
 & $cmake --build $build --config Release --parallel

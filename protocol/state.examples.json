@@ -32,7 +32,12 @@
            "groups": [{"name": "2024", "files": 12, "loose": false}, {"name": "", "files": 1, "loose": true}]},
           {"id": "50000000-0000-4000-8000-000000000002", "kind": "conflict", "accountId": "20000000-0000-4000-8000-000000000001", "folderId": "30000000-0000-4000-8000-000000000001", "file": "Budget.xlsx", "copy": "Budget (conflicted copy 2026-11-12 093000).xlsx"}
         ],
-        "activity": []
+        "activity": [
+          {"cursor": "9", "accountId": "20000000-0000-4000-8000-000000000001", "folderId": "", "at": "2026-11-12T09:41:00.000Z", "kind": "switchFailed", "count": 1, "fromId": "40000000-0000-4000-8000-000000000002", "toId": "40000000-0000-4000-8000-000000000001", "reason": "QUIESCE_STALLED", "name": "cloud.example.invalid"},
+          {"cursor": "8", "accountId": "20000000-0000-4000-8000-000000000001", "folderId": "30000000-0000-4000-8000-000000000001", "at": "2026-11-12T09:40:00.000Z", "kind": "deletedLocal", "count": 2, "fromId": "", "toId": "", "reason": ""},
+          {"cursor": "7", "accountId": "20000000-0000-4000-8000-000000000001", "folderId": "30000000-0000-4000-8000-000000000001", "at": "2026-11-12T09:39:00.000Z", "kind": "renamedRemote", "count": 1, "fromId": "", "toId": "", "reason": ""},
+          {"cursor": "6", "accountId": "20000000-0000-4000-8000-000000000001", "folderId": "30000000-0000-4000-8000-000000000001", "at": "2026-11-12T09:38:00.000Z", "kind": "renamedLocal", "count": 3, "fromId": "", "toId": "", "reason": ""}
+        ]
       }
     }
   },
@@ -67,5 +72,5 @@
     "jsonrpc": "2.0", "id": "status",
     "result": {"state": "failed", "reasonCode": "ACCOUNT_EXISTS"}
   },
-  "versionReport": {"version": "0.1.0", "protocol": {"major": 1, "minor": 9}, "controlSchema": 11, "engine": true}
+  "versionReport": {"version": "0.1.0", "protocol": {"major": 1, "minor": 10}, "controlSchema": 11, "engine": true}
 }
