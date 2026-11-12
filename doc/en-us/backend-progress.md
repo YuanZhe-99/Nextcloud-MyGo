@@ -80,7 +80,8 @@ durations are in the [platform notes](platform-notes.md).
 
 A `restore` answer to a deletion proposal was built and then removed again: it worked by forgetting
 the journal records of exactly the proposal's entries, which conflicts with the behavior
-contract. It stays out unless the user decides otherwise.
+contract. On 2026-11-12 the user decided to leave it out: files are brought back from the server's
+trash instead.
 
 ## M6 (Windows): on-demand files
 

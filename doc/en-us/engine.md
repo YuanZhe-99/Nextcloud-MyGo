@@ -208,8 +208,8 @@ most once a second when either changes. There is no total: discovery does not kn
 
 A held deletion proposal keeps, beside its digest, a summary by top-level entry (`groups`: a
 directory counts the files the journal knows below it). There is no restore answer: bringing the
-entries back would mean forgetting their journal records, which the behavior contract forbids
-unless the user decides otherwise.
+entries back would mean forgetting their journal records, which the behavior contract forbids;
+the user decided on 2026-11-12 to keep it that way (files come back from the server's trash).
 
 After each finished cycle the adapter reads the journal's conflict records (copy and original,
 folder-relative) and Control keeps them as `conflict` decisions; a copy that is gone is forgotten,
