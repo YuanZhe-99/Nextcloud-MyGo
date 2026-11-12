@@ -308,8 +308,12 @@ func (a *App) generalPage(c *ui.Context) {
 		})
 	})
 	section(c, L.SectionSetup(), func(r *rows) {
-		r.row(c, "set-add", icPlus, L.AddAnotherAccount(), L.AddAnotherAccountHint(), func() {
-			if button(c, "set-add-btn", L.ActionAddAccountShort(), nil).Clicked() {
+		hint := L.AddAnotherAccountHint()
+		if !a.canAddAccount() {
+			hint = L.OneAccountOnly()
+		}
+		r.row(c, "set-add", icPlus, L.AddAnotherAccount(), hint, func() {
+			if button(c, "set-add-btn", L.ActionAddAccountShort(), nil).Disabled(!a.canAddAccount()).Clicked() {
 				a.settings.open = false
 				a.startSetup()
 			}
@@ -380,7 +384,13 @@ func (a *App) aboutPage(c *ui.Context) {
 				ui.Column(c).Grow(1).MinWidth(0).Children(func() {
 					ui.Text(c, L.UpdateAvailable(u.available.Version)).FontWeight(600)
 					muted(c, L.UpdateAvailableHint(), 13).Wrap()
+					if u.postponed {
+						ui.Text(c, waitWords(u.deletion)).FontSize(13).TextColor(p.warn).Wrap()
+					}
 				})
+				if u.postponed && u.deletion && button(c, "upd-review", L.ActionReview(), nil).Clicked() {
+					a.settings.open, a.page = false, pageActivity
+				}
 				label := L.ActionInstallRestart()
 				if u.installing {
 					label = L.Installing()
@@ -526,15 +536,20 @@ func (a *App) diagnosticsPage(c *ui.Context) {
 	if a.diag.failed != "" {
 		ui.Text(c, a.diag.failed).FontSize(13).TextColor(p.danger).Wrap().MaxWidth(720)
 	}
+	grid := func(rows [][2]string) {
+		ui.Grid(c).ColumnTracks(ui.Fixed(170), ui.Fr(1)).GapY(6).GapX(12).MaxWidth(720).FillWidth().Padding(12, 16).Radius(radiusCard).Border(1, p.border).Children(func() {
+			for _, r := range rows {
+				muted(c, r[0], 13)
+				ui.Text(c, r[1]).FontSize(13).Selectable().Wrap()
+			}
+		})
+	}
+	// What this start of SyncD migrated from and its self-check (1.9), and
+	// why the last connection ended: for support, never shown elsewhere.
+	if rows := connectionRows(a.snap.Daemon.StartupReport, a.client); len(rows) > 0 {
+		grid(rows)
+	}
 	if d := a.diag.reading; d != nil {
-		grid := func(rows [][2]string) {
-			ui.Grid(c).ColumnTracks(ui.Fixed(170), ui.Fr(1)).GapY(6).GapX(12).MaxWidth(720).FillWidth().Padding(12, 16).Radius(radiusCard).Border(1, p.border).Children(func() {
-				for _, r := range rows {
-					muted(c, r[0], 13)
-					ui.Text(c, r[1]).FontSize(13).Selectable().Wrap()
-				}
-			})
-		}
 		grid([][2]string{
 			{L.DiagVersion(), d.Version + " · " + d.Protocol},
 			{L.DiagStartup(), string(d.StartupState) + " · " + strconv.FormatBool(d.StateAvailable) + " " + d.ReasonCode},
@@ -552,6 +567,26 @@ func (a *App) diagnosticsPage(c *ui.Context) {
 			})
 		}
 	}
+}
+
+// connectionRows are Diagnostics' rows for SyncD's start report and, for
+// the pipe client, why its last connection ended; none for what is not
+// known.
+func connectionRows(r syncd.StartupReport, client syncd.Client) [][2]string {
+	var rows [][2]string
+	if r.Schema > 0 || r.SelfCheck != "" {
+		from := r.PreviousVersion
+		if from == "" {
+			from = "—"
+		}
+		rows = append(rows,
+			[2]string{L.DiagUpgrade(), L.DiagUpgradeValue(from, strconv.Itoa(r.PreviousSchema), strconv.Itoa(r.Schema))},
+			[2]string{L.DiagSelfCheck(), strings.TrimSpace(r.SelfCheck + " " + strings.Join(r.ReasonCodes, ","))})
+	}
+	if d, ok := client.(interface{ Disconnect() string }); ok && d.Disconnect() != "" {
+		rows = append(rows, [2]string{L.DiagDisconnect(), d.Disconnect()})
+	}
+	return rows
 }
 
 // u is a counter as text.

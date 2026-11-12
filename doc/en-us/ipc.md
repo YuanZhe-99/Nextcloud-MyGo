@@ -78,8 +78,8 @@ projection carries it. Removing an on-demand folder first ends its Cloud Files r
 on-demand path has run on native ARM64 against a real server through SyncD's engine runtime, not yet
 through the paired daemon and interface. See `protocol/folders.schema.json` (`addParams`) and
 `protocol/folders.examples.json` (`addOnDemand`). The Go client decodes `Folder.Mode` and `AddFolder`
-takes an optional mode; a schema-9 mapping migrates as `full` (`testFolderModeMigration`). Choosing a mode
-in the interface is still to be added.
+takes an optional mode; a schema-9 mapping migrates as `full` (`testFolderModeMigration`). The interface
+offers the choice in setup only with `virtualFiles` and sends no mode without it ([interface](gui.md)).
 
 Protocol 1.7 adds explicit startup availability and stable folder `reasonCode` projections. Control
 schema 8 is being integrated for durable account-level server throttles (the preceding startup

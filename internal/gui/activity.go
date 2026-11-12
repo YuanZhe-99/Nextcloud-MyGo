@@ -25,15 +25,16 @@ func (a *App) activityPage(c *ui.Context) {
 	pageHeader(c, L.NavActivity(), func() {
 		ui.Segmented(c.Key("act-filter"), &a.filter, L.FilterAll(), L.FilterAttention(waiting), L.FilterFiles(), L.FilterNetwork())
 	})
-	var review *syncd.Decision
-	for i := range s.Decisions {
-		if s.Decisions[i].Kind == syncd.DecisionBulkDeletions {
-			review = &s.Decisions[i]
-			break
+	// Every deletion review, one per folder that waits: several accounts
+	// can each have one.
+	var reviews []syncd.Decision
+	for _, d := range s.Decisions {
+		if d.Kind == syncd.DecisionBulkDeletions {
+			reviews = append(reviews, d)
 		}
 	}
 	pageBody(c, "act-body", func() {
-		showReview := review != nil && (a.filter == filterAll || a.filter == filterAttention)
+		showReview := len(reviews) > 0 && (a.filter == filterAll || a.filter == filterAttention)
 		grid := ui.Grid(c).Gap(20).FillWidth().AlignItems(ui.Start)
 		if showReview {
 			grid.ColumnTracks(ui.Fr(1.5), ui.Fr(1))
@@ -42,19 +43,20 @@ func (a *App) activityPage(c *ui.Context) {
 		}
 		grid.Children(func() {
 			if showReview {
-				a.reviewCard(c, *review)
+				ui.Column(c).Gap(16).MinWidth(0).Children(func() {
+					for _, d := range reviews {
+						a.reviewCard(c, d)
+					}
+				})
 			}
 			ui.Column(c).Gap(0).MinWidth(0).Children(func() {
 				if a.filter == filterAll || a.filter == filterAttention {
-					others := waiting
-					if review != nil {
-						others--
-					}
+					others := waiting - len(reviews)
 					switch {
 					case others > 0:
 						ui.Box(c).Margin(0, 0, 8, 0).Children(func() { sectionTitle(c, L.AlsoNeedsAttention()) })
 						ui.Column(c).Gap(10).Margin(0, 0, 18, 0).Children(func() { a.attentionItems(c, "act") })
-					case review == nil && stateKnown(s):
+					case len(reviews) == 0 && stateKnown(s):
 						muted(c, L.NothingNeedsYou(), fontBody).Margin(0, 0, 18, 0)
 					}
 				}
@@ -117,13 +119,23 @@ func (a *App) reviewCard(c *ui.Context, d syncd.Decision) {
 					r.BorderWidth(0, 0, 1, 0).BorderColor(p.hover)
 				}
 				r.Children(func() {
-					icon, name, what := icFolder, g.Name, L.ReviewGroup(g.Files, size(g.Bytes))
+					// SyncD names a group by a representative path and counts its
+					// files; a size only when it sends one (1.9 does not).
+					icon, name, what := icFolder, g.Name, L.ReviewFiles(g.Files)
+					if g.Bytes > 0 {
+						what = L.ReviewGroup(g.Files, size(g.Bytes))
+					}
 					if g.Loose {
-						icon, name, what = icFile, L.ReviewLoose(g.Files, g.Name), size(g.Bytes)
+						icon, name, what = icFile, L.ReviewLoose(g.Files, g.Name), ""
+						if g.Bytes > 0 {
+							what = size(g.Bytes)
+						}
 					}
 					ui.Icon(c, icon).FontSize(16)
-					ui.Text(c, name).Grow(1)
-					muted(c, what, 13)
+					ui.Text(c, name).Grow(1).MinWidth(0).Ellipsis("…").MaxLines(1)
+					if what != "" {
+						muted(c, what, 13).Shrink(0)
+					}
 				})
 			}
 			muted(c, L.ReviewKeep(), 13).Wrap()
@@ -133,15 +145,15 @@ func (a *App) reviewCard(c *ui.Context, d syncd.Decision) {
 		})
 		ui.Row(c).FillWidth().Gap(10).Padding(14, 20).Background(p.subtle).BorderWidth(1, 0, 0, 0).BorderColor(p.hover).Children(func() {
 			busy := a.busy["d-"+d.ID] || !a.snap.Daemon.Connected
-			if primary(c, "rv-later", L.ActionDecideLater(), nil).Disabled(busy).Clicked() {
+			if primary(c, "rv-later-"+d.ID, L.ActionDecideLater(), nil).Disabled(busy).Clicked() {
 				a.answer(d, syncd.ActionLater, "")
 				a.page = pageOverview
 			}
-			if button(c, "rv-open", L.ActionOpenFolder(), nil).Clicked() {
+			if button(c, "rv-open-"+d.ID, L.ActionOpenFolder(), nil).Clicked() {
 				a.openPath(f.LocalPath)
 			}
 			ui.Spacer(c)
-			del := ui.ButtonBase(c.Key("rv-delete")).Height(32).Padding(0, 14).Radius(radiusCtl).Border(1, p.dangerBorder).Background(p.pane).Disabled(busy).Label(L.ActionAllowDeletions(d.Count))
+			del := ui.ButtonBase(c.Key("rv-delete-"+d.ID)).Height(32).Padding(0, 14).Radius(radiusCtl).Border(1, p.dangerBorder).Background(p.pane).Disabled(busy).Label(L.ActionAllowDeletions(d.Count))
 			del.Children(func() { ui.Text(c, L.ActionAllowDeletions(d.Count)).FontWeight(600).TextColor(p.danger) })
 			if del.Clicked() {
 				a.ask(L.ConfirmDeleteTitle(d.Count), L.ConfirmDeleteBody(f.Name), L.ConfirmDelete(), func() {

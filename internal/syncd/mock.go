@@ -33,8 +33,10 @@ type mockLogin struct {
 }
 
 // NewMock returns a Mock. With sample true it holds the sample state of the
-// design (design/README.md): two accounts, four folders, three addresses
-// and two decisions; without, nothing, as on a first run.
+// design (design/README.md): two accounts, five folders, six addresses and
+// two decisions, with one of each protocol 1.9 state the interface shows (a
+// revoked account, a full server, an on-demand folder, blocked addresses);
+// without, nothing, as on a first run.
 func NewMock(sample bool, now func() time.Time) *Mock {
 	if now == nil {
 		now = time.Now
@@ -56,9 +58,24 @@ func NewMock(sample bool, now func() time.Time) *Mock {
 func mockDaemon(now time.Time) Daemon {
 	return Daemon{
 		Connected: true, StateAvailable: true, StartupState: StartupNormal,
-		Capabilities: map[string]bool{"login": true, "fullSync": true, "endpointAutoSwitch": true},
-		Version:      "0.1.0", Protocol: 1, ProtocolMinor: 8, Demo: true, CheckedAt: now.Add(-2 * time.Minute),
+		Capabilities: map[string]bool{"login": true, "fullSync": true, "endpointAutoSwitch": true, "multiAccount": true, "virtualFiles": true},
+		Version:      "0.1.0", Protocol: 1, ProtocolMinor: 9, Demo: true, CheckedAt: now.Add(-2 * time.Minute),
+		StartupReport: StartupReport{PreviousSchema: 10, Schema: 11, SelfCheck: "passed"},
 	}
+}
+
+// SetCapability turns a capability the Mock simulates on or off, so the
+// interface can be shown with and without it (virtualFiles is still false
+// in SyncD).
+func (m *Mock) SetCapability(name string, on bool) {
+	m.change(func() { m.s.Daemon.Capabilities[name] = on })
+}
+
+// reasonErr is an error with a stable reason code, as SyncD sends one.
+func reasonErr(code string) error {
+	e := &rpcError{}
+	e.Data.Reason = code
+	return e
 }
 
 // sampleState is the design's sample: what the screens in design/ show.
@@ -66,39 +83,45 @@ func sampleState(now time.Time) Snapshot {
 	return Snapshot{
 		Daemon: mockDaemon(now),
 		Accounts: []Account{
-			{ID: "a-home", User: "alex", DisplayName: "Alex", Server: "cloud.example.com", SignedIn: true},
-			{ID: "a-work", User: "alex", DisplayName: "Alex", Server: "work.example", SignedIn: false},
+			{ID: "a-home", User: "alex", DisplayName: "Alex", Server: "cloud.example.com", Auth: AuthSignedIn, SignedIn: true},
+			{ID: "a-work", User: "alex", DisplayName: "Alex", Server: "work.example", Auth: AuthRevoked},
 		},
 		Folders: []Folder{
-			{ID: "f-docs", AccountID: "a-home", Name: "Documents", LocalPath: `C:\Users\Alex\Documents`, RemotePath: "/Documents", State: FolderUpToDate},
-			{ID: "f-projects", AccountID: "a-home", Name: "Projects", LocalPath: `D:\Projects`, RemotePath: "/Work/Projects", State: FolderSyncing, Phase: PhaseUploading, FilesDone: 3},
-			{ID: "f-photos", AccountID: "a-home", Name: "Photos", LocalPath: `C:\Users\Alex\Pictures`, RemotePath: "/Photos", State: FolderNeedsReview},
-			{ID: "f-team", AccountID: "a-work", Name: "Team share", LocalPath: `C:\Users\Alex\Team`, RemotePath: "/Shared/Team", State: FolderWaitingSignIn},
-			{ID: "f-reports", AccountID: "a-work", Name: "Reports", LocalPath: `C:\Users\Alex\Reports`, RemotePath: "/Reports", State: FolderPaused, UserPaused: true},
+			// Documents finished its cycle, but the server refused its uploads.
+			{ID: "f-docs", AccountID: "a-home", Name: "Documents", LocalPath: `C:\Users\Alex\Documents`, RemotePath: "/Documents", State: FolderUpToDate, ReasonCode: "REMOTE_QUOTA_EXCEEDED", Mode: FolderFull},
+			{ID: "f-projects", AccountID: "a-home", Name: "Projects", LocalPath: `D:\Projects`, RemotePath: "/Work/Projects", State: FolderSyncing, Phase: PhaseUploading, FilesDone: 3, Mode: FolderOnDemand},
+			{ID: "f-photos", AccountID: "a-home", Name: "Photos", LocalPath: `C:\Users\Alex\Pictures`, RemotePath: "/Photos", State: FolderNeedsReview, Mode: FolderFull},
+			{ID: "f-team", AccountID: "a-work", Name: "Team share", LocalPath: `C:\Users\Alex\Team`, RemotePath: "/Shared/Team", State: FolderWaitingSignIn, ReasonCode: "AUTH_REQUIRED", Mode: FolderFull},
+			{ID: "f-reports", AccountID: "a-work", Name: "Reports", LocalPath: `C:\Users\Alex\Reports`, RemotePath: "/Reports", State: FolderPaused, UserPaused: true, Mode: FolderFull},
 		},
 		Endpoints: []Endpoint{
 			{ID: "e-lan", AccountID: "a-home", Name: "Home network", Kind: KindHome, URL: "https://cloud.lan.example", Approved: true, Verified: VerifyVerified, Reachable: true, LatencyMs: 8, InUse: true},
 			{ID: "e-wan", AccountID: "a-home", Name: "Internet", Kind: KindInternet, URL: "https://cloud.example.com", Main: true, Approved: true, Verified: VerifyVerified, Reachable: true, LatencyMs: 64},
-			{ID: "e-vpn", AccountID: "a-home", Name: "VPN", Kind: KindVPN, URL: "https://cloud.vpn.example", Approved: true, Verified: VerifyPending},
-			{ID: "e-nas", AccountID: "a-home", Name: "Old NAS address", Kind: KindHome, URL: "https://nas.example.net", Approved: true, Verified: VerifyFailed, Blocked: true},
+			{ID: "e-vpn", AccountID: "a-home", Name: "VPN", Kind: KindVPN, URL: "https://cloud.vpn.example", Approved: true, Verified: VerifyPending, Blocked: true, BlockedReason: "VERIFICATION_PENDING"},
+			{ID: "e-nas", AccountID: "a-home", Name: "Old NAS address", Kind: KindHome, URL: "https://nas.example.net", Approved: true, Verified: VerifyFailed, Blocked: true, BlockedReason: "ENDPOINT_IDENTITY_MISMATCH"},
 			{ID: "e-work", AccountID: "a-work", Name: "Internet", Kind: KindInternet, URL: "https://work.example", Main: true, Approved: true, Verified: VerifyVerified, Reachable: true, LatencyMs: 41, InUse: true},
+			{ID: "e-office", AccountID: "a-work", Name: "Office", Kind: KindHome, URL: "https://files.office.example", Approved: true, Verified: VerifyVerified, Blocked: true, BlockedReason: "NETWORK_UNAVAILABLE"},
 		},
 		Networks: []Network{
-			{AccountID: "a-home", Policy: PolicyAuto, ActiveID: "e-lan", Why: []Reason{ReasonVerified, ReasonFaster, ReasonStable}, Speedup: 8, Switched: now.Add(-4 * time.Minute), SwitchReason: ReasonJoinedNetwork},
-			{AccountID: "a-work", Policy: PolicyAuto, ActiveID: "e-work", Why: []Reason{ReasonVerified}},
+			// SyncD sends no speedup; the latencies say how much faster.
+			{AccountID: "a-home", Policy: PolicyAuto, ActiveID: "e-lan", Why: []Reason{ReasonVerified, ReasonFaster, ReasonStable}, Switched: now.Add(-4 * time.Minute), SwitchReason: ReasonJoinedNetwork},
+			{AccountID: "a-work", Policy: PolicyAuto, ActiveID: "e-work", Why: []Reason{ReasonVerified, ReasonUnreachable}, Switched: now.Add(-2 * time.Hour), SwitchReason: ReasonUnreachable},
 		},
 		Switches: []Switch{
 			{AccountID: "a-home", At: now.Add(-4 * time.Minute), FromID: "e-wan", ToID: "e-lan", Reason: ReasonJoinedNetwork},
 			{AccountID: "a-home", At: now.Add(-5*time.Hour - 19*time.Minute), FromID: "e-lan", ToID: "e-wan", Reason: ReasonUnreachable},
 			{AccountID: "a-home", At: now.Add(-20 * time.Hour), FromID: "e-wan", ToID: "e-lan", Reason: ReasonPostponed, Postponed: 6 * time.Minute},
+			{AccountID: "a-work", At: now.Add(-2 * time.Hour), FromID: "e-office", ToID: "e-work", Reason: ReasonUnreachable},
 		},
 		Decisions: []Decision{
+			// SyncD names each group and counts its files; it sends no size.
 			{ID: "d-photos", Kind: DecisionBulkDeletions, AccountID: "a-home", FolderID: "f-photos", Digest: "sha256:photos-142", Count: 142, RemoteDeletes: 142, Expires: now.Add(10 * time.Minute), Groups: []FileGroup{
-				{Name: "Vacation 2025", Files: 96, Bytes: 1_800_000_000},
-				{Name: "Screenshots", Files: 44, Bytes: 120_000_000},
-				{Name: "Photos", Files: 2, Bytes: 8_000_000, Loose: true},
+				{Name: "Vacation 2025", Files: 96},
+				{Name: "Screenshots", Files: 44},
+				{Name: "Photos", Files: 2, Loose: true},
 			}},
-			{ID: "d-budget", Kind: DecisionConflict, AccountID: "a-home", FolderID: "f-docs", Digest: "sha256:budget", File: "Budget.xlsx", Copy: "Budget (conflicted copy 2026-11-03).xlsx"},
+			// A conflict notice carries no digest: it is closed, never approved.
+			{ID: "d-budget", Kind: DecisionConflict, AccountID: "a-home", FolderID: "f-docs", File: "Budget.xlsx", Copy: "Budget (conflicted copy 2026-11-03).xlsx"},
 		},
 		Activity: []Activity{
 			{At: now.Add(-1 * time.Minute), Kind: ActUploaded, FolderID: "f-projects", Name: "site-plan.dwg"},
@@ -164,6 +187,11 @@ func (m *Mock) Step() {
 			if f.State != FolderSyncing {
 				continue
 			}
+			if f.Phase == PhaseChecking {
+				// Discovery found what to move: no file is done yet.
+				f.Phase = PhaseDownloading
+				continue
+			}
 			f.FilesDone++
 			end := m.cycle[f.ID]
 			if end == 0 {
@@ -217,10 +245,14 @@ func (m *Mock) settle(f *Folder) {
 		f.State = FolderPaused
 	case m.pendingDeletion(f.ID):
 		f.State = FolderNeedsReview
-	case !acc.SignedIn:
-		f.State = FolderWaitingSignIn
+	case acc.Auth != AuthSignedIn:
+		f.State, f.ReasonCode = FolderWaitingSignIn, "AUTH_REQUIRED"
+		return
 	case f.State != FolderSyncing:
 		f.State, f.Phase, f.FilesDone = FolderSyncing, PhaseChecking, 0
+	}
+	if f.ReasonCode == "AUTH_REQUIRED" {
+		f.ReasonCode = ""
 	}
 }
 
@@ -378,7 +410,7 @@ func (m *Mock) WaitLogin(ctx context.Context, loginID string) (string, error) {
 			accountID = l.accountID
 			for i := range m.s.Accounts {
 				if m.s.Accounts[i].ID == accountID {
-					m.s.Accounts[i].SignedIn = true
+					m.s.Accounts[i].Auth, m.s.Accounts[i].SignedIn = AuthSignedIn, true
 				}
 			}
 			for i := range m.s.Folders {
@@ -388,9 +420,15 @@ func (m *Mock) WaitLogin(ctx context.Context, loginID string) (string, error) {
 			}
 			return
 		}
+		// The sample user is always alex: signing in to a server already
+		// added is the same account, refused as SyncD refuses it.
+		if slices.ContainsFunc(m.s.Accounts, func(a Account) bool { return a.Server == l.server }) {
+			err = reasonErr("ACCOUNT_EXISTS")
+			return
+		}
 		accountID = m.id("a")
 		epID := m.id("e")
-		m.s.Accounts = append(m.s.Accounts, Account{ID: accountID, User: "alex", DisplayName: "Alex", Server: l.server, SignedIn: true})
+		m.s.Accounts = append(m.s.Accounts, Account{ID: accountID, User: "alex", DisplayName: "Alex", Server: l.server, Auth: AuthSignedIn, SignedIn: true})
 		m.s.Endpoints = append(m.s.Endpoints, Endpoint{ID: epID, AccountID: accountID, Name: "Internet", Kind: KindInternet, URL: "https://" + l.server, Main: true, Approved: true, Verified: VerifyVerified, Reachable: true, LatencyMs: 50, InUse: true})
 		m.s.Networks = append(m.s.Networks, Network{AccountID: accountID, Policy: PolicyAuto, ActiveID: epID, Why: []Reason{ReasonVerified}})
 	})
@@ -414,8 +452,11 @@ func (m *Mock) Reauthenticate(accountID string) (Login, error) {
 	return l, err
 }
 
+// RemoveAccount removes an account with its folders, busy or not, as SyncD
+// does since protocol 1.9; every file stays on both sides.
 func (m *Mock) RemoveAccount(id string) error {
 	m.change(func() {
+		m.s.Switches = slices.DeleteFunc(m.s.Switches, func(sw Switch) bool { return sw.AccountID == id })
 		m.s.Accounts = slices.DeleteFunc(m.s.Accounts, func(a Account) bool { return a.ID == id })
 		m.s.Folders = slices.DeleteFunc(m.s.Folders, func(f Folder) bool { return f.AccountID == id })
 		m.s.Endpoints = slices.DeleteFunc(m.s.Endpoints, func(e Endpoint) bool { return e.AccountID == id })
@@ -571,14 +612,16 @@ func (m *Mock) RemoveEndpoint(id string) error {
 	return err
 }
 
-// PrepareUpdate refuses while files move or a deletion waits for the
-// user, as SyncD defers an update then.
+// PrepareUpdate refuses, with SyncD's reasons, while a deletion waits for
+// the user (DECISION_PENDING) or files move (QUIESCE_STALLED); both are
+// ErrBusy.
 func (m *Mock) PrepareUpdate(string) error {
 	s := m.Snapshot()
-	for _, f := range s.Folders {
-		if f.State == FolderSyncing || f.State == FolderNeedsReview {
-			return ErrBusy
-		}
+	if slices.ContainsFunc(s.Decisions, func(d Decision) bool { return d.Kind == DecisionBulkDeletions }) {
+		return reasonErr("DECISION_PENDING")
+	}
+	if slices.ContainsFunc(s.Folders, func(f Folder) bool { return f.State == FolderSyncing }) {
+		return reasonErr("QUIESCE_STALLED")
 	}
 	return nil
 }
@@ -588,7 +631,7 @@ func (m *Mock) Shutdown() error { return nil }
 // Diagnostics reports the sample folders with no transfers.
 func (m *Mock) Diagnostics(context.Context) (RuntimeDiagnostics, error) {
 	s := m.Snapshot()
-	d := RuntimeDiagnostics{Version: s.Daemon.Version, Protocol: "1.8", NetworkGeneration: "1", AllPaused: s.Daemon.AllPaused, StateAvailable: true, StartupState: StartupNormal}
+	d := RuntimeDiagnostics{Version: s.Daemon.Version, Protocol: "1.9", NetworkGeneration: "1", AllPaused: s.Daemon.AllPaused, StateAvailable: true, StartupState: StartupNormal}
 	for _, f := range s.Folders {
 		d.Folders = append(d.Folders, FolderDiagnostics{FolderID: f.ID, AccountID: f.AccountID, Epoch: "1", State: string(f.State), ReasonCode: f.ReasonCode, UserPaused: f.UserPaused})
 	}

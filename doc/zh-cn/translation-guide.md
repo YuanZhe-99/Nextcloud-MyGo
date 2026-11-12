@@ -60,6 +60,9 @@ Nextcloud-MyGo、MyGo、Qt、Microsoft），以及协议与 API 名称（WebDAV�
 | version directory | 版本目录 |
 | Apps entry | 应用列表条目 |
 | on-demand files | 按需文件 |
+| full files (folder mode) | 完整文件 |
+| server storage full (quota) | 服务器存储空间已满 |
+| start report | 启动报告 |
 | placeholder | 占位文件 |
 | hydration | 按需下载（hydration） |
 | free up space (dehydration) | 释放空间（dehydration） |

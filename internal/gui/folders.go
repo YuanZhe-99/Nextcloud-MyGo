@@ -14,7 +14,11 @@ var folderTracks = []ui.Track{ui.Fr(1.2), ui.Fr(1.5), ui.Fr(1.1), ui.Fixed(210)}
 func (a *App) foldersPage(c *ui.Context) {
 	s := a.snap
 	pageHeader(c, L.NavFolders(), func() {
-		if button(c, "fo-add-account", L.ActionAddAccount(), icPlus).Clicked() {
+		b := button(c, "fo-add-account", L.ActionAddAccount(), icPlus).Disabled(!a.canAddAccount())
+		if !a.canAddAccount() {
+			b.Tooltip(L.OneAccountOnly())
+		}
+		if b.Clicked() {
 			a.startSetup()
 		}
 	})
@@ -49,7 +53,8 @@ func (a *App) accountSection(c *ui.Context, acc syncd.Account) {
 				if !signIn {
 					muted(c, L.AccountSignedIn(approved), fontSmall)
 				} else {
-					ui.Text(c, L.AccountSignedOut()).FontSize(fontSmall).FontWeight(600).TextColor(p.warn)
+					state, _ := authWords(acc)
+					ui.Text(c, state).FontSize(fontSmall).FontWeight(600).TextColor(p.warn).Wrap()
 				}
 			})
 			if signIn {
@@ -89,24 +94,17 @@ func (a *App) accountSection(c *ui.Context, acc syncd.Account) {
 	})
 }
 
-// removeAccount stops syncing the account's folders, then removes the
-// account, as its question said; SyncD removes an account only without
-// folders, and every file stays on both sides.
+// removeAccount removes the account with its folders, as its question
+// said: SyncD stops their syncing itself, waiting for a running cycle, and
+// every file stays on both sides (protocol 1.9).
 func (a *App) removeAccount(accountID string) {
-	var folders []string
-	for _, f := range a.snap.Folders {
-		if f.AccountID == accountID {
-			folders = append(folders, f.ID)
-		}
-	}
-	a.do("acc-rm-"+accountID, func() error {
-		for _, id := range folders {
-			if err := a.client.RemoveFolder(id); err != nil {
-				return err
-			}
-		}
-		return a.client.RemoveAccount(accountID)
-	}, nil)
+	a.do("acc-rm-"+accountID, func() error { return a.client.RemoveAccount(accountID) }, nil)
+}
+
+// canAddAccount tells whether another account may be added: always the
+// first, a further one only where SyncD supports several (multiAccount).
+func (a *App) canAddAccount() bool {
+	return len(a.snap.Accounts) == 0 || a.snap.Daemon.Capabilities["multiAccount"]
 }
 
 // folderRow is a folder: where it syncs, its state, and its buttons.
@@ -119,7 +117,12 @@ func (a *App) folderRow(c *ui.Context, f syncd.Folder, rule bool) {
 		row.BorderWidth(1, 0, 0, 0).BorderColor(p.hover)
 	}
 	row.Children(func() {
-		ui.Text(c, f.Name).FontWeight(600).Ellipsis("…").MaxLines(1)
+		ui.Column(c).Gap(2).MinWidth(0).Children(func() {
+			ui.Text(c, f.Name).FontWeight(600).Ellipsis("…").MaxLines(1)
+			if modeShown(a.snap, f) {
+				muted(c, modeWord(f.Mode), fontSmall).Ellipsis("…").MaxLines(1)
+			}
+		})
 		muted(c, f.LocalPath+"  ⇄  "+f.RemotePath, 13).Ellipsis("…").MaxLines(1)
 		ui.Column(c).Gap(2).Children(func() {
 			ui.Row(c).Gap(6).Children(func() {

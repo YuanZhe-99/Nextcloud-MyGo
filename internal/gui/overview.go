@@ -129,14 +129,16 @@ func (a *App) heroCard(c *ui.Context) {
 	})
 }
 
-// throughCard is the address the first account uses and why.
+// throughCard is the address the chosen account (the first unless the
+// user picked one) uses and why.
 func (a *App) throughCard(c *ui.Context) {
 	p := pal(c)
 	s := a.snap
 	if len(s.Accounts) == 0 {
 		return
 	}
-	e, n, ok := activeEndpoint(s, s.Accounts[0].ID)
+	acc, _ := s.Account(a.account)
+	e, n, ok := activeEndpoint(s, acc.ID)
 	ok = ok && s.Daemon.Connected
 	b := ui.ButtonBase(c.Key("ov-through")).Label(L.ConnectedThrough()).Border(1, p.border).Radius(radiusCard).Padding(20)
 	if b.Hovered() {
@@ -151,6 +153,9 @@ func (a *App) throughCard(c *ui.Context) {
 					word = L.PolicyFixed()
 				}
 				pill(c, word, p.tint, p.accentText)
+				if len(s.Accounts) > 1 {
+					muted(c, accountName(acc), fontSmall).Ellipsis("…").MaxLines(1).Grow(1).MinWidth(0)
+				}
 			})
 			if !ok {
 				muted(c, L.NoAddressInUse(), fontBody).Wrap()
@@ -176,14 +181,15 @@ func (a *App) throughCard(c *ui.Context) {
 		})
 	})
 	if b.Clicked() {
-		a.page, a.account = pageNetwork, s.Accounts[0].ID
+		a.page = pageNetwork
 	}
 }
 
 // waitingCount is how many items need the user: deletion reviews,
-// conflicts and accounts to sign in again.
+// conflicts, accounts to sign in again and accounts whose server storage
+// is full.
 func waitingCount(s syncd.Snapshot) int {
-	n := len(s.Decisions)
+	n := len(s.Decisions) + len(accountsFull(s))
 	for _, acc := range s.Accounts {
 		if needsSignIn(s, acc) {
 			n++
@@ -236,9 +242,15 @@ func (a *App) attentionItems(c *ui.Context, key string) {
 		if !needsSignIn(s, acc) {
 			continue
 		}
-		notice(c, key == "act", icLock, p.subtle, p.border, p.muted, L.AttnSignInTitle(accountName(acc)), L.AttnSignInBody(), func() {
+		_, body := authWords(acc)
+		notice(c, key == "act", icLock, p.subtle, p.border, p.muted, L.AttnSignInTitle(accountName(acc)), body, func() {
 			a.signInButtons(c, key, acc.ID)
 		})
+	}
+	// A full server: the cycles finish, but nothing new is uploaded until
+	// the user frees space there; no button can do that for them.
+	for _, acc := range accountsFull(s) {
+		notice(c, key == "act", icCloudUp, p.warnBg, p.warnBorder, p.warn, L.AttnQuotaTitle(accountName(acc)), L.AttnQuotaBody(), func() {})
 	}
 }
 
@@ -339,8 +351,12 @@ func (a *App) folderCards(c *ui.Context) {
 					muted(c, accountName(acc), fontSmall).Ellipsis("…").MaxLines(1)
 					ui.Row(c).Gap(6).Children(func() {
 						dot(c, col, hollow)
-						ui.Text(c, word).FontSize(13).FontWeight(600).TextColor(col)
+						ui.Text(c, word).FontSize(13).FontWeight(600).TextColor(col).Ellipsis("…").MaxLines(1)
 					})
+					if f.State == syncd.FolderSyncing {
+						// The phase and the files so far, never a total.
+						muted(c, folderDetail(f, s), fontSmall).Ellipsis("…").MaxLines(1)
+					}
 				})
 			}
 		})

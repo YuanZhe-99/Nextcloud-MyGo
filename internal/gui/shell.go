@@ -79,26 +79,13 @@ func (a *App) titleBar(c *ui.Context) {
 	})
 }
 
-// sidebar is the account, the pages, Settings and the sync state.
+// sidebar is the accounts, the pages, Settings and the sync state.
 func (a *App) sidebar(c *ui.Context) {
 	p := pal(c)
 	s := a.snap
 	ui.Column(c).Width(sidebarW).Shrink(0).Padding(4, 12, 12, 12).Gap(2).Label(L.NavOverview()).Children(func() {
 		if len(s.Accounts) > 0 {
-			acc := s.Accounts[0]
-			b := ui.ButtonBase(c.Key("sb-account")).Padding(8).Margin(0, 0, 12, 0).Radius(radiusCard).Background(p.pane.Alpha(0.55)).Label(L.NavFolders())
-			b.Children(func() {
-				ui.Row(c).FillWidth().Gap(10).Children(func() {
-					avatar(c, acc, 32)
-					ui.Column(c).Grow(1).Children(func() {
-						ui.Text(c, acc.DisplayName).FontWeight(600).Ellipsis("…").MaxLines(1)
-						muted(c, L.AccountsCount(len(s.Accounts)), fontSmall)
-					})
-				})
-			})
-			if b.Clicked() {
-				a.page = pageFolders
-			}
+			a.sidebarAccounts(c)
 		}
 		a.navItem(c, pageOverview, icHome, L.NavOverview(), 0)
 		a.navItem(c, pageFolders, icFolder, L.NavFolders(), 0)
@@ -116,7 +103,8 @@ func (a *App) sidebar(c *ui.Context) {
 				ui.Column(c).Children(func() {
 					ui.Text(c, o.word()).FontSize(13).FontWeight(600)
 					if len(s.Accounts) > 0 && s.Daemon.Connected {
-						if e, _, ok := activeEndpoint(s, s.Accounts[0].ID); ok {
+						// The account the Network page shows: the first unless chosen.
+						if e, _, ok := activeEndpoint(s, a.account); ok {
 							muted(c, L.SidebarThrough(e.Name), fontSmall)
 						}
 					}
@@ -125,6 +113,50 @@ func (a *App) sidebar(c *ui.Context) {
 		})
 		if b.Clicked() {
 			a.page = pageNetwork
+		}
+	})
+}
+
+// sidebarShown is how many accounts the sidebar lists before it counts
+// the rest.
+const sidebarShown = 4
+
+// sidebarAccounts lists the accounts, each opening Accounts & folders: its
+// name and server, or that it needs signing in again.
+func (a *App) sidebarAccounts(c *ui.Context) {
+	p := pal(c)
+	s := a.snap
+	list := s.Accounts
+	if len(list) > sidebarShown {
+		list = list[:sidebarShown-1]
+	}
+	ui.Column(c).FillWidth().Padding(4).Margin(0, 0, 12, 0).Gap(2).Radius(radiusCard).Background(p.pane.Alpha(0.55)).Children(func() {
+		for _, acc := range list {
+			b := ui.ButtonBase(c.Key("sb-acc-" + acc.ID)).FillWidth().Padding(6).Radius(radiusCtl).Label(accountName(acc))
+			if b.Hovered() {
+				b.Background(p.pane.Alpha(0.8))
+			}
+			b.Children(func() {
+				ui.Row(c).FillWidth().Gap(10).Children(func() {
+					avatar(c, acc, 28)
+					ui.Column(c).Grow(1).MinWidth(0).Children(func() {
+						ui.Text(c, acc.DisplayName).FontSize(13).FontWeight(600).Ellipsis("…").MaxLines(1)
+						if needsSignIn(s, acc) {
+							ui.Text(c, L.SidebarSignIn()).FontSize(fontSmall).TextColor(p.warn).Ellipsis("…").MaxLines(1)
+						} else {
+							muted(c, acc.Server, fontSmall).Ellipsis("…").MaxLines(1)
+						}
+					})
+				})
+			})
+			if b.Clicked() {
+				a.page, a.account = pageFolders, acc.ID
+			}
+		}
+		if more := len(s.Accounts) - len(list); more > 0 {
+			if link(c, "sb-acc-more", L.SidebarMoreAccounts(more)).Margin(2, 6).Clicked() {
+				a.page = pageFolders
+			}
 		}
 	})
 }

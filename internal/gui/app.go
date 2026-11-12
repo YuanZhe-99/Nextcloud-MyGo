@@ -246,6 +246,8 @@ func errText(err error) string {
 	switch {
 	case errors.Is(err, syncd.ErrStateUnavailable):
 		return L.ReasonStateUnavailable()
+	case errors.Is(err, syncd.ErrAccountExists):
+		return L.ReasonAccountExists()
 	case errors.Is(err, syncd.ErrStale), errors.Is(err, syncd.ErrNotFound):
 		return L.ToastStale()
 	case errors.Is(err, syncd.ErrBusy):

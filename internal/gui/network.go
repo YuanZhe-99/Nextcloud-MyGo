@@ -139,13 +139,15 @@ func sortedEndpoints(s syncd.Snapshot, accountID string) []syncd.Endpoint {
 	return out
 }
 
-// endpointCard is an address: its name, URL, the two trust steps, and how
-// it answers. A failed verification is a hard block (INV-04); an address
-// not usable for now (unreachable, its breaker open) only says so.
+// endpointCard is an address: its name, where it leads, its URL, the two
+// trust steps, why it is blocked, and how fast it answers. A security
+// block is a hard one no score overrides (INV-04); an address not usable
+// for now (unreachable, waiting for a sign-in) only says so.
 func (a *App) endpointCard(c *ui.Context, e syncd.Endpoint, n syncd.Network) {
 	p := pal(c)
 	live := a.snap.Daemon.Connected
-	failed := e.Verified == syncd.VerifyFailed
+	failed := quarantined(e)
+	blocked := blockedWords(e)
 	usable := e.Verified == syncd.VerifyVerified && e.Reachable && !e.Blocked && live
 	pending := n.RequestedEndpointID == e.ID
 	border, bg, iconCol := p.border, p.pane, p.muted
@@ -174,9 +176,13 @@ func (a *App) endpointCard(c *ui.Context, e syncd.Endpoint, n syncd.Network) {
 					pill(c, L.EndpointMain(), p.hover, p.muted)
 				}
 			})
-			muted(c, e.URL, 13).Ellipsis("…").MaxLines(1)
+			where := e.URL
+			if k := kindWord(e.Kind); k != e.Name {
+				where = k + " · " + e.URL
+			}
+			muted(c, where, 13).Ellipsis("…").MaxLines(1)
 			if failed {
-				ui.Text(c, L.TrustBlocked()).FontSize(fontSmall).FontWeight(600).TextColor(p.danger).Wrap()
+				ui.Text(c, blocked).FontSize(fontSmall).FontWeight(600).TextColor(p.danger).Wrap()
 				return
 			}
 			ui.Row(c).Gap(14).Wrap().Children(func() {
@@ -190,19 +196,16 @@ func (a *App) endpointCard(c *ui.Context, e syncd.Endpoint, n syncd.Network) {
 					trustStep(c, icClock, L.TrustPending(), p.warn)
 				}
 			})
+			if blocked != "" {
+				muted(c, blocked, fontSmall).Wrap()
+			}
 		})
 		ui.Row(c).Gap(8).Shrink(0).AlignSelf(ui.Center).Children(func() {
-			switch {
-			case failed:
-			case e.Verified != syncd.VerifyVerified:
-				if button(c, "ep-verify-"+e.ID, L.ActionVerifyNow(), nil).Disabled(a.busy["ep-"+e.ID] || !live).Clicked() {
-					a.do("ep-"+e.ID, func() error { return a.client.VerifyEndpoint(e.ID) }, nil)
+			// How it answers: the probe's round trip once one succeeded.
+			answers := func() {
+				if !usable && blocked != "" {
+					return // its card says why already
 				}
-			case n.Policy != syncd.PolicyAuto && !e.InUse && usable && !pending:
-				if button(c, "ep-use-"+e.ID, L.ActionUseThis(), nil).Disabled(a.busy["policy"] || n.RequestedEndpointID != "").Clicked() {
-					a.requestPolicy(e.AccountID, syncd.PolicyFixed, e.ID)
-				}
-			default:
 				ui.Column(c).AlignItems(ui.End).Children(func() {
 					if !usable {
 						muted(c, L.Unreachable(), 13)
@@ -217,6 +220,20 @@ func (a *App) endpointCard(c *ui.Context, e syncd.Endpoint, n syncd.Network) {
 						muted(c, L.LatencyMs(strconv.Itoa(e.LatencyMs)), fontSmall)
 					}
 				})
+			}
+			switch {
+			case failed:
+			case e.Verified != syncd.VerifyVerified:
+				if button(c, "ep-verify-"+e.ID, L.ActionVerifyNow(), nil).Disabled(a.busy["ep-"+e.ID] || !live).Clicked() {
+					a.do("ep-"+e.ID, func() error { return a.client.VerifyEndpoint(e.ID) }, nil)
+				}
+			case n.Policy != syncd.PolicyAuto && !e.InUse && usable && !pending:
+				answers()
+				if button(c, "ep-use-"+e.ID, L.ActionUseThis(), nil).Disabled(a.busy["policy"] || n.RequestedEndpointID != "").Clicked() {
+					a.requestPolicy(e.AccountID, syncd.PolicyFixed, e.ID)
+				}
+			default:
+				answers()
 			}
 			if e.Main || e.InUse {
 				return // SyncD keeps the main address and the one in use
@@ -275,32 +292,63 @@ func (a *App) whyCard(c *ui.Context, n syncd.Network) {
 			ui.Text(c, L.Switching()).FontSize(13).TextColor(p.accentText).Wrap()
 		}
 		for _, r := range why {
-			var words string
-			switch r {
-			case syncd.ReasonVerified:
-				words = L.WhyVerified()
-				if e.Main {
-					words = L.WhyMain()
-				}
-			case syncd.ReasonFaster:
-				if n.Speedup < 2 {
-					continue
-				}
-				words = L.WhyFaster(n.Speedup)
-			case syncd.ReasonStable:
-				words = L.WhyStable()
-			case syncd.ReasonUserChoice:
-				words = L.WhyUser()
-			default:
+			words := whyWords(a.snap, e, n, r)
+			if words == "" {
 				continue
 			}
+			icon, col := icCheck, p.success
+			if r == syncd.ReasonUnreachable || r == syncd.ReasonPostponed {
+				icon, col = icInfo, p.muted
+			}
 			ui.Row(c).Gap(8).AlignItems(ui.Start).Children(func() {
-				ui.Icon(c, icCheck).FontSize(16).TextColor(p.success)
+				ui.Icon(c, icon).FontSize(16).TextColor(col)
 				ui.Text(c, words).FontSize(13).Wrap().Grow(1).MinWidth(0)
+			})
+		}
+		if at, reason := lastSwitch(a.snap, n); !at.IsZero() {
+			ui.Row(c).Gap(8).AlignItems(ui.Start).Children(func() {
+				ui.Icon(c, icClock).FontSize(16).TextColor(p.muted)
+				ui.Text(c, L.SwitchedAgo(ago(at, time.Now()), reasonSentence(reason))).FontSize(13).Wrap().Grow(1).MinWidth(0)
 			})
 		}
 		muted(c, L.WhyNote(), fontSmall).Wrap()
 	})
+}
+
+// whyWords is one of SyncD's reasons for the address in use, in words, or
+// "" for one with nothing to add. SyncD sends no speedup factor (1.9): a
+// faster address says its answer time beside the main one's when both
+// are known.
+func whyWords(s syncd.Snapshot, e syncd.Endpoint, n syncd.Network, r syncd.Reason) string {
+	switch r {
+	case syncd.ReasonVerified:
+		if e.Main {
+			return L.WhyMain()
+		}
+		return L.WhyVerified()
+	case syncd.ReasonFaster:
+		if n.Speedup >= 2 {
+			return L.WhyFaster(n.Speedup)
+		}
+		if m, ok := s.Endpoint(mainEndpoint(s, e.AccountID)); ok && !e.Main && e.LatencyMs > 0 && m.LatencyMs > e.LatencyMs {
+			return L.WhyFasterMs(strconv.Itoa(e.LatencyMs), strconv.Itoa(m.LatencyMs))
+		}
+		return L.WhyFasterPlain()
+	case syncd.ReasonStable:
+		return L.WhyStable()
+	case syncd.ReasonUserChoice:
+		return L.WhyUser()
+	case syncd.ReasonJoinedNetwork:
+		return L.WhyJoined()
+	case syncd.ReasonUnreachable:
+		return L.WhyUnreachable()
+	case syncd.ReasonPostponed:
+		if n.Switching || n.RequestedEndpointID != "" {
+			return "" // the pending switch says it already
+		}
+		return L.WhyPostponed()
+	}
+	return ""
 }
 
 // switchList is the account's recent switches, newest first.
@@ -360,11 +408,17 @@ type addrForm struct {
 	open      bool
 	accountID string
 	name, url string
+	// kind is where the address leads, an index of addrKinds; it never
+	// affects trust.
+	kind int
 	// failed says why the address could not be looked at, or "".
 	failed string
 	staged *syncd.Staging
 	agree  bool
 }
+
+// addrKinds are the kinds Add an address offers, in its order.
+var addrKinds = []syncd.EndpointKind{syncd.KindInternet, syncd.KindHome, syncd.KindVPN}
 
 // addrDialog adds an address in two trust steps: the user approves the
 // origin after seeing its certificate, then SyncD verifies it is the same
@@ -399,6 +453,10 @@ func (a *App) addrDialog(c *ui.Context) {
 						in.Error(f.failed)
 					}
 				})
+			})
+			ui.Column(c).Gap(6).Children(func() {
+				ui.Text(c, L.FieldKind()).FontSize(13).FontWeight(600)
+				ui.Segmented(c.Key("addr-kind"), &f.kind, kindWord(addrKinds[0]), kindWord(addrKinds[1]), kindWord(addrKinds[2])).Label(L.FieldKind()).Disabled(f.staged != nil).AlignSelf(ui.Start)
 			})
 			if f.staged == nil {
 				muted(c, L.AddressChecking(), fontSmall).Wrap()
@@ -442,7 +500,7 @@ func (a *App) stageAddress() {
 		name = hostOf(f.url)
 	}
 	a.do("stage", func() error {
-		st, err := a.client.StageEndpoint(f.accountID, name, f.url)
+		st, err := a.client.StageEndpoint(f.accountID, name, f.url, addrKinds[f.kind])
 		a.later(func() {
 			if err != nil {
 				a.addr.failed = L.AddressInvalid()

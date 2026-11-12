@@ -104,14 +104,67 @@ func TestApprovalSyncsTheFolder(t *testing.T) {
 		t.Fatalf("history = %+v, want the deletion first", s.Activity[0])
 	}
 }
+
+// TestPrepareUpdateWaitsForSafePoint: an update waits while a deletion
+// waits for the user or files move, each busy with SyncD's own reason
+// (protocol 1.9), and goes ahead when idle (PLAN.md §16.2).
 func TestPrepareUpdateWaitsForSafePoint(t *testing.T) {
-	m := NewMock(true, fixed)
-	if err := m.PrepareUpdate("0.1.1"); !errors.Is(err, ErrBusy) {
-		t.Fatalf("with a sync running and a review waiting: %v, want busy", err)
+	cases := []struct {
+		name   string
+		mock   func() *Mock
+		reason string
+	}{
+		{"a deletion waits", func() *Mock { return NewMock(true, fixed) }, "DECISION_PENDING"},
+		{"files move", func() *Mock {
+			m := NewMock(true, fixed)
+			if err := m.ResolveDecision("d-photos", "sha256:photos-142", ActionApproveDeletion); err != nil {
+				t.Fatal(err)
+			}
+			return m
+		}, "QUIESCE_STALLED"},
+		{"idle", func() *Mock { return NewMock(false, fixed) }, ""},
 	}
-	empty := NewMock(false, fixed)
-	if err := empty.PrepareUpdate("0.1.1"); err != nil {
-		t.Fatalf("idle: %v", err)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := c.mock().PrepareUpdate("0.1.1")
+			if got := ReasonOf(err); got != c.reason || (c.reason != "") != errors.Is(err, ErrBusy) {
+				t.Fatalf("err = %v (%q), want %q", err, got, c.reason)
+			}
+		})
+	}
+}
+
+// TestDuplicateSignInRefused: signing in again to a server already added
+// as a new account is ACCOUNT_EXISTS, as SyncD refuses it; nothing is added.
+func TestDuplicateSignInRefused(t *testing.T) {
+	m := NewMock(true, fixed)
+	l, err := m.StartLogin("cloud.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.WaitLogin(t.Context(), l.ID); !errors.Is(err, ErrAccountExists) {
+		t.Fatalf("WaitLogin = %v, want ErrAccountExists", err)
+	}
+	if n := len(m.Snapshot().Accounts); n != 2 {
+		t.Fatalf("%d accounts, want 2", n)
+	}
+}
+
+// TestRemoveAccountWithFolders: an account is removed with its folders,
+// busy or not; nothing of it stays in the state (protocol 1.9).
+func TestRemoveAccountWithFolders(t *testing.T) {
+	m := NewMock(true, fixed)
+	if err := m.RemoveAccount("a-home"); err != nil {
+		t.Fatal(err)
+	}
+	s := m.Snapshot()
+	for _, f := range s.Folders {
+		if f.AccountID == "a-home" {
+			t.Fatalf("folder %s of the removed account stays", f.ID)
+		}
+	}
+	if _, ok := s.Account("a-home"); ok || len(s.Accounts) != 1 {
+		t.Fatalf("accounts = %+v", s.Accounts)
 	}
 }
 

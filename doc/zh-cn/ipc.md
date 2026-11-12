@@ -63,8 +63,8 @@ Go 客户端发送 `minor: 9`，把 `ACCOUNT_EXISTS` 映射为 `ErrAccountExists
 移除按需目录时先注销其 Cloud Files 注册；其按需下载仍在运行时拒绝并返回 `QUIESCE_STALLED`。`virtualFiles` 能力仍为
 false：按需路径已在原生 ARM64 上通过 SyncD 的引擎运行时针对真实服务器运行，但尚未经过配对守护进程与界面。参见
 `protocol/folders.schema.json`（`addParams`）和 `protocol/folders.examples.json`（`addOnDemand`）。Go 客户端解码
-`Folder.Mode`，`AddFolder` 接受可选的模式；schema 9 的映射迁移后为 `full`（`testFolderModeMigration`）。界面中选择模式
-尚待加入。
+`Folder.Mode`，`AddFolder` 接受可选的模式；schema 9 的映射迁移后为 `full`（`testFolderModeMigration`）。界面只在有
+`virtualFiles` 时在设置中提供该选择，没有它时不发送模式（[界面](gui.md)）。
 
 协议 1.7 增加显式启动可用性及稳定目录 `reasonCode` 投影。Control schema 8 正在集成
 持久账号级服务器限流（此前启动验收使用 schema 7）。Control schema 9 仅新增

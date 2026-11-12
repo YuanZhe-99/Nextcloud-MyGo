@@ -19,6 +19,27 @@ type updateState struct {
 	// failedFor is the version an automatic install failed for in this
 	// run; it is not tried again until the next start.
 	failedFor string
+	// postponed: the last install waited for a safe point; deletion says
+	// it waits for a deletion the user reviews (DECISION_PENDING) rather
+	// than for sync to settle (QUIESCE_STALLED).
+	postponed, deletion bool
+}
+
+// postponement tells whether PrepareUpdate's answer postpones the update
+// (ErrBusy), and whether for a deletion waiting for the user
+// (DECISION_PENDING) rather than for sync to settle (QUIESCE_STALLED).
+func postponement(err error) (postponed, deletion bool) {
+	return errors.Is(err, syncd.ErrBusy), syncd.ReasonOf(err) == "DECISION_PENDING"
+}
+
+// waitWords says why SyncD postponed an update: a deletion waits for the
+// user, who can end it, or sync has not reached a safe point yet, which
+// ends on its own.
+func waitWords(deletion bool) string {
+	if deletion {
+		return L.UpdateWaitsDeletion()
+	}
+	return L.UpdateWaits()
 }
 
 // updateLoop checks once a day while Check for updates is on, and
@@ -93,8 +114,8 @@ func (a *App) autoInstall() {
 }
 
 // installUpdate brings SyncD to a safe point first, then installs and
-// relaunches; SyncD refusing (files moving, a deletion waiting for the
-// user, a switch going on) postpones it (PLAN.md §16.2).
+// relaunches; SyncD refusing (a deletion waiting for the user, or files
+// moving, a switch going on) postpones it and says which (PLAN.md §16.2).
 func (a *App) installUpdate() {
 	u := a.upd.available
 	if u == nil || a.upd.installing {
@@ -108,10 +129,11 @@ func (a *App) installUpdate() {
 		}
 		a.later(func() {
 			a.upd.installing = false
+			a.upd.postponed, a.upd.deletion = postponement(err)
 			switch {
-			case errors.Is(err, syncd.ErrBusy):
+			case a.upd.postponed:
 				// Not at a safe point: postponed, tried again later.
-				a.setToast(L.UpdateWaits())
+				a.setToast(waitWords(a.upd.deletion))
 				return
 			case err != nil:
 				a.upd.failedFor = u.Version

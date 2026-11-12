@@ -2,6 +2,7 @@ package gui
 
 import (
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -103,6 +104,10 @@ func overallOf(s syncd.Snapshot) overall {
 		case syncd.FolderSyncing:
 			syncing = true
 		}
+		if quotaFull(f) {
+			// Finished, but the server refuses its uploads: the user acts.
+			return overallNeedsYou
+		}
 		if f.State != syncd.FolderOffline {
 			offline = false
 		}
@@ -156,8 +161,13 @@ func stateKnown(s syncd.Snapshot) bool {
 }
 
 // needsSignIn tells whether an account waits for the user to sign in
-// again: signed out, a renewal under way, or a folder its server refuses.
+// again, as its Auth says (protocol 1.9).
+// Notes: a daemon before 1.9 sends no Auth: then signed out, or a folder
+// its server refuses.
 func needsSignIn(s syncd.Snapshot, acc syncd.Account) bool {
+	if acc.Auth != "" {
+		return acc.Auth != syncd.AuthSignedIn
+	}
 	if !acc.SignedIn {
 		return true
 	}
@@ -167,6 +177,92 @@ func needsSignIn(s syncd.Snapshot, acc syncd.Account) bool {
 		}
 	}
 	return false
+}
+
+// authWords is why an account needs signing in again, in words: the
+// credential cannot be used on this PC, or the server refused it.
+func authWords(acc syncd.Account) (state, body string) {
+	if acc.Auth == syncd.AuthNeedsSignIn {
+		return L.AccountNeedsSignIn(), L.AttnNeedsSignInBody()
+	}
+	return L.AccountSignedOut(), L.AttnSignInBody()
+}
+
+// quotaFull tells whether the server refused a folder's uploads because
+// the account's storage there is full; its cycle still finishes.
+func quotaFull(f syncd.Folder) bool { return f.ReasonCode == "REMOTE_QUOTA_EXCEEDED" }
+
+// accountsFull are the accounts with a folder whose uploads the server
+// refuses for want of storage, in the snapshot's order.
+func accountsFull(s syncd.Snapshot) []syncd.Account {
+	var out []syncd.Account
+	for _, acc := range s.Accounts {
+		if slices.ContainsFunc(s.Folders, func(f syncd.Folder) bool { return f.AccountID == acc.ID && quotaFull(f) }) {
+			out = append(out, acc)
+		}
+	}
+	return out
+}
+
+// modeShown tells whether a folder's mode is worth saying: on-demand
+// files exist (the virtualFiles capability) or the folder uses them.
+func modeShown(s syncd.Snapshot, f syncd.Folder) bool {
+	return s.Daemon.Capabilities["virtualFiles"] || f.Mode == syncd.FolderOnDemand
+}
+
+// modeWord is how a folder keeps its files on this PC; empty is a daemon
+// before 1.8, which knew only full files.
+func modeWord(m syncd.FolderMode) string {
+	if m == syncd.FolderOnDemand {
+		return L.ModeOnDemand()
+	}
+	return L.ModeFull()
+}
+
+// kindWord is where an address leads, in words.
+func kindWord(k syncd.EndpointKind) string {
+	switch k {
+	case syncd.KindHome:
+		return L.KindHome()
+	case syncd.KindVPN:
+		return L.KindVPN()
+	}
+	return L.KindInternet()
+}
+
+// quarantined tells whether an address is blocked for its security: its
+// certificate, a different server, or an origin never allowed (INV-04).
+func quarantined(e syncd.Endpoint) bool {
+	switch e.BlockedReason {
+	case "TLS_ERROR", "ENDPOINT_IDENTITY_MISMATCH", "ENDPOINT_UNTRUSTED":
+		return e.Blocked
+	}
+	return e.Verified == syncd.VerifyFailed
+}
+
+// blockedWords is why an address is not used, in words, or "" when its
+// trust steps already say it (a verification under way) or it is not
+// blocked.
+func blockedWords(e syncd.Endpoint) string {
+	if !e.Blocked {
+		return ""
+	}
+	switch e.BlockedReason {
+	case "TLS_ERROR":
+		return L.BlockedTLS()
+	case "ENDPOINT_UNTRUSTED":
+		return L.BlockedUntrusted()
+	case "AUTH_REQUIRED":
+		return L.BlockedSignIn()
+	case "NETWORK_UNAVAILABLE":
+		return L.BlockedNetwork()
+	case "VERIFICATION_PENDING":
+		return ""
+	}
+	if quarantined(e) {
+		return L.TrustBlocked()
+	}
+	return ""
 }
 
 // pendingReview is the deletion proposal waiting for a folder, if any.
@@ -200,6 +296,10 @@ func folderWord(f syncd.Folder, s syncd.Snapshot, p *palette) (string, ui.Color,
 	case syncd.FolderError:
 		return L.FolderError(), p.danger, false
 	case syncd.FolderUpToDate:
+		if quotaFull(f) {
+			// The cycle finished; its uploads were refused.
+			return L.FolderStorageFull(), p.warn, false
+		}
 		if !s.Daemon.Capabilities["fullSync"] {
 			// Not green while file sync is not a supported capability.
 			return L.StateFinished(), p.muted, false
@@ -228,6 +328,11 @@ func folderDetail(f syncd.Folder, s syncd.Snapshot) string {
 	case syncd.FolderPaused:
 		if f.UserPaused {
 			return L.FolderStaysPaused()
+		}
+	case syncd.FolderUpToDate:
+		if quotaFull(f) {
+			// Short: the account's notice says what to do.
+			return L.FolderQuotaDetail()
 		}
 	}
 	return reasonText(f.ReasonCode)

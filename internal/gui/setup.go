@@ -40,7 +40,14 @@ type setupState struct {
 	failed    string
 	// remoteErr says why the server's folders could not be listed, or "".
 	remoteErr string
+	// mode is how the chosen folders keep their files, an index of
+	// folderModes; offered only with the virtualFiles capability, and fixed
+	// for each folder's life.
+	mode int
 }
+
+// folderModes are the modes setup offers, in its order.
+var folderModes = []syncd.FolderMode{syncd.FolderFull, syncd.FolderOnDemand}
 
 // setupShown tells whether the window shows setup instead of the pages:
 // while it runs, and always while SyncD reports no account (an unknown
@@ -165,6 +172,8 @@ func (a *App) setupServer(c *ui.Context) {
 		muted(c, L.DaemonDisconnected(), fontBody).Wrap()
 	} else if !a.snap.Daemon.Capabilities["login"] {
 		muted(c, L.LoginUnavailable(), fontBody).Wrap()
+	} else if !a.canAddAccount() {
+		muted(c, L.OneAccountOnly(), fontBody).Wrap()
 	}
 	ui.Column(c).Gap(6).MaxWidth(480).Margin(8, 0, 0, 0).Children(func() {
 		ui.Text(c, L.ServerAddressLabel()).FontSize(13).FontWeight(600)
@@ -188,9 +197,10 @@ func (a *App) setupServer(c *ui.Context) {
 	a.setupFoot(c, back, L.ActionContinue(), strings.TrimSpace(st.server) == "" || a.busy["login"] || !a.loginAvailable(), a.beginLogin)
 }
 
-// loginAvailable requires a live negotiated login capability.
+// loginAvailable requires a live negotiated login capability, and for a
+// further account SyncD's support of several.
 func (a *App) loginAvailable() bool {
-	return a.snap.Daemon.Connected && a.snap.Daemon.Capabilities["login"]
+	return a.snap.Daemon.Connected && a.snap.Daemon.Capabilities["login"] && a.canAddAccount()
 }
 
 // beginLogin starts Login Flow v2 and waits for the browser step.
@@ -214,7 +224,12 @@ func (a *App) beginLogin() {
 			if a.setup.step != stepSignIn || a.setup.login.ID != l.ID {
 				return // gone back meanwhile
 			}
-			if err != nil {
+			switch {
+			case errors.Is(err, syncd.ErrAccountExists):
+				// Not a failure: this user on this server is already here.
+				a.setup.step, a.setup.failed = stepServer, L.ReasonAccountExists()
+				return
+			case err != nil:
 				a.setup.step, a.setup.failed = stepServer, L.SignInFailed()
 				if t := reasonText(syncd.ReasonOf(err)); t != "" {
 					a.setup.failed += " " + t
@@ -352,6 +367,19 @@ func (a *App) setupFolders(c *ui.Context) {
 			})
 		}
 	})
+	if a.snap.Daemon.Capabilities["virtualFiles"] {
+		ui.Row(c).FillWidth().Gap(14).AlignItems(ui.Start).Children(func() {
+			ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+				ui.Text(c, L.ModeLabel()).FontSize(13).FontWeight(600)
+				hint := L.ModeFullHint()
+				if folderModes[st.mode] == syncd.FolderOnDemand {
+					hint = L.ModeOnDemandHint()
+				}
+				muted(c, hint, fontSmall).Wrap()
+			})
+			ui.Segmented(c.Key("setup-mode"), &st.mode, L.ModeFull(), L.ModeOnDemand()).Label(L.ModeLabel())
+		})
+	}
 	n := 0
 	for _, on := range st.chosen {
 		if on {
@@ -443,19 +471,18 @@ func (a *App) finishSetup() {
 			_ = mygo.App.SetOpenAtLogin(st.atLogin)
 		}
 	}
+	// A mode is sent only where SyncD offers on-demand files; without it
+	// every folder keeps full files, SyncD's default.
+	var mode []syncd.FolderMode
+	if a.snap.Daemon.Capabilities["virtualFiles"] {
+		mode = append(mode, folderModes[st.mode])
+	}
 	a.setup = setupState{}
 	a.page = pageOverview
-	demo := a.snap.Daemon.Demo
 	a.do("add-folders", func() error {
 		for _, f := range add {
-			// SyncD inspects an existing local folder only: make the empty
-			// one chosen, never anything inside it; sample data makes none.
-			if !demo {
-				if err := os.MkdirAll(f[1], 0o700); err != nil {
-					return err
-				}
-			}
-			if err := a.client.AddFolder(st.accountID, f[0], f[1]); err != nil {
+			// SyncD creates a local folder that does not exist yet (1.9).
+			if err := a.client.AddFolder(st.accountID, f[0], f[1], mode...); err != nil {
 				return folderError{name: filepath.Base(f[1]), err: err}
 			}
 		}

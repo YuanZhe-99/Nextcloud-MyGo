@@ -84,16 +84,6 @@ func (msgs Messages) NavSettings() string {
 	return Catalog.Format(msgs.locale, "NavSettings", nil)
 }
 
-// AccountsCount says "{count, plural, one {# account} other {# accounts}}"
-// in the language the app shows.
-func AccountsCount(count int) string { return In(i18n.Locale()).AccountsCount(count) }
-
-// AccountsCount says "{count, plural, one {# account} other {# accounts}}"
-// in the language of msgs.
-func (msgs Messages) AccountsCount(count int) string {
-	return Catalog.Format(msgs.locale, "AccountsCount", map[string]any{"count": count})
-}
-
 // WindowMinimize says "Minimize"
 // in the language the app shows.
 func WindowMinimize() string { return In(i18n.Locale()).WindowMinimize() }
@@ -1066,11 +1056,11 @@ func (msgs Messages) ConfirmRemoveAccountTitle(account string) string {
 	return Catalog.Format(msgs.locale, "ConfirmRemoveAccountTitle", map[string]any{"account": account})
 }
 
-// ConfirmRemoveAccountBody says "Its folders stop syncing. Every file stays on this PC and on the server."
+// ConfirmRemoveAccountBody says "Its folders stop syncing, after a sync under way finishes. Every file stays on this PC and on the server."
 // in the language the app shows.
 func ConfirmRemoveAccountBody() string { return In(i18n.Locale()).ConfirmRemoveAccountBody() }
 
-// ConfirmRemoveAccountBody says "Its folders stop syncing. Every file stays on this PC and on the server."
+// ConfirmRemoveAccountBody says "Its folders stop syncing, after a sync under way finishes. Every file stays on this PC and on the server."
 // in the language of msgs.
 func (msgs Messages) ConfirmRemoveAccountBody() string {
 	return Catalog.Format(msgs.locale, "ConfirmRemoveAccountBody", nil)
@@ -2870,11 +2860,11 @@ func (msgs Messages) Installing() string {
 	return Catalog.Format(msgs.locale, "Installing", nil)
 }
 
-// UpdateWaits says "The update waits until sync reaches a safe point: files are moving, or a deletion waits for you."
+// UpdateWaits says "The update waits until sync reaches a safe point: files are moving or an address is changing. It is tried again later."
 // in the language the app shows.
 func UpdateWaits() string { return In(i18n.Locale()).UpdateWaits() }
 
-// UpdateWaits says "The update waits until sync reaches a safe point: files are moving, or a deletion waits for you."
+// UpdateWaits says "The update waits until sync reaches a safe point: files are moving or an address is changing. It is tried again later."
 // in the language of msgs.
 func (msgs Messages) UpdateWaits() string {
 	return Catalog.Format(msgs.locale, "UpdateWaits", nil)
@@ -3658,11 +3648,11 @@ func (msgs Messages) ReasonAccountExists() string {
 	return Catalog.Format(msgs.locale, "ReasonAccountExists", nil)
 }
 
-// ReasonQuota says "Your storage on the server is full: free some space there, and syncing continues."
+// ReasonQuota says "Your storage on the server is full: new and changed files are not uploaded until you free some space there."
 // in the language the app shows.
 func ReasonQuota() string { return In(i18n.Locale()).ReasonQuota() }
 
-// ReasonQuota says "Your storage on the server is full: free some space there, and syncing continues."
+// ReasonQuota says "Your storage on the server is full: new and changed files are not uploaded until you free some space there."
 // in the language of msgs.
 func (msgs Messages) ReasonQuota() string {
 	return Catalog.Format(msgs.locale, "ReasonQuota", nil)
@@ -4088,4 +4078,336 @@ func WhyMain() string { return In(i18n.Locale()).WhyMain() }
 // in the language of msgs.
 func (msgs Messages) WhyMain() string {
 	return Catalog.Format(msgs.locale, "WhyMain", nil)
+}
+
+// AccountNeedsSignIn says "Sign in again on this PC: its folders wait until you do"
+// in the language the app shows.
+func AccountNeedsSignIn() string { return In(i18n.Locale()).AccountNeedsSignIn() }
+
+// AccountNeedsSignIn says "Sign in again on this PC: its folders wait until you do"
+// in the language of msgs.
+func (msgs Messages) AccountNeedsSignIn() string {
+	return Catalog.Format(msgs.locale, "AccountNeedsSignIn", nil)
+}
+
+// AttnNeedsSignInBody says "The saved sign-in cannot be used on this PC, or a renewal waits for your browser. Its folders wait; your files are safe."
+// in the language the app shows.
+func AttnNeedsSignInBody() string { return In(i18n.Locale()).AttnNeedsSignInBody() }
+
+// AttnNeedsSignInBody says "The saved sign-in cannot be used on this PC, or a renewal waits for your browser. Its folders wait; your files are safe."
+// in the language of msgs.
+func (msgs Messages) AttnNeedsSignInBody() string {
+	return Catalog.Format(msgs.locale, "AttnNeedsSignInBody", nil)
+}
+
+// AttnQuotaTitle says "Server storage is full for {account}"
+// in the language the app shows.
+func AttnQuotaTitle(account string) string { return In(i18n.Locale()).AttnQuotaTitle(account) }
+
+// AttnQuotaTitle says "Server storage is full for {account}"
+// in the language of msgs.
+func (msgs Messages) AttnQuotaTitle(account string) string {
+	return Catalog.Format(msgs.locale, "AttnQuotaTitle", map[string]any{"account": account})
+}
+
+// AttnQuotaBody says "Syncing still finishes, but new and changed files are not uploaded until you free some space on the server. Downloads…"
+// in the language the app shows.
+func AttnQuotaBody() string { return In(i18n.Locale()).AttnQuotaBody() }
+
+// AttnQuotaBody says "Syncing still finishes, but new and changed files are not uploaded until you free some space on the server. Downloads…"
+// in the language of msgs.
+func (msgs Messages) AttnQuotaBody() string {
+	return Catalog.Format(msgs.locale, "AttnQuotaBody", nil)
+}
+
+// FolderStorageFull says "Server storage full"
+// in the language the app shows.
+func FolderStorageFull() string { return In(i18n.Locale()).FolderStorageFull() }
+
+// FolderStorageFull says "Server storage full"
+// in the language of msgs.
+func (msgs Messages) FolderStorageFull() string {
+	return Catalog.Format(msgs.locale, "FolderStorageFull", nil)
+}
+
+// ModeLabel says "Files on this PC"
+// in the language the app shows.
+func ModeLabel() string { return In(i18n.Locale()).ModeLabel() }
+
+// ModeLabel says "Files on this PC"
+// in the language of msgs.
+func (msgs Messages) ModeLabel() string {
+	return Catalog.Format(msgs.locale, "ModeLabel", nil)
+}
+
+// ModeFull says "Full files"
+// in the language the app shows.
+func ModeFull() string { return In(i18n.Locale()).ModeFull() }
+
+// ModeFull says "Full files"
+// in the language of msgs.
+func (msgs Messages) ModeFull() string {
+	return Catalog.Format(msgs.locale, "ModeFull", nil)
+}
+
+// ModeOnDemand says "On demand"
+// in the language the app shows.
+func ModeOnDemand() string { return In(i18n.Locale()).ModeOnDemand() }
+
+// ModeOnDemand says "On demand"
+// in the language of msgs.
+func (msgs Messages) ModeOnDemand() string {
+	return Catalog.Format(msgs.locale, "ModeOnDemand", nil)
+}
+
+// ModeFullHint says "Every file is downloaded and stays available offline."
+// in the language the app shows.
+func ModeFullHint() string { return In(i18n.Locale()).ModeFullHint() }
+
+// ModeFullHint says "Every file is downloaded and stays available offline."
+// in the language of msgs.
+func (msgs Messages) ModeFullHint() string {
+	return Catalog.Format(msgs.locale, "ModeFullHint", nil)
+}
+
+// ModeOnDemandHint says "Files show in Explorer and download when you open them. Chosen once for each folder."
+// in the language the app shows.
+func ModeOnDemandHint() string { return In(i18n.Locale()).ModeOnDemandHint() }
+
+// ModeOnDemandHint says "Files show in Explorer and download when you open them. Chosen once for each folder."
+// in the language of msgs.
+func (msgs Messages) ModeOnDemandHint() string {
+	return Catalog.Format(msgs.locale, "ModeOnDemandHint", nil)
+}
+
+// FieldKind says "Reached through"
+// in the language the app shows.
+func FieldKind() string { return In(i18n.Locale()).FieldKind() }
+
+// FieldKind says "Reached through"
+// in the language of msgs.
+func (msgs Messages) FieldKind() string {
+	return Catalog.Format(msgs.locale, "FieldKind", nil)
+}
+
+// KindInternet says "Internet"
+// in the language the app shows.
+func KindInternet() string { return In(i18n.Locale()).KindInternet() }
+
+// KindInternet says "Internet"
+// in the language of msgs.
+func (msgs Messages) KindInternet() string {
+	return Catalog.Format(msgs.locale, "KindInternet", nil)
+}
+
+// KindHome says "Home network"
+// in the language the app shows.
+func KindHome() string { return In(i18n.Locale()).KindHome() }
+
+// KindHome says "Home network"
+// in the language of msgs.
+func (msgs Messages) KindHome() string {
+	return Catalog.Format(msgs.locale, "KindHome", nil)
+}
+
+// KindVPN says "VPN"
+// in the language the app shows.
+func KindVPN() string { return In(i18n.Locale()).KindVPN() }
+
+// KindVPN says "VPN"
+// in the language of msgs.
+func (msgs Messages) KindVPN() string {
+	return Catalog.Format(msgs.locale, "KindVPN", nil)
+}
+
+// BlockedTLS says "Blocked: its certificate could not be verified. Your sign-in is never sent there."
+// in the language the app shows.
+func BlockedTLS() string { return In(i18n.Locale()).BlockedTLS() }
+
+// BlockedTLS says "Blocked: its certificate could not be verified. Your sign-in is never sent there."
+// in the language of msgs.
+func (msgs Messages) BlockedTLS() string {
+	return Catalog.Format(msgs.locale, "BlockedTLS", nil)
+}
+
+// BlockedUntrusted says "Blocked: you have not allowed this address. Your sign-in is never sent there."
+// in the language the app shows.
+func BlockedUntrusted() string { return In(i18n.Locale()).BlockedUntrusted() }
+
+// BlockedUntrusted says "Blocked: you have not allowed this address. Your sign-in is never sent there."
+// in the language of msgs.
+func (msgs Messages) BlockedUntrusted() string {
+	return Catalog.Format(msgs.locale, "BlockedUntrusted", nil)
+}
+
+// BlockedSignIn says "Not used until you sign in again."
+// in the language the app shows.
+func BlockedSignIn() string { return In(i18n.Locale()).BlockedSignIn() }
+
+// BlockedSignIn says "Not used until you sign in again."
+// in the language of msgs.
+func (msgs Messages) BlockedSignIn() string {
+	return Catalog.Format(msgs.locale, "BlockedSignIn", nil)
+}
+
+// BlockedNetwork says "Not reachable from this network."
+// in the language the app shows.
+func BlockedNetwork() string { return In(i18n.Locale()).BlockedNetwork() }
+
+// BlockedNetwork says "Not reachable from this network."
+// in the language of msgs.
+func (msgs Messages) BlockedNetwork() string {
+	return Catalog.Format(msgs.locale, "BlockedNetwork", nil)
+}
+
+// WhyFasterPlain says "Answers faster than the main address"
+// in the language the app shows.
+func WhyFasterPlain() string { return In(i18n.Locale()).WhyFasterPlain() }
+
+// WhyFasterPlain says "Answers faster than the main address"
+// in the language of msgs.
+func (msgs Messages) WhyFasterPlain() string {
+	return Catalog.Format(msgs.locale, "WhyFasterPlain", nil)
+}
+
+// WhyFasterMs says "Answers in {ms} ms; the main address in {main} ms"
+// in the language the app shows.
+func WhyFasterMs(ms string, main string) string { return In(i18n.Locale()).WhyFasterMs(ms, main) }
+
+// WhyFasterMs says "Answers in {ms} ms; the main address in {main} ms"
+// in the language of msgs.
+func (msgs Messages) WhyFasterMs(ms string, main string) string {
+	return Catalog.Format(msgs.locale, "WhyFasterMs", map[string]any{"ms": ms, "main": main})
+}
+
+// WhyJoined says "You joined the network this address belongs to"
+// in the language the app shows.
+func WhyJoined() string { return In(i18n.Locale()).WhyJoined() }
+
+// WhyJoined says "You joined the network this address belongs to"
+// in the language of msgs.
+func (msgs Messages) WhyJoined() string {
+	return Catalog.Format(msgs.locale, "WhyJoined", nil)
+}
+
+// WhyUnreachable says "The other addresses do not answer now"
+// in the language the app shows.
+func WhyUnreachable() string { return In(i18n.Locale()).WhyUnreachable() }
+
+// WhyUnreachable says "The other addresses do not answer now"
+// in the language of msgs.
+func (msgs Messages) WhyUnreachable() string {
+	return Catalog.Format(msgs.locale, "WhyUnreachable", nil)
+}
+
+// WhyPostponed says "The last switch waited for a transfer to finish"
+// in the language the app shows.
+func WhyPostponed() string { return In(i18n.Locale()).WhyPostponed() }
+
+// WhyPostponed says "The last switch waited for a transfer to finish"
+// in the language of msgs.
+func (msgs Messages) WhyPostponed() string {
+	return Catalog.Format(msgs.locale, "WhyPostponed", nil)
+}
+
+// SidebarSignIn says "Sign in again"
+// in the language the app shows.
+func SidebarSignIn() string { return In(i18n.Locale()).SidebarSignIn() }
+
+// SidebarSignIn says "Sign in again"
+// in the language of msgs.
+func (msgs Messages) SidebarSignIn() string {
+	return Catalog.Format(msgs.locale, "SidebarSignIn", nil)
+}
+
+// SidebarMoreAccounts says "{count, plural, one {# more account} other {# more accounts}}"
+// in the language the app shows.
+func SidebarMoreAccounts(count int) string { return In(i18n.Locale()).SidebarMoreAccounts(count) }
+
+// SidebarMoreAccounts says "{count, plural, one {# more account} other {# more accounts}}"
+// in the language of msgs.
+func (msgs Messages) SidebarMoreAccounts(count int) string {
+	return Catalog.Format(msgs.locale, "SidebarMoreAccounts", map[string]any{"count": count})
+}
+
+// OneAccountOnly says "This version of the sync service supports one account."
+// in the language the app shows.
+func OneAccountOnly() string { return In(i18n.Locale()).OneAccountOnly() }
+
+// OneAccountOnly says "This version of the sync service supports one account."
+// in the language of msgs.
+func (msgs Messages) OneAccountOnly() string {
+	return Catalog.Format(msgs.locale, "OneAccountOnly", nil)
+}
+
+// ReviewFiles says "{count, plural, one {# file} other {# files}}"
+// in the language the app shows.
+func ReviewFiles(count int) string { return In(i18n.Locale()).ReviewFiles(count) }
+
+// ReviewFiles says "{count, plural, one {# file} other {# files}}"
+// in the language of msgs.
+func (msgs Messages) ReviewFiles(count int) string {
+	return Catalog.Format(msgs.locale, "ReviewFiles", map[string]any{"count": count})
+}
+
+// UpdateWaitsDeletion says "The update waits until you review the deletion waiting in Activity."
+// in the language the app shows.
+func UpdateWaitsDeletion() string { return In(i18n.Locale()).UpdateWaitsDeletion() }
+
+// UpdateWaitsDeletion says "The update waits until you review the deletion waiting in Activity."
+// in the language of msgs.
+func (msgs Messages) UpdateWaitsDeletion() string {
+	return Catalog.Format(msgs.locale, "UpdateWaitsDeletion", nil)
+}
+
+// DiagUpgrade says "Upgraded from · schema"
+// in the language the app shows.
+func DiagUpgrade() string { return In(i18n.Locale()).DiagUpgrade() }
+
+// DiagUpgrade says "Upgraded from · schema"
+// in the language of msgs.
+func (msgs Messages) DiagUpgrade() string {
+	return Catalog.Format(msgs.locale, "DiagUpgrade", nil)
+}
+
+// DiagUpgradeValue says "{from} · schema {before} → {after}"
+// in the language the app shows.
+func DiagUpgradeValue(from string, before string, after string) string {
+	return In(i18n.Locale()).DiagUpgradeValue(from, before, after)
+}
+
+// DiagUpgradeValue says "{from} · schema {before} → {after}"
+// in the language of msgs.
+func (msgs Messages) DiagUpgradeValue(from string, before string, after string) string {
+	return Catalog.Format(msgs.locale, "DiagUpgradeValue", map[string]any{"from": from, "before": before, "after": after})
+}
+
+// DiagSelfCheck says "Self-check"
+// in the language the app shows.
+func DiagSelfCheck() string { return In(i18n.Locale()).DiagSelfCheck() }
+
+// DiagSelfCheck says "Self-check"
+// in the language of msgs.
+func (msgs Messages) DiagSelfCheck() string {
+	return Catalog.Format(msgs.locale, "DiagSelfCheck", nil)
+}
+
+// DiagDisconnect says "Last disconnect"
+// in the language the app shows.
+func DiagDisconnect() string { return In(i18n.Locale()).DiagDisconnect() }
+
+// DiagDisconnect says "Last disconnect"
+// in the language of msgs.
+func (msgs Messages) DiagDisconnect() string {
+	return Catalog.Format(msgs.locale, "DiagDisconnect", nil)
+}
+
+// FolderQuotaDetail says "New and changed files are not uploaded."
+// in the language the app shows.
+func FolderQuotaDetail() string { return In(i18n.Locale()).FolderQuotaDetail() }
+
+// FolderQuotaDetail says "New and changed files are not uploaded."
+// in the language of msgs.
+func (msgs Messages) FolderQuotaDetail() string {
+	return Catalog.Format(msgs.locale, "FolderQuotaDetail", nil)
 }

@@ -286,15 +286,15 @@ func snapApp(t *testing.T, s syncd.Snapshot) *App {
 	return a
 }
 
-// realSnapshot is what SyncD 1.7 reports for one signed-in account with
-// one folder: fixed policy, no automatic switching, full sync not yet a
-// supported capability.
+// realSnapshot is what SyncD 1.9 reports for one signed-in account with
+// one folder: fixed policy, no automatic switching, full sync and
+// on-demand files not yet supported capabilities.
 func realSnapshot() syncd.Snapshot {
 	return syncd.Snapshot{
-		Daemon:    syncd.Daemon{Connected: true, StateAvailable: true, StartupState: syncd.StartupNormal, Version: "0.1.0", Protocol: 1, ProtocolMinor: 7, Capabilities: map[string]bool{"login": true, "fullSync": false, "endpointAutoSwitch": false}},
-		Accounts:  []syncd.Account{{ID: "acc", User: "user", DisplayName: "User", Server: "cloud.example.invalid", SignedIn: true}},
-		Folders:   []syncd.Folder{{ID: "fold", AccountID: "acc", Name: "Docs", LocalPath: `C:\Sync\Docs`, RemotePath: "/Docs", State: syncd.FolderUpToDate, Phase: syncd.PhaseChecking}},
-		Endpoints: []syncd.Endpoint{{ID: "ep-main", AccountID: "acc", Name: "cloud.example.invalid", Kind: syncd.KindInternet, URL: "https://cloud.example.invalid", Main: true, Approved: true, Verified: syncd.VerifyVerified, Reachable: true, InUse: true}, {ID: "ep-alt", AccountID: "acc", Name: "Alternate", Kind: syncd.KindInternet, URL: "https://alt.example.invalid", Approved: true, Verified: syncd.VerifyPending, Blocked: true}},
+		Daemon:    syncd.Daemon{Connected: true, StateAvailable: true, StartupState: syncd.StartupNormal, Version: "0.1.0", Protocol: 1, ProtocolMinor: 9, Capabilities: map[string]bool{"login": true, "multiAccount": true, "fullSync": false, "endpointAutoSwitch": false, "virtualFiles": false}},
+		Accounts:  []syncd.Account{{ID: "acc", User: "user", DisplayName: "User", Server: "cloud.example.invalid", Auth: syncd.AuthSignedIn, SignedIn: true}},
+		Folders:   []syncd.Folder{{ID: "fold", AccountID: "acc", Name: "Docs", LocalPath: `C:\Sync\Docs`, RemotePath: "/Docs", State: syncd.FolderUpToDate, Mode: syncd.FolderFull}},
+		Endpoints: []syncd.Endpoint{{ID: "ep-main", AccountID: "acc", Name: "cloud.example.invalid", Kind: syncd.KindInternet, URL: "https://cloud.example.invalid", Main: true, Approved: true, Verified: syncd.VerifyVerified, Reachable: true, InUse: true}, {ID: "ep-alt", AccountID: "acc", Name: "Alternate", Kind: syncd.KindInternet, URL: "https://alt.example.invalid", Approved: true, Verified: syncd.VerifyPending, Blocked: true, BlockedReason: "VERIFICATION_PENDING"}},
 		Networks:  []syncd.Network{{AccountID: "acc", Policy: syncd.PolicyFixed, FixedEndpointID: "ep-main", ActiveID: "ep-main"}},
 		Switches:  []syncd.Switch{}, Decisions: []syncd.Decision{}, Activity: []syncd.Activity{},
 	}
@@ -359,11 +359,12 @@ func TestRealDaemonCapabilities(t *testing.T) {
 	shoot(t, tt, "real-setup-folders")
 }
 
-// TestRefusedPasswordAsksToSignIn: a folder whose server refuses the app
-// password puts its account's Sign in in browser where the user looks,
-// though SyncD still reports the account signed in.
+// TestRefusedPasswordAsksToSignIn: an account whose server refused the app
+// password (Auth revoked) puts its Sign in in browser where the user looks,
+// and its folder says why it waits.
 func TestRefusedPasswordAsksToSignIn(t *testing.T) {
 	s := realSnapshot()
+	s.Accounts[0].Auth, s.Accounts[0].SignedIn = syncd.AuthRevoked, false
 	s.Folders[0].State, s.Folders[0].ReasonCode = syncd.FolderError, "AUTH_REQUIRED"
 	a := snapApp(t, s)
 	tt := ui.NewTester(a.view, 1200, 780)
