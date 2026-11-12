@@ -563,7 +563,7 @@ func TestBootstrapEventOrdering(t *testing.T) {
 	done := make(chan struct{})
 	go func() { r.read(client); close(done) }()
 	t.Cleanup(func() { client.Close(); <-done })
-	if err := r.call(ctx, "settings.update", map[string]any{}, nil); err != ErrBusy {
+	if err := r.call(ctx, "settings.update", map[string]any{}, nil); err != ErrDisconnected || !errors.Is(err, ErrBusy) {
 		t.Fatalf("unnegotiated mutation: %v", err)
 	}
 	serverDone := make(chan error, 1)
@@ -975,6 +975,23 @@ func TestProjectionIsolationAndDisconnect(t *testing.T) {
 	s = r.Snapshot()
 	if s.Daemon.AllPaused || s.Folders[0].State != FolderOffline || s.Endpoints[0].Reachable || s.Endpoints[0].InUse {
 		t.Fatalf("foreign/disconnected projection retained green status: %+v", s)
+	}
+}
+
+// TestDisconnectedIsNotBusy keeps a missing daemon from reading as a daemon at an unsafe point:
+// the paired-daemon fixture once reported every call "busy" while its daemon had exited.
+func TestDisconnectedIsNotBusy(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	r := &Remote{ctx: ctx, cancel: cancel, pending: map[string]chan rpcReply{}, listeners: map[uint64]func(){}}
+	r.dial = func(context.Context) (io.ReadWriteCloser, error) { return nil, os.ErrNotExist }
+	go r.run()
+	defer r.Close()
+	_, diagnostics := r.Diagnostics(ctx)
+	for name, err := range map[string]error{"mutation": r.PauseAll(), "call": diagnostics} {
+		if !errors.Is(err, ErrDisconnected) || !errors.Is(err, ErrBusy) || err.Error() == ErrBusy.Error() {
+			t.Errorf("%s without a connection: %v", name, err)
+		}
 	}
 }
 

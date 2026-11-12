@@ -31,8 +31,24 @@ cancellation, old-password revocation and restart, login cleanup). Seven earlier
 failed: the first at HTTP 507 (the test account's quota was full of leftover collections),
 two at the restart after the renewal (the client lost the daemon), two after the renewal with a
 folder still syncing and the credential-reload switch open while the client's calls came back
-busy, and two at the renewal's own 150 s wait, which is now the step budget plus three minutes because the shared server takes
+busy, and two at the renewal's own 150 s wait, which was then raised to the step budget plus three minutes on the grounds that the shared server takes
 2.5–3 s per authenticated request and holds the old password's revocation for at least 60 s.
+
+Later that day the fixture was split into four parallel lanes (`switching`, `crash`, `cross`,
+`renewal`, started 10 s apart) and passed against the shared server three times in a row on native
+ARM64 (253.3 s, 259.6 s, 279.9 s), with no daemon, profile, local root, remote collection or issued
+app password left behind. One emulated x64 run failed (262.9 s): the renewal lane's fixed-policy
+reconciliation ended `NETWORK_UNAVAILABLE`, and its abort lost the pipe to the live daemon during
+account removal; a second abort removed the account with confirmed revocation, and why that
+connection dropped is not established. Earlier failures that day are explained: two
+"every call busy" runs had a daemon that had stopped itself (exit 0 after a storage failure while the
+quota was full) and a Go client that reported its own missing connection as busy, now
+`ErrDisconnected` (`TestDisconnectedIsNotBusy`); the first parallel attempt put all lanes on one
+profile because their clock-only profile names were equal within one Windows clock tick. The
+account's 100 MiB quota holds 62.6 MiB of the server's default files, so about 37 MiB remain; one
+run's payloads peak at 16 MiB. Every request that authenticates afresh costs the server about 2.3 s,
+and more than about five at once exceed the daemon's 4-second metadata deadline, which a lane then
+sees as a 60 s `NETWORK_UNAVAILABLE` stall; a killed upload's recovery took 25–67 s.
 
 
 On-demand files on the same ARM64 host (2026-11-12), Desktop v35.0.3 with patches 0001–0017 in

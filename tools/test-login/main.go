@@ -3,7 +3,9 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,8 +37,8 @@ func connect(ctx context.Context, s state, executable string) *syncd.Remote {
 
 // main starts, completes or cleans one owned consent fixture without touching user sync roots.
 func main() {
-	// The whole flow takes a few minutes; each step also has its own shorter budget.
-	budget := 12 * time.Minute
+	// One lane's phase takes about three minutes; each step also has its own shorter budget.
+	budget := 5 * time.Minute
 	if len(os.Args) == 2 && os.Args[1] == "abort" {
 		budget = 2 * time.Minute
 	}
@@ -75,7 +77,13 @@ func main() {
 	}
 	var s state
 	if os.Args[1] == "start" {
-		s.Profile = fmt.Sprintf("login-probe-%d", time.Now().UnixNano())
+		// The clock alone is not unique: parallel lanes start within one Windows clock tick, and two
+		// lanes on one profile share one daemon, one sign-in and each other's cleanup.
+		var unique [8]byte
+		if _, err := rand.Read(unique[:]); err != nil {
+			panic("fixture profile identity unavailable")
+		}
+		s.Profile = fmt.Sprintf("login-probe-%d-%x", time.Now().UnixNano(), unique)
 		s.Folders = os.Getenv("SYNCD_TEST_FOLDERS") == "1"
 		initial, _ := json.Marshal(s)
 		if err := os.WriteFile(file, initial, 0600); err != nil {
@@ -103,8 +111,9 @@ func main() {
 	if err := json.Unmarshal(b, &s); err != nil {
 		panic(err)
 	}
-	stamp, err := strconv.ParseInt(strings.TrimPrefix(s.Profile, "login-probe-"), 10, 64)
-	if !strings.HasPrefix(s.Profile, "login-probe-") || err != nil || stamp <= 0 {
+	clock, unique, _ := strings.Cut(strings.TrimPrefix(s.Profile, "login-probe-"), "-")
+	stamp, err := strconv.ParseInt(clock, 10, 64)
+	if _, bad := hex.DecodeString(unique); !strings.HasPrefix(s.Profile, "login-probe-") || err != nil || stamp <= 0 || bad != nil || len(unique) != 16 {
 		panic("invalid owned fixture profile")
 	}
 	if os.Args[1] == "abort" {
@@ -146,8 +155,15 @@ func main() {
 	if !ok || !account.SignedIn {
 		panic("account did not survive daemon restart")
 	}
-	if s.Folders {
-		exerciseSync(ctx, r, id, s, file)
+	alternate := os.Getenv("NEXTCLOUD_TEST_ALTERNATE_URL")
+	if s.Folders && alternate == "" {
+		panic("folder lanes need the second approved origin")
+	}
+	switch lane := os.Getenv("SYNCD_TEST_LANE"); {
+	case !s.Folders:
+	case lane == "switching":
+		mapFolders(ctx, r, id, s, file, false)
+		exerciseEndpoints(ctx, r, id, alternate, s.Profile)
 		await(ctx, func() bool {
 			uploaded, downloaded, switched := false, false, false
 			for _, e := range r.Snapshot().Activity {
@@ -163,11 +179,25 @@ func main() {
 			}
 			return uploaded && downloaded && switched
 		}, "confirmed upstream transfer/switch activity was not published")
+	case lane == "crash":
+		mapFolders(ctx, r, id, s, file, false)
 		exerciseActiveCrash(ctx, r, s)
+	case lane == "cross":
+		mapFolders(ctx, r, id, s, file, false)
 		exerciseActiveSwitch(ctx, r, s, id)
+	case lane == "renewal":
+		folders := mapFolders(ctx, r, id, s, file, true)
+		exerciseLocal(ctx, r, folders)
+		target := approveAlternate(ctx, r, id, alternate)
+		exercisePolicy(ctx, r, id, mainEndpoint(r, id), target, folders[0].ID)
+		retryCommand(ctx, func() error { return r.RemoveEndpoint(target) })
 		if os.Getenv("SYNCD_TEST_REAUTH") == "1" {
 			exerciseReauthentication(ctx, r, id, s, file)
 		}
+	default:
+		panic("unknown folder lane")
+	}
+	if s.Folders {
 		cleanupSync(ctx, r, s, file)
 	}
 	if err := r.RemoveAccount(id); err != nil {
@@ -251,7 +281,8 @@ func abort(ctx context.Context, s state, executable, file string) {
 					time.Sleep(100 * time.Millisecond)
 					continue
 				}
-				if !errors.Is(err, syncd.ErrBusy) || waited {
+				// A daemon that is gone is not one at an unsafe point: never wait for a switch then.
+				if !errors.Is(err, syncd.ErrBusy) || errors.Is(err, syncd.ErrDisconnected) || waited {
 					fmt.Fprintln(os.Stderr, "owned account removal refused:", err)
 					return false
 				}

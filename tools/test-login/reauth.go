@@ -82,20 +82,13 @@ func exerciseReauthentication(ctx context.Context, r *syncd.Remote, account stri
 		}
 		return true
 	}, "renewed credentials did not reconcile existing journals")
+	mark := activityMark(r)
 	for _, f := range folders {
 		if os.WriteFile(filepath.Join(f.LocalPath, "renewed.txt"), []byte("renewed-owned"), 0600) != nil {
 			panic("renewal upload fixture write failed")
 		}
 	}
-	home := fixtureHome()
-	await(ctx, func() bool {
-		for _, f := range folders {
-			if string(fixtureDAV("GET", home+f.RemotePath[1:]+"/renewed.txt", nil, 200, 404)) != "renewed-owned" {
-				return false
-			}
-		}
-		return true
-	}, "new credential did not upload on existing mappings")
+	awaitRemote(ctx, r, mark, folders, "renewed.txt", []byte("renewed-owned"), "new credential did not upload on existing mappings")
 	retryCommand(ctx, r.PauseAll)
 	retryCommand(ctx, r.Shutdown)
 	await(ctx, func() bool { return !r.Snapshot().Daemon.Connected }, "renewed daemon did not stop")
@@ -104,20 +97,14 @@ func exerciseReauthentication(ctx context.Context, r *syncd.Remote, account stri
 	if restored, err := waitLogin(ctx, r, login.ID); err != nil || restored != account {
 		panic("completed renewal session or installed credential did not survive restart")
 	}
+	mark = activityMark(r)
 	for _, f := range folders {
 		if os.WriteFile(filepath.Join(f.LocalPath, "renewed-after-restart.txt"), []byte("renewed-restart-owned"), 0600) != nil {
 			panic("renewal restart fixture write failed")
 		}
 	}
 	retryCommand(ctx, r.ResumeAll)
-	await(ctx, func() bool {
-		for _, f := range folders {
-			if string(fixtureDAV("GET", home+f.RemotePath[1:]+"/renewed-after-restart.txt", nil, 200, 404)) != "renewed-restart-owned" {
-				return false
-			}
-		}
-		return true
-	}, "restarted daemon could not use installed credentials")
+	awaitRemote(ctx, r, mark, folders, "renewed-after-restart.txt", []byte("renewed-restart-owned"), "restarted daemon could not use installed credentials")
 	after := fixtureJournals(profile)
 	for path, before := range journals {
 		if current, ok := after[path]; !ok || !os.SameFile(before, current) {

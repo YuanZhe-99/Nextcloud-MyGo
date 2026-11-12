@@ -52,7 +52,7 @@ function Step([string]$Name, [scriptblock]$Body, [switch]$OutsideBudget) {
         Write-Output ('PASS {0,-34} {1,7:N1} s{2}' -f $Name, $seconds, $note)
         $results.Add([pscustomobject]@{ Name = $Name; Seconds = $seconds; Outside = [bool]$OutsideBudget })
     } catch {
-        $lines = @($output | Where-Object { $_ -match '^(PASS|FAIL|--- FAIL|Owned|step:|panic:|Daemon|The following tests FAILED|\s+\d+ - |\s+step at |\s+at |\s+\S+_test\.go:\d+:)' } | Select-Object -Last 12)
+        $lines = @($output | Where-Object { $_ -match '^(\[[a-z]+\] )?(PASS|FAIL|--- FAIL|Owned|step:|panic:|Daemon|The following tests FAILED|\s+\d+ - |\s+step at |\s+at |\s+\S+_test\.go:\d+:)' } | Select-Object -Last 12)
         foreach ($line in $lines) { Write-Output "  $line" }
         Write-Output ('FAIL {0,-34} {1,7:N1} s: {2}' -f $Name, $watch.Elapsed.TotalSeconds, $_.Exception.Message)
         throw "Tier $Tier on $Architecture stopped at $Name."

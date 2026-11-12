@@ -15,12 +15,19 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
 
 	"github.com/YuanZhe-99/Nextcloud-MyGo/internal/syncd"
 )
+
+// client sends the fixture's own requests without cookies, so no web session or session token is left
+// on the account; every request therefore authenticates afresh (over two seconds on the shared server).
+var client = &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 
 // fixtureDAV sends only approved-origin requests and never includes raw URLs or responses in errors.
 func fixtureDAV(method, path string, content []byte, expected ...int) []byte {
@@ -41,7 +48,6 @@ func fixtureDAVLimit(method, path string, content []byte, maximum int64, expecte
 	req.SetBasicAuth(os.Getenv("NEXTCLOUD_TEST_USER"), os.Getenv("NEXTCLOUD_TEST_PASSWORD"))
 	req.Header.Set("OCS-APIRequest", "true")
 	req.Header.Set("Accept", "application/json")
-	client := &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	readCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	req = req.WithContext(readCtx)
@@ -77,8 +83,14 @@ func fixtureDAVLimit(method, path string, content []byte, maximum int64, expecte
 	return body
 }
 
-// fixtureHome reads the fixture account UID without exposing it in output or saved metadata.
+// home caches fixtureHome's answer for this process.
+var home string
+
+// fixtureHome reads the fixture account UID once without exposing it in output or saved metadata.
 func fixtureHome() string {
+	if home != "" {
+		return home
+	}
 	var response struct {
 		OCS struct {
 			Data struct {
@@ -91,11 +103,16 @@ func fixtureHome() string {
 	if json.Unmarshal(body, &response) != nil || response.OCS.Data.ID == "" {
 		panic("fixture UID lookup failed")
 	}
-	return "remote.php/dav/files/" + response.OCS.Data.ID + "/"
+	home = "remote.php/dav/files/" + response.OCS.Data.ID + "/"
+	return home
 }
 
 // retryCommand retries only an optimistic revision conflict, never an uncertain destructive operation.
+// Notes: a failure names the command by its fixture source position, never by data.
 func retryCommand(ctx context.Context, command func() error) {
+	_, file, line, _ := runtime.Caller(1)
+	step := fmt.Sprintf("command at %s:%d", filepath.Base(file), line)
+	defer stepTime(step, time.Now())
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	for {
@@ -104,11 +121,11 @@ func retryCommand(ctx context.Context, command func() error) {
 			return
 		}
 		if !errors.Is(err, syncd.ErrStale) {
-			panic(err)
+			fail(step + " (" + reasonWord(err) + ")")
 		}
 		select {
 		case <-ctx.Done():
-			fail("fixture command retry (step deadline)")
+			fail(step + " (step deadline)")
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
@@ -136,6 +153,26 @@ func daemonState() string {
 	return out + fmt.Sprintf("; decisions=%d; lastDisconnect=%s", len(s.Decisions), observed.Disconnect())
 }
 
+// stepTime prints one finished step as "STEP <ms> <name>" on stderr; the wrapper shows the timeline.
+// Notes: names are fixed fixture strings, never paths, URLs or server text.
+func stepTime(name string, start time.Time) {
+	fmt.Fprintf(os.Stderr, "STEP %d %s\n", time.Since(start).Milliseconds(), name)
+}
+
+// folderReasons lists the observed folders' reason codes ("folder0 error REMOTE_LOCKED"), or "".
+func folderReasons() string {
+	if observed == nil {
+		return ""
+	}
+	var out []string
+	for i, f := range observed.Snapshot().Folders {
+		if f.ReasonCode != "" {
+			out = append(out, fmt.Sprintf("folder%d %s %s", i, f.State, f.ReasonCode))
+		}
+	}
+	return strings.Join(out, " ")
+}
+
 // fail ends the fixture with the step name and the daemon's sanitized last state.
 func fail(step string) {
 	panic("step: " + step + "; " + daemonState())
@@ -145,7 +182,16 @@ func fail(step string) {
 func await(ctx context.Context, condition func() bool, message string) {
 	ctx, cancel := context.WithTimeout(ctx, stepBudget)
 	defer cancel()
+	defer stepTime(message, time.Now())
+	start, reasons := time.Now(), ""
 	for !condition() {
+		// A folder reason code seen while waiting explains where the time went.
+		if now := folderReasons(); now != reasons {
+			reasons = now
+			if now != "" {
+				fmt.Fprintf(os.Stderr, "STEP %d %s: %s\n", time.Since(start).Milliseconds(), message, now)
+			}
+		}
 		select {
 		case <-ctx.Done():
 			fail(message + " (step deadline)")
@@ -154,24 +200,75 @@ func await(ctx context.Context, condition func() bool, message string) {
 	}
 }
 
+// activityMark returns the newest activity cursor, taken before a change whose upload awaitRemote waits for.
+func activityMark(r *syncd.Remote) int64 {
+	var mark int64
+	for _, a := range r.Snapshot().Activity {
+		if cursor, err := strconv.ParseInt(a.Cursor, 10, 64); err == nil && cursor > mark {
+			mark = cursor
+		}
+	}
+	return mark
+}
+
+// awaitRemote waits until name reads back as want in every folder. It reads the server only after the
+// daemon has published a new upload for that folder since mark (or 10 s after its last read), so a wait
+// does not keep one of the shared server's few concurrent sign-ins busy: more than about five make
+// each one slower than the daemon's 4-second metadata deadline.
+func awaitRemote(ctx context.Context, r *syncd.Remote, mark int64, folders []syncd.Folder, name string, want []byte, message string) {
+	read := map[string]int64{}
+	at := map[string]time.Time{}
+	done := map[string]bool{}
+	for _, f := range folders {
+		at[f.ID] = time.Now()
+	}
+	await(ctx, func() bool {
+		verified := 0
+		for _, f := range folders {
+			if done[f.ID] {
+				verified++
+				continue
+			}
+			latest := max(mark, read[f.ID])
+			for _, a := range r.Snapshot().Activity {
+				if cursor, err := strconv.ParseInt(a.Cursor, 10, 64); err == nil && a.FolderID == f.ID && a.Kind == syncd.ActUploaded && a.Count > 0 && cursor > latest {
+					latest = cursor
+				}
+			}
+			// A write the server committed just before a kill is published by no cycle: read anyway every 10 s.
+			if latest == max(mark, read[f.ID]) && time.Since(at[f.ID]) < 10*time.Second {
+				continue
+			}
+			read[f.ID], at[f.ID] = latest, time.Now()
+			if done[f.ID] = bytes.Equal(fixtureDAVLimit("GET", fixtureHome()+f.RemotePath[1:]+"/"+name, nil, max(int64(len(want)), 1<<20), 200, 404), want); done[f.ID] {
+				verified++
+			}
+		}
+		return verified == len(folders)
+	}, message)
+}
+
 // waitOperation waits for one receipt within its own step budget.
 func waitOperation(ctx context.Context, r *syncd.Remote, id string) error {
 	ctx, cancel := context.WithTimeout(ctx, stepBudget)
 	defer cancel()
+	defer stepTime("operation receipt", time.Now())
 	return r.WaitOperation(ctx, id)
 }
 
 // waitLogin waits for one login session within its own step budget.
-// Notes: a renewal holds the old password's revocation for at least the server's 60-second
-// floor, longer when the server answers 429, and a slow shared server takes seconds per request.
+// Notes: a renewal may hold the old password's revocation for the 60-second floor; nothing else
+// on its path waits, so a longer wait is a failure to report, not to sit out.
 func waitLogin(ctx context.Context, r *syncd.Remote, id string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, stepBudget+3*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, stepBudget+time.Minute)
 	defer cancel()
+	defer stepTime("login completion", time.Now())
 	return r.WaitLogin(ctx, id)
 }
 
-// exerciseSync verifies two real daemon mappings, pause isolation and deletion-proposal approval.
-func exerciseSync(ctx context.Context, r *syncd.Remote, account string, s state, file string) {
+// mapFolders maps the two owned folders and verifies their first upload and download; with deletions,
+// the first folder also gets the twelve files the deletion review removes.
+func mapFolders(ctx context.Context, r *syncd.Remote, account string, s state, file string, deletions bool) []syncd.Folder {
 	home := fixtureHome()
 	local := filepath.Join(filepath.Dir(file), s.Profile)
 	for _, suffix := range []string{"a", "b"} {
@@ -184,7 +281,7 @@ func exerciseSync(ctx context.Context, r *syncd.Remote, account string, s state,
 		if os.WriteFile(filepath.Join(dir, "upload.txt"), []byte("upload-owned"), 0600) != nil {
 			panic("local fixture write failed")
 		}
-		for i := 0; i < 12; i++ {
+		for i := 0; deletions && suffix == "a" && i < 12; i++ {
 			if os.WriteFile(filepath.Join(dir, fmt.Sprintf("delete-%02d.txt", i)), []byte("owned-delete-fixture"), 0600) != nil {
 				panic("deletion fixture creation failed")
 			}
@@ -205,9 +302,6 @@ func exerciseSync(ctx context.Context, r *syncd.Remote, account string, s state,
 		return true
 	}, "two-folder initial sync deadline")
 	folders := r.Snapshot().Folders
-	if alternate := os.Getenv("NEXTCLOUD_TEST_ALTERNATE_URL"); alternate != "" {
-		exerciseEndpoints(ctx, r, account, alternate, s.Profile)
-	}
 	for _, f := range folders {
 		if string(fixtureDAV("GET", home+f.RemotePath[1:]+"/upload.txt", nil, 200)) != "upload-owned" {
 			panic("daemon upload mismatch")
@@ -217,15 +311,24 @@ func exerciseSync(ctx context.Context, r *syncd.Remote, account string, s state,
 			panic("daemon download mismatch")
 		}
 	}
+	fmt.Println("PASS real daemon two-folder upload/download")
+	// Snapshot order follows folder IDs; the caller gets the "a" folder (the deletion fixture) first.
+	slices.SortFunc(folders, func(x, y syncd.Folder) int { return strings.Compare(x.RemotePath, y.RemotePath) })
+	return folders
+}
+
+// exerciseLocal verifies the recursive watcher, pause isolation and deletion-proposal approval on
+// folders mapped with deletions.
+func exerciseLocal(ctx context.Context, r *syncd.Remote, folders []syncd.Folder) {
+	home := fixtureHome()
 	watchRoot := filepath.Join(folders[0].LocalPath, "watcher", "new-subtree")
+	mark := activityMark(r)
 	if os.MkdirAll(watchRoot, 0700) != nil || os.WriteFile(filepath.Join(watchRoot, "change.txt"), []byte("recursive-watch-owned"), 0600) != nil {
 		panic("recursive watcher fixture creation failed")
 	}
 	watchCtx, cancelWatch := context.WithTimeout(ctx, 25*time.Second)
 	defer cancelWatch()
-	await(watchCtx, func() bool {
-		return string(fixtureDAV("GET", home+folders[0].RemotePath[1:]+"/watcher/new-subtree/change.txt", nil, 200, 404)) == "recursive-watch-owned"
-	}, "recursive local change did not upload without a sync command")
+	awaitRemote(watchCtx, r, mark, folders[:1], "watcher/new-subtree/change.txt", []byte("recursive-watch-owned"), "recursive local change did not upload without a sync command")
 	fmt.Println("PASS new nested local file uploaded without a sync command within the watcher deadline")
 	retryCommand(ctx, func() error { return r.PauseFolder(folders[0].ID) })
 	retryCommand(ctx, r.PauseAll)
@@ -267,12 +370,13 @@ func exerciseSync(ctx context.Context, r *syncd.Remote, account string, s state,
 	if r.ResolveDecision(decision.ID, decision.Digest, syncd.ActionApproveDeletion) == nil {
 		panic("consumed deletion decision accepted twice")
 	}
-	fmt.Println("PASS real daemon two-folder upload/download, independent pause, pre-propagation deletion block and one-use approval")
+	fmt.Println("PASS real daemon independent pause, pre-propagation deletion block and one-use approval")
 }
 
-// exerciseEndpoints checks explicit consent, account-wide switching and pause-gated reconciliation (INV-03/06/08/13).
-func exerciseEndpoints(ctx context.Context, r *syncd.Remote, account, alternate, profile string) {
-	journals := fixtureJournals(profile)
+// approveAlternate stages the second approved origin, requires an unapproved one to be refused, approves
+// it and waits for its namespace verification (INV-03).
+// Returns: the approved endpoint's ID.
+func approveAlternate(ctx context.Context, r *syncd.Remote, account, alternate string) string {
 	var staged syncd.Staging
 	retryCommand(ctx, func() error {
 		var err error
@@ -302,15 +406,24 @@ func exerciseEndpoints(ctx context.Context, r *syncd.Remote, account, alternate,
 		}
 		return false
 	}, "approved alternate namespace did not verify")
-	primary := ""
+	return id
+}
+
+// mainEndpoint returns the account's canonical endpoint ID.
+func mainEndpoint(r *syncd.Remote, account string) string {
 	for _, endpoint := range r.Snapshot().Endpoints {
 		if endpoint.AccountID == account && endpoint.Main {
-			primary = endpoint.ID
+			return endpoint.ID
 		}
 	}
-	if primary == "" {
-		panic("canonical endpoint missing")
-	}
+	panic("canonical endpoint missing")
+}
+
+// exerciseEndpoints checks explicit consent, account-wide switching and pause-gated reconciliation (INV-03/06/08/13).
+func exerciseEndpoints(ctx context.Context, r *syncd.Remote, account, alternate, profile string) {
+	journals := fixtureJournals(profile)
+	id := approveAlternate(ctx, r, account, alternate)
+	primary := mainEndpoint(r, account)
 	folders := r.Snapshot().Folders
 	retryCommand(ctx, func() error { return r.PauseFolder(folders[0].ID) })
 	retryCommand(ctx, r.PauseAll)
@@ -397,20 +510,13 @@ func exerciseEndpoints(ctx context.Context, r *syncd.Remote, account, alternate,
 		return false
 	}, "restart recovery did not finish paused-member reconciliation")
 	// Transfer changed bytes through the real daemon while the alternate is committed.
-	home := fixtureHome()
+	mark := activityMark(r)
 	for _, f := range folders {
 		if os.WriteFile(filepath.Join(f.LocalPath, "alternate.txt"), []byte("alternate-owned"), 0600) != nil {
 			panic("alternate fixture write failed")
 		}
 	}
-	await(ctx, func() bool {
-		for _, f := range folders {
-			if string(fixtureDAV("GET", home+f.RemotePath[1:]+"/alternate.txt", nil, 200, 404)) != "alternate-owned" {
-				return false
-			}
-		}
-		return true
-	}, "alternate daemon upload failed")
+	awaitRemote(ctx, r, mark, folders, "alternate.txt", []byte("alternate-owned"), "alternate daemon upload failed")
 	retryCommand(ctx, r.PauseAll)
 	await(ctx, func() bool {
 		for _, f := range r.Snapshot().Folders {
@@ -468,7 +574,6 @@ func exerciseEndpoints(ctx context.Context, r *syncd.Remote, account, alternate,
 			panic("return switch did not reconcile all folders")
 		}
 	}
-	exercisePolicy(ctx, r, account, primary, id, folders[0].ID)
 	retryCommand(ctx, func() error { return r.RemoveEndpoint(id) })
 	after := fixtureJournals(profile)
 	if len(after) != len(journals) {
@@ -631,7 +736,7 @@ func reasonWord(err error) string {
 	if code := syncd.ReasonOf(err); code != "" {
 		return code
 	}
-	for _, known := range []error{syncd.ErrCredentialCleanup, syncd.ErrBusy, syncd.ErrStale, syncd.ErrRefused, syncd.ErrNotFound, context.DeadlineExceeded, context.Canceled} {
+	for _, known := range []error{syncd.ErrCredentialCleanup, syncd.ErrDisconnected, syncd.ErrBusy, syncd.ErrStale, syncd.ErrRefused, syncd.ErrNotFound, context.DeadlineExceeded, context.Canceled} {
 		if errors.Is(err, known) {
 			return strings.TrimPrefix(known.Error(), "syncd: ")
 		}

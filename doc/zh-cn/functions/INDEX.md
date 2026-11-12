@@ -40,7 +40,7 @@ SyncD 连通基础已实现；完整同步尚未完成。见 [IPC](../ipc.md) �
 | `patches/nextcloud/` | 记录上游构建、生命周期、UTC 日期及测试隔离修正 | `build-lock.json` 中的有序哈希；后端进度中的证据 |
 | `tools/test-upstream.ps1` | 隔离的真实服务器 M0 测试与清理 | `Invoke-TestCycle`、`Invoke-TestDav` |
 | `tools/test-discovery-lifetime.ps1` | 发现工作线程存活超过超时夹具销毁阶段的 M0 回归测试 | 有界子进程重复执行上游超时和缺失数据用例 |
-| `tools/test-login/`, `tools/test-login.ps1` | 真实配对守护进程授权、策略、切换、重新认证、活动内容传输崩溃/取消、journal 身份及自有资源验收 | `exerciseSync`、`exercisePolicy`、`exerciseActiveCrash`、`exerciseActiveSwitch`、`exerciseReauthentication`、`Approve` |
+| `tools/test-login/`, `tools/test-login.ps1` | 真实配对守护进程授权、策略、切换、重新认证、活动内容传输崩溃/取消、journal 身份及自有资源验收，分四个并行通道 | `mapFolders`、`exerciseLocal`、`exerciseEndpoints`、`exercisePolicy`、`awaitRemote`、`exerciseActiveCrash`、`exerciseActiveSwitch`、`exerciseReauthentication`、`Approve` |
 | `tools/test-reauth-lifetime.ps1` | 只读生命周期回归及所有真实网络场景的父进程：每次运行使用全新配置目录，执行 `switch-kill` 的杀进程与重启序列，并在崩溃后清理原生凭据和远程内容 | `replacedDuringVerification`、`cleanupManifest`、`RunOwned`、`RunProfile` |
 | `tools/test-all.ps1` | 唯一的测试入口：按架构运行快速层（无服务器）或服务器层（一次性容器、并行通道），每个场景一行并给出耗时，总时长有硬性预算 | `Step`、`Lanes`、`Acceptance` |
 | `tools/test-server.ps1` | 服务器层使用的一次性本地 Nextcloud 服务器：一个带标签的容器、夹具本地 TLS 根证书，按状态文件删除 | `Runtime`、`-Start`、`-Stop` |

@@ -54,7 +54,8 @@ schema 见 `protocol/message.schema.json`）：
 
 Go 客户端发送 `minor: 9`，把 `ACCOUNT_EXISTS` 映射为 `ErrAccountExists`、`DECISION_PENDING` 映射为
 `ErrBusy`，并提供从不启动 SyncD 的 `ConnectRemote`，以及 `Remote.Disconnect`：供诊断使用的稳定短语，
-说明上一次连接为何结束。`nextcloud-mygo-syncd.exe --version` 输出一行包含版本、协议与 Control schema
+说明上一次连接为何结束。没有就绪连接时发出的调用返回 `ErrDisconnected`：对界面而言它仍匹配
+`ErrBusy`，但已不在的守护进程绝不会被报告为处于不安全点。`nextcloud-mygo-syncd.exe --version` 输出一行包含版本、协议与 Control schema
 的 JSON，不启动任何东西（[打包](packaging.md)）。
 
 协议 1.8 增加目录文件模式（[按需文件](on-demand.md)）。`folders.add` 接受可选的 `mode`：`full`（默认）或

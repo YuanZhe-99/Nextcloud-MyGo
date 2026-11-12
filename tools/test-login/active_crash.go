@@ -68,6 +68,7 @@ func exerciseActiveCrash(ctx context.Context, r *syncd.Remote, s state) {
 		retryCommand(ctx, r.ResumeAll)
 		retryCommand(ctx, func() error { return r.SyncNow(folders[0].ID) })
 		observeContent(ctx, r, folders[0].ID, direction, uploadBefore, downloadBefore)
+		mark := activityMark(r)
 		if child.Process.Kill() != nil {
 			panic("owned active-transfer process kill failed")
 		}
@@ -75,10 +76,7 @@ func exerciseActiveCrash(ctx context.Context, r *syncd.Remote, s state) {
 		await(ctx, func() bool { return !r.Snapshot().Daemon.Connected }, "active-transfer crash did not disconnect pipe")
 		child = start()
 		if direction == "upload" {
-			await(ctx, func() bool {
-				content := fixtureDAVLimit("GET", remote+name, nil, 5*1024*1024, 200, 404)
-				return sha256.Sum256(content) == digest
-			}, "interrupted upload did not recover matching remote content")
+			awaitRemote(ctx, r, mark, folders[:1], name, payload, "interrupted upload did not recover matching remote content")
 		} else {
 			await(ctx, func() bool {
 				content, err := os.ReadFile(filepath.Join(folders[0].LocalPath, name))
@@ -107,6 +105,7 @@ func exerciseActiveCrash(ctx context.Context, r *syncd.Remote, s state) {
 
 // observeContent waits for real unfinished content bytes, never treating elapsed UI status as transfer evidence.
 func observeContent(ctx context.Context, r *syncd.Remote, folder, direction string, uploadBefore, downloadBefore uint64) {
+	defer stepTime("content transfer observation", time.Now())
 	observation, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	for observation.Err() == nil {
@@ -133,23 +132,8 @@ func exerciseActiveSwitch(ctx context.Context, r *syncd.Remote, s state, account
 	if alternate == "" {
 		panic("cross-origin transfer acceptance requires two approved origins")
 	}
-	var staged syncd.Staging
-	retryCommand(ctx, func() error {
-		var err error
-		staged, err = r.StageEndpoint(account, "Owned transfer alternate", alternate)
-		return err
-	})
-	var target string
-	retryCommand(ctx, func() error { var err error; target, err = r.ApproveEndpoint(staged.ID); return err })
-	primary := ""
-	for _, e := range r.Snapshot().Endpoints {
-		if e.AccountID == account && e.Main {
-			primary = e.ID
-		}
-	}
-	if primary == "" {
-		panic("cross-origin primary missing")
-	}
+	target := approveAlternate(ctx, r, account, alternate)
+	primary := mainEndpoint(r, account)
 	retryCommand(ctx, func() error { return r.SetPolicy(account, syncd.PolicyAuto, "") })
 	folders := r.Snapshot().Folders
 	journals := fixtureJournals(s.Profile)

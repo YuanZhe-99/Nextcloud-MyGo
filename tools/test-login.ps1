@@ -1,27 +1,66 @@
 # Exercises real Login Flow v2 consent, persistence and credential revocation over Go/C++ IPC.
 # Inputs: compiled daemon and approved NEXTCLOUD_TEST_* environment; matching Qt DLL/plugin paths.
-# Side effects: one isolated profile, one or two issued app passwords and one disposable web session; cleans owned resources.
+#   -SyncFolders runs four lanes in parallel, each with its own sign-in, profile and owned folders:
+#   switching (switches with restart and kill, activity), crash (kills during transfers), cross
+#   (cancelled transfers recovered on the other origin) and renewal (watcher, pause, deletion review,
+#   policy and, with -Reauthenticate, renewal).
+#   -Lane and -Probe are set by that parallel run for its children.
+# Side effects: per lane one isolated profile, one or two issued app passwords and one disposable web
+#   session; cleans owned resources.
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$Executable, [switch]$SyncFolders, [switch]$Reauthenticate)
+param(
+    [Parameter(Mandatory)][string]$Executable, [switch]$SyncFolders, [switch]$Reauthenticate,
+    [ValidateSet('', 'switching', 'crash', 'cross', 'renewal')][string]$Lane = '', [string]$Probe = ''
+)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'test-job.ps1')
 if (-not (Enter-OwnedJob)) { Invoke-InOwnedJob $PSCommandPath $PSBoundParameters; if ($LASTEXITCODE) { throw 'Login fixture failed.' }; return }
 $root = Split-Path $PSScriptRoot -Parent
 if (-not [IO.Path]::IsPathFullyQualified($Executable) -or -not (Test-Path -LiteralPath $Executable)) { throw 'Existing absolute daemon path required.' }
 if (-not $env:NEXTCLOUD_TEST_USER -or -not $env:NEXTCLOUD_TEST_PASSWORD) { throw 'Approved test credentials required in the environment.' }
+if ($Reauthenticate -and -not $SyncFolders) { throw 'Renewal acceptance requires the owned folder fixture.' }
 $run = [Guid]::NewGuid().ToString('N')
-$probe = Join-Path $root "build/login-probe-$run.exe"
+$owned = -not $Probe
+if ($owned) {
+    $Probe = Join-Path $root "build/login-probe-$run.exe"
+    & go build -o $Probe ./tools/test-login
+    if ($LASTEXITCODE -ne 0) { throw 'Login fixture build failed.' }
+}
+if ($SyncFolders -and -not $Lane) {
+    # Each lane is a child pwsh in this job (and in a job of its own); its output is kept in memory and
+    # printed per lane, with the lane's wall time.
+    try {
+        $script = $PSCommandPath
+        # Lanes start 10 s apart, longest first: their sign-ins and first syncs together would need more
+        # concurrent server sign-ins than the shared server serves within the daemon's metadata deadline.
+        $lanes = 'switching', 'renewal', 'cross', 'crash' | ForEach-Object -ThrottleLimit 4 -Parallel {
+            $watch = [Diagnostics.Stopwatch]::StartNew()
+            Start-Sleep -Seconds (10 * [array]::IndexOf(@('switching', 'renewal', 'cross', 'crash'), $_))
+            $arguments = @('-NoProfile', '-NonInteractive', '-File', $using:script, '-Executable', $using:Executable, '-SyncFolders', '-Lane', $_, '-Probe', $using:Probe)
+            if ($using:Reauthenticate) { $arguments += '-Reauthenticate' }
+            $output = & (Join-Path $using:PSHOME 'pwsh') @arguments 2>&1 | ForEach-Object { "$_" }
+            [pscustomobject]@{ Lane = $_; Passed = $LASTEXITCODE -eq 0; Seconds = $watch.Elapsed.TotalSeconds; Output = $output }
+        }
+        foreach ($result in $lanes) {
+            foreach ($line in $result.Output) { Write-Output "[$($result.Lane)] $line" }
+            Write-Output ('{0} lane {1} {2:N1} s' -f $(if ($result.Passed) { 'PASS' } else { 'FAIL' }), $result.Lane, $result.Seconds)
+        }
+        $failed = @($lanes | Where-Object { -not $_.Passed } | ForEach-Object Lane)
+        if ($failed) { throw "Login fixture lane(s) failed: $($failed -join ', ')." }
+    } finally { Remove-Item -LiteralPath $Probe -Force }
+    return
+}
+$probe = $Probe
 $savedExecutable = $env:SYNCD_TEST_EXE
 $savedState = $env:SYNCD_LOGIN_FIXTURE_STATE
 $savedFolders = $env:SYNCD_TEST_FOLDERS
 $savedReauth = $env:SYNCD_TEST_REAUTH
-if ($Reauthenticate -and -not $SyncFolders) { throw 'Renewal acceptance requires the owned folder fixture.' }
-& go build -o $probe ./tools/test-login
-if ($LASTEXITCODE -ne 0) { throw 'Login fixture build failed.' }
+$savedLane = $env:SYNCD_TEST_LANE
 $env:SYNCD_TEST_EXE = $Executable
 $env:SYNCD_LOGIN_FIXTURE_STATE = Join-Path $root "build/login-probe-$run.json"
 $env:SYNCD_TEST_FOLDERS = if ($SyncFolders) { '1' } else { '' }
-$env:SYNCD_TEST_REAUTH = if ($Reauthenticate) { '1' } else { '' }
+$env:SYNCD_TEST_REAUTH = if ($Reauthenticate -and $Lane -eq 'renewal') { '1' } else { '' }
+$env:SYNCD_TEST_LANE = $Lane
 $origin = [Uri]$env:NEXTCLOUD_TEST_URL
 $handler = [Net.Http.HttpClientHandler]::new()
 $handler.AllowAutoRedirect = $false
@@ -102,7 +141,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Daemon login start failed.' }
     $page = Approve $url
     $stage = 'daemon completion and cleanup'
-    if ($Reauthenticate) {
+    if ($Lane) {
         $info = [Diagnostics.ProcessStartInfo]::new($probe)
         $info.ArgumentList.Add('finish')
         $info.UseShellExecute = $false
@@ -121,6 +160,7 @@ try {
             }
             $child.WaitForExit()
             $diagnostic = $errors.GetAwaiter().GetResult()
+            foreach ($line in ([regex]::Matches($diagnostic, '(?m)^STEP \d+ [A-Za-z0-9 _/().:-]+\r?$'))) { Write-Output $line.Value.Trim() }
             if ($child.ExitCode -ne 0) {
                 $evidence = [regex]::Match($diagnostic, '(?m)^SYNCD_DIAGNOSTICS (\{[^\r\n]+\})\r?$')
                 if ($evidence.Success) {
@@ -136,7 +176,7 @@ try {
                 $last = [regex]::Match($diagnostic, '(?m)^(watchdog last state: [A-Za-z0-9 _=;/.-]+|step: [A-Za-z0-9 _=;/().-]+)\r?$').Value.Trim()
                 if ($last) { Write-Output $last }
                 $summary = [regex]::Match($diagnostic, '(?m)^panic: [A-Za-z0-9 _,/():.\[\]=;-]+\r?$').Value.Trim()
-                throw "Daemon renewal acceptance failed (exit $($child.ExitCode)). $summary"
+                throw "Daemon $Lane lane failed (exit $($child.ExitCode)). $summary"
             }
         } finally {
             if ($started -and -not $child.HasExited) { $child.Kill(); $child.WaitForExit() }
@@ -160,11 +200,12 @@ try {
         catch { $cleanupFailed = $true; Write-Warning 'Disposable web-session logout was not confirmed.' }
     }
     $client.Dispose(); $handler.Dispose()
-    Remove-Item -LiteralPath $probe -Force
+    if ($owned) { Remove-Item -LiteralPath $probe -Force }
     $env:SYNCD_TEST_EXE = $savedExecutable
     $env:SYNCD_LOGIN_FIXTURE_STATE = $savedState
     $env:SYNCD_TEST_FOLDERS = $savedFolders
     $env:SYNCD_TEST_REAUTH = $savedReauth
+    $env:SYNCD_TEST_LANE = $savedLane
     if ($cleanupFailed) { $failure = ("$failure Owned login fixture cleanup needs attention.").Trim() }
     if ($failure) { throw $failure }
 }

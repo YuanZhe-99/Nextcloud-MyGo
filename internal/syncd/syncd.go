@@ -95,7 +95,20 @@ var (
 	ErrStateUnavailable      = errors.New("syncd: application state is unavailable")
 	// ErrAccountExists: this user on this server is already an account.
 	ErrAccountExists = errors.New("syncd: this account is already added")
+	// ErrDisconnected: no SyncD connection is ready, so nothing was sent. It
+	// also matches ErrBusy (try again once reconnected), but names its cause:
+	// a daemon that is gone is never reported as one at an unsafe point.
+	ErrDisconnected error = disconnected{}
 )
+
+// disconnected is ErrDisconnected's type: comparable, and an ErrBusy too.
+type disconnected struct{}
+
+// Error names the missing connection, never a daemon reason.
+func (disconnected) Error() string { return "syncd: not connected to SyncD" }
+
+// Is keeps the interface's existing ErrBusy handling for a missing connection.
+func (disconnected) Is(target error) bool { return target == ErrBusy }
 
 // ReasonOf returns the stable reason code SyncD gave for err
 // (PLAN.md §13.8), or "" when err carries none.

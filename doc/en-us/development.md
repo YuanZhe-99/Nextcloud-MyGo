@@ -69,6 +69,15 @@ automates two explicit consent grants in memory, checks cancellation, mapped ide
 pauses, old-password revocation, resumed uploads and restart, then removes owned remote collections,
 credentials and profiles. The one-time renewal browser handoff is consumed through an in-memory child
 stdout pipe, never a file. This does not establish interactive browser, SSO/MFA or wrong-account acceptance.
+With `-SyncFolders` it runs four lanes in parallel, each with its own sign-in (consent, persistence
+across a restart, removal with confirmed revocation), profile and two owned folders: `switching`
+(switches with a graceful restart and a kill, alternate uploads, published activity), `crash` (kills
+during real unfinished transfers), `cross` (cancelled transfers recovered on the other origin) and
+`renewal` (recursive watcher, independent pause, deletion review, fixed-policy reconciliation and, with
+`-Reauthenticate`, the renewal). Every lane prints its `PASS` lines, a `STEP <ms> <name>` timeline and
+its wall time. Profile names carry a random part: lanes start within one Windows clock tick, and two
+lanes on one profile would share one daemon and remove each other's account. The shared server spends
+over two seconds on every request that authenticates afresh, for the fixture and the daemon alike.
 Positive DAV readback retries HTTP 423 only for GET, with a bounded budget; mutating requests are never
 replayed by this fixture to hide a write outcome.
 
@@ -227,9 +236,11 @@ failover, circuit and reconciliation timing, which the tests do not shorten.
 Every step has its own deadline and fails with its name: C++ waits default to 60 s and print a
 `STEP <ms> <name>` line that the wrapper reports when a child exceeds its 150 s budget (240 s for
 `network`, which waits out two circuit-open windows); `SYNCD_TEST_STEPS=1` prints all step times.
-The Go probe gives each wait 90 s and each command retry 30 s, names the step and the daemon's
-sanitized state on failure, and a watchdog prints its goroutine positions and exits shortly after
-the phase budget even if a step ignores its context. All wrappers relaunch themselves in one child
+The Go probe gives each wait 90 s (a sign-in 150 s), each command retry 30 s and each lane's phase
+5 min, names the step (a command by its source position) and the daemon's sanitized state on
+failure, and a watchdog prints its goroutine positions and exits shortly after the phase budget even
+if a step ignores its context. A call made without a ready connection fails as "not connected", so a
+daemon that is gone is never mistaken for a busy one. All wrappers relaunch themselves in one child
 `pwsh` that owns a kill-on-close Job Object (`tools/test-job.ps1`), and the probe puts itself in
 one too, so no daemon, probe or test executable outlives a failed, killed or interrupted run.
 Cleanup is direct: the probe's `abort` removes the owned account through the daemon (waiting out

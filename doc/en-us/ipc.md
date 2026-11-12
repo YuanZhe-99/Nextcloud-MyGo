@@ -65,7 +65,9 @@ Protocol 1.9, with Control schema 11, adds what the interface needs and what the
 
 The Go client sends `minor: 9`, maps `ACCOUNT_EXISTS` to `ErrAccountExists` and `DECISION_PENDING`
 to `ErrBusy`, and offers `ConnectRemote`, which never starts SyncD, and `Remote.Disconnect`, a
-stable phrase for Diagnostics saying why the last connection ended. `nextcloud-mygo-syncd.exe
+stable phrase for Diagnostics saying why the last connection ended. A call made while no
+connection is ready returns `ErrDisconnected`: it still matches `ErrBusy` for the interface, but a
+daemon that is gone is never reported as one at an unsafe point. `nextcloud-mygo-syncd.exe
 --version` prints one JSON line with the version, protocol and Control schema and starts nothing
 ([packaging](packaging.md)).
 

@@ -381,7 +381,11 @@ func (r *Remote) call(ctx context.Context, method string, params any, out any) e
 	ch := make(chan rpcReply, 1)
 	r.mu.Lock()
 	conn := r.conn
-	if conn == nil || len(r.pending) >= 32 || (!r.ready && method != "session.hello" && method != "state.bootstrap") {
+	if conn == nil || (!r.ready && method != "session.hello" && method != "state.bootstrap") {
+		r.mu.Unlock()
+		return ErrDisconnected
+	}
+	if len(r.pending) >= 32 {
 		r.mu.Unlock()
 		return ErrBusy
 	}
@@ -447,7 +451,7 @@ func (r *Remote) submit(ctx context.Context, method string, p map[string]any) (o
 	r.mu.Lock()
 	if !r.ready {
 		r.mu.Unlock()
-		return op, ErrBusy
+		return op, ErrDisconnected
 	}
 	p["expectedRevision"] = r.revision
 	r.mu.Unlock()
