@@ -22,15 +22,15 @@
 |---|---|---|---|
 | S01 | `passed` | [平台说明](platform-notes.md)：CLI、适配器和守护进程夹具的上传、下载及无变化周期（零次 DAV 内容请求，正对照通过）；ARM64 与 x64e，35.0.2 | 1,000 文件 manifest 数据集；原生 x64 |
 | S02 | `passed` | [平台说明](platform-notes.md)：双向修改且 journal 复用；ARM64 与 x64e，35.0.2 | 大数据集的 manifest 内容核验 |
-| S03 | `passed` | [平台说明](platform-notes.md)：两侧冲突内容均保留；ARM64 与 x64e，35.0.2 | 真正独立的第二客户端 |
-| S04 | `not run` | 未记录真实服务器上的重命名或目录移动（[平台说明](platform-notes.md)）；上游套件运行在模拟服务器上 | 真实服务器上的两个方向 |
+| S03 | `passed` | [平台说明](platform-notes.md)：两侧冲突内容均保留；ARM64 与 x64e，35.0.2；B14：在已安装的界面中显示并解决，ARM64 | 真正独立的第二客户端 |
+| S04 | `partial` | [平台说明](platform-notes.md)，B14（已安装的包、真实窗口，2026-11-12）：本地重命名到达服务器，两侧一致；ARM64，35.0.2 | 服务器端重命名；目录移动 |
 | S05 | `partial` | [平台说明](platform-notes.md)：经自有中继中断的传输恢复后哈希一致（ARM64 12 分 26 秒，x64e 14 分 28 秒） | 已有文件的修改；无故障转移的单纯断网 |
 | S06 | `partial` | [平台说明](platform-notes.md)：112 MiB 上传在第二块中断后续传，哈希一致（ARM64 2 分 52 秒，x64e 2 分 56 秒）；上游 `ChunkingNgTest` 22/22 | 其他中断点、下载、4 GiB 以上文件 |
 | S07 | `passed` | [平台说明](platform-notes.md)：服务器已提交但确认被扣留的 PUT 经重新发现恢复，哈希和原 journal 一致；ARM64 与 x64e | 被扣留的最终 MOVE；阶段性故障注入 |
 | S08 | `not run` | [后端进度](backend-progress.md)将不确定的 MOVE/DELETE 列为未完成 | 全部 |
 | S09 | `partial` | [平台说明](platform-notes.md)：真实文件系统通知，周期内的 dirty 工作被保留（ARM64 1.27 秒，x64e 2.75 秒） | 真实服务器上、活动引擎在周期结束边界的事件 |
 | S10 | `partial` | [平台说明](platform-notes.md)：真实缓冲区溢出请求完整核对；[引擎](engine.md) | 真实服务器上由核对发现遗漏的变化 |
-| S11 | `partial` | [平台说明](platform-notes.md)：传播前阻断删除、一次性批准、已使用的决定被拒绝；ARM64 与 x64e，35.0.2 | 大规模下 100 个及 10 个/20% 阈值；方向和数量核对 |
+| S11 | `partial` | [平台说明](platform-notes.md)：传播前阻断删除、一次性批准、已使用的决定被拒绝；ARM64 与 x64e，35.0.2；B14：在界面中审核 30 个文件中的 25 个，“稍后决定”全部保留，再次询问后“允许”；ARM64 | 大规模下 100 个及 10 个/20% 阈值；方向和数量核对 |
 | S12 | `not run` | [引擎](engine.md)描述了后代计数；没有运行记录 | 全部 |
 | S13 | `partial` | [引擎](engine.md)、[平台说明](platform-notes.md)：根不可用的契约测试保持工作待处理，根变化被拒绝 | 针对真实服务器移除或拒绝访问根，且无任何内容被传播 |
 | S14 | `not run` | 仅有合成的 403/423/429 分类（[平台说明](platform-notes.md)） | 真实服务器上的 404、维护页、部分 207 |
@@ -56,7 +56,7 @@
 | N08 | `partial` | [引擎](engine.md)：绑定 generation 的探测；契约 | 真实的快速网卡切换和晚到的 DNS |
 | N09 | `partial` | [IPC](ipc.md)、[引擎](engine.md)：由调用方时钟驱动、带防抖的确定性策略 | 逐项列出的 margin、dwell 和 cooldown 用例 |
 | N10 | `partial` | [引擎](engine.md)：三次独立失败后断路器打开；已连接回归 | 真实的三次失败运行 |
-| N11 | `partial` | [平台说明](platform-notes.md)：健康传输延后契约，11/11；ARM64 与 x64e | 健康大文件传输中出现更优地址 |
+| N11 | `partial` | [平台说明](platform-notes.md)：健康传输延后契约，11/11；ARM64 与 x64e；B14：20 MiB 上传期间选定的切换等到传输结束；ARM64，35.0.2 | 健康大文件传输中出现更优地址 |
 | N12 | `passed` | [平台说明](platform-notes.md)：中断的传输在排空后以新 epoch 故障转移到另一 origin；ARM64 与 x64e，35.0.2 | 无 |
 | N13 | `partial` | [引擎](engine.md)：Control 回归中忽略旧 epoch 的完成结果 | 来自旧 epoch 的真实晚到请求 |
 | N14 | `partial` | [平台说明](platform-notes.md)：两个架构上目标核验失败及重新核验后回到原 origin | 核验成功后首次业务失败 |
@@ -74,7 +74,7 @@
 
 | 用例 | 状态 | 证据 | 缺失 |
 |---|---|---|---|
-| R01 | `partial` | [平台说明](platform-notes.md)：客户端断开后守护进程继续运行，真实 Go↔C++ 管道，ARM64 与 x64e | 强制结束真实 MyGo 窗口 |
+| R01 | `passed` | [平台说明](platform-notes.md)：客户端断开后守护进程继续运行，真实 Go↔C++ 管道，ARM64 与 x64e；B14：强制结束已安装的窗口，SyncD 继续运行，新窗口正确显示账号；ARM64，35.0.2 | x64e 下的强制结束 |
 | R02 | `partial` | [平台说明](platform-notes.md)：未完成上传和下载期间终止进程；ARM64 | 发现和结束阶段；x64e |
 | R03 | `partial` | [平台说明](platform-notes.md)：绑定发布后终止，Control 契约中的 prepared 与 committed 崩溃 | 每个持久阶段都终止进程 |
 | R04 | `passed` | [平台说明](platform-notes.md)：真实守护进程运行中暂停在切换和恢复后仍有效；ARM64 与 x64e，35.0.2 | 无 |
@@ -92,10 +92,10 @@
 | R16 | `not run` | [后端进度](backend-progress.md)：没有安装器或更新通道 | 全部 |
 | R17 | `not run` | 没有运行记录 | 全部 |
 | R18 | `not run` | 没有运行记录 | 全部 |
-| R19 | `partial` | [打包](packaging.md)：ARM64 当前用户安装、重装与卸载；开机启动项、快捷方式、应用列表条目与安装目录均被删除；官方客户端注册未变 | x64 硬件；已登录账号下保留同步文件 |
-| R20 | `partial` | [平台说明](platform-notes.md)：ARM64 真实运行；[打包](packaging.md)：已检查打包后的依赖闭包，安装后的界面与 SyncD 以 ARM64 运行 | 完整守护进程同步；运行时的 TLS 后端 |
+| R19 | `partial` | [打包](packaging.md)：ARM64 当前用户安装、重装与卸载；开机启动项、快捷方式、应用列表条目与安装目录均被删除；官方客户端注册未变；B14：移除账号并卸载后同步文件保留，ARM64 | x64 硬件；账号仍登录时卸载 |
+| R20 | `passed` | [平台说明](platform-notes.md)：ARM64 真实运行与 B14：已安装的 ARM64 包（30 个 PE 文件均为原生 ARM64）通过公共受信 TLS 完成登录、同步、切换、重装和卸载，35.0.2；[打包](packaging.md)：依赖闭包 | 休眠与唤醒（§15.2 第 7 项） |
 | R21 | `not run` | [后端进度](backend-progress.md)：没有 24 小时运行 | 全部 |
-| R22 | `partial` | [IPC](ipc.md)：支持包只含脱敏字段 | 对日志和支持包做秘密扫描 |
+| R22 | `partial` | [IPC](ipc.md)：支持包只含脱敏字段；B14：导出的支持包不含密码、用户、服务器、路径或文件名 | 对日志做秘密扫描 |
 
 ## 性质（§20.5）
 
@@ -118,8 +118,8 @@
 | 项目 | 状态 | 证据 | 缺失 |
 |---|---|---|---|
 | 23.1-1 最新上游、依赖、补丁 | `partial` | [后端进度](backend-progress.md)：Desktop v35.0.3，十六个补丁 | 全新的十六补丁构建和完整上游套件 |
-| 23.1-2 原生 ARM64 引擎及依赖 | `partial` | [平台说明](platform-notes.md)：ARM64 真实运行、PE 扫描 | 完整守护进程同步；依赖闭包 |
-| 23.1-3 界面退出后继续同步 | `partial` | [平台说明](platform-notes.md)：断开后守护进程继续运行 | 强制结束真实窗口 |
+| 23.1-2 原生 ARM64 引擎及依赖 | `passed` | [平台说明](platform-notes.md)：ARM64 真实运行、PE 扫描；B14：经检查的已安装包完成完整同步 | ARM64 上无 |
+| 23.1-3 界面退出后继续同步 | `passed` | [平台说明](platform-notes.md)：断开后守护进程继续运行；B14：窗口关闭时及强制结束已安装窗口后继续同步 | 无 |
 | 23.1-4 身份、凭据引用、journal 稳定 | `partial` | [平台说明](platform-notes.md)：切换和更新凭据后 journal 文件保持不变 | 所有切换中的凭据引用 |
 | 23.1-5 调度与阻塞语义 | `partial` | [引擎](engine.md)：调度契约 | 大规模公平性；两个账号 |
 | 23.1-6 origin、命名空间、TLS、重定向 | `partial` | [平台说明](platform-notes.md)：N02 已通过 | N04、N05、N06 |
@@ -132,13 +132,13 @@
 | 23.2-3 重连后幂等命令 | `partial` | [IPC](ipc.md)：契约 | 真实管道上的 R10、R11 |
 | 23.2-4 快照与事件竞态、背压 | `partial` | [IPC](ipc.md)：设计和契约 | R12、R13 |
 | 23.2-5 前端不持有秘密或数据库 | `partial` | [界面](gui.md)：界面只经 IPC | 对已连接界面的扫描 |
-| 23.2-6 认可、删除确认、重新认证可完成 | `partial` | [IPC](ipc.md)：后端真实运行；[界面](gui.md)：仅 Mock | 删除决定的界面控件 |
+| 23.2-6 认可、删除确认、重新认证可完成 | `partial` | [IPC](ipc.md)：后端真实运行；B14（[平台说明](platform-notes.md)）：登录、地址认可、删除审核和冲突在已安装的界面中完成 | 通过界面重新认证 |
 | 23.3-1 名称和图标 | `partial` | [打包](packaging.md)：安装器、快捷方式与应用列表条目名为 Nextcloud-MyGo；可执行文件图标取自上游图标 | 商标核对；托盘与窗口图标 |
-| 23.3-2 包架构和依赖 | `not run` | [后端进度](backend-progress.md)：没有打包 | 全部 |
-| 23.3-3 安装、升级、降级、卸载、共存 | `partial` | [打包](packaging.md)：ARM64 安装、同版本升级、卸载与共存；降级拒绝由单元测试覆盖 | x64；不同版本间升级；`daemon.prepareUpdate` |
+| 23.3-2 包架构和依赖 | `partial` | [打包](packaging.md)：两个包均已检查；B14：ARM64 包经检查并运行 | x64 硬件上的 x64 包 |
+| 23.3-3 安装、升级、降级、卸载、共存 | `partial` | [打包](packaging.md)：ARM64 安装、同版本升级、卸载与共存；降级拒绝由单元测试覆盖；B14：在运行中且已登录的副本上同版本重装，账号和目录保留 | x64；不同版本间升级；`daemon.prepareUpdate` |
 | 23.3-4 矩阵、内容核验、24 小时报告 | `not run` | 本文档 | 全部 |
 | 23.3-5 仅在可信链就绪后自动更新 | `not possible on this hardware` | [界面](gui.md)：未签名构建保持更新关闭 | 可信签名链 |
-| 23.3-6 §17.1 桌面功能 | `partial` | [平台说明](platform-notes.md)：托盘、通知、登录时启动未手动验证 | `daemon.prepareUpdate`；手动运行 |
+| 23.3-6 §17.1 桌面功能 | `partial` | [平台说明](platform-notes.md)：B14：托盘图标与弹出面板、关闭到托盘、从开始菜单重新打开、“退出并停止同步” | `daemon.prepareUpdate`；通知；登录时启动；休眠与唤醒 |
 | 23.3-7 许可证、源码、限制、诊断说明 | `partial` | [平台说明](platform-notes.md)：已知限制 | 用户指南；发布源码材料 |
 | 23.3-8 未验证能力不列为已支持 | `partial` | [后端进度](backend-progress.md)：`fullSync` 和 `endpointAutoSwitch` 保持 `false` | 发布清单 |
 
@@ -151,8 +151,26 @@
 | M2 可靠性和文件安全 | `partial` | [引擎](engine.md)：调度、根租约、删除否决 | §20.2 核心用例未全部通过 |
 | M3 端点登记与只读策略 | `partial` | [IPC](ipc.md)：认可、命名空间核验、策略 | N04、N06、N07 |
 | M4 安全自动切换 | `partial` | [平台说明](platform-notes.md)：手动切换和故障转移已真实运行；自动切换能力为 `false` | VPN；不确定的写入 |
-| M5 前端接入与首版发布 | `not run` | [后端进度](backend-progress.md)：没有打包，没有 24 小时运行 | 全部 |
+| M5 前端接入与首版发布 | `partial` | [平台说明](platform-notes.md)：ARM64 上的 B14 联合验收，35.0.2，九步中六步通过 | 休眠与唤醒；版本间升级；24 小时运行；B14 发现的问题 |
 | M6 现代网盘框架 | `partial` | [按需文件](on-demand.md)、[平台说明](platform-notes.md)：Windows 按需注册、按需下载、释放空间、始终保留、切换边界、崩溃恢复和注销，在原生 ARM64 上通过引擎运行时针对服务器 35.0.2 运行 | 配对守护进程与界面、另一个 origin、占位文件下的删除保护与离线、卸载时注销；`virtualFiles` 为 false；macOS 部分按用户 2026-11-11 的决定不在 0.1.0 范围内 |
+
+## 联合发布验收（B14）
+
+原生 Windows 11 ARM64、已安装的包、由 UI Automation 驱动的真实窗口、Nextcloud 35.0.2，
+2026-11-12；细节、发现的问题和能力证据见[平台说明](platform-notes.md)。
+
+| 步骤 | 状态 | 核对方式 |
+|---|---|---|
+| 1 安装、设置、登录、目录、首次同步 | `passed` | 界面；设置的“开始”一步未经过 |
+| 2 本地和远端改动、“活动” | `partial` | 界面和状态；“活动”缺少本地删除和重命名，时间为 UTC |
+| 3 批量删除审核 | `passed` | 界面和服务器 |
+| 4 冲突 | `passed` | 界面和文件 |
+| 5 目录暂停经过全部暂停和全部恢复 | `passed` | 界面和服务器 |
+| 6 地址与切换 | `partial` | 界面；不提供固定/自动，一次周期失败后切换消失 |
+| 7 关闭、重新打开、从托盘退出 | `passed` | 界面和进程 |
+| 8 在运行中的副本上重装 | `partial` | 界面和进程；只用 `daemon.shutdown`，无更高版本，自检 `CANCELLED` |
+| 9 移除账号、卸载 | `passed` | 界面、注册表、服务器令牌列表 |
+| 休眠与唤醒 | `not run` | 需要用户 |
 
 ## 硬件和环境限制
 

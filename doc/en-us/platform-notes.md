@@ -2,7 +2,7 @@
 
 | Platform | Status |
 |---|---|
-| Windows 11 ARM64 | Connected SyncD core and real Go/C++ pipe passed; full daemon sync not implemented. Upstream CLI basic real-server sync passed (below). |
+| Windows 11 ARM64 | Connected SyncD core and real Go/C++ pipe passed; the installed package passed most of the joint release acceptance (B14, below). Upstream CLI basic real-server sync passed (below). |
 | Windows 11 x64 | Engine cross-built on ARM64; PE checks and basic sync under x64 emulation passed. No native x64 runtime acceptance. |
 | Linux, macOS | Not supported. |
 
@@ -473,6 +473,47 @@ Verified on Windows 11 ARM64 (2026-11-03; Go 1.27.3, MyGo v0.7.4):
 | Documentation mirror | `go run ./tools/checkdocs` passes |
 | Interface | `go build` makes a native ARM64 executable that starts with its window and tray against the Mock and runs without errors; every page renders in light and dark, English and Simplified Chinese (view tests and screenshots) |
 | Installer | ARM64 and x64 packages pass the architecture check; the ARM64 package installs, reinstalls over itself and uninstalls per user with nothing left, its UI and SyncD running as ARM64 from the version directory; the x64 installer refuses ARM64 ([packaging](packaging.md)) |
+
+### Joint release acceptance (B14)
+
+Run on 2026-11-12 on the native Windows 11 ARM64 host against the shared test server (Nextcloud
+35.0.2, publicly trusted TLS), through the installed package and the real window. The package was
+built from the current tree (`tools/package.ps1 -Arch ARM64`: UI rebuilt, `build/syncd-ARM64`
+containing every backend change); `tools/pkg check` passed on 30 PE files, all native ARM64. The
+window was driven by Windows UI Automation from PowerShell (its tree exposes every button, field,
+check box, menu item and text), each step captured with PrintWindow and read back. Sign-in used Login
+Flow v2: the interface opened the browser, and the link from Copy the sign-in link was granted in
+memory as `tools/test-login.ps1` does. Remote changes went through WebDAV, only inside one owned
+folder. Wall time from install to uninstall: 23 minutes.
+
+| Step | Result | Checked by |
+|---|---|---|
+| 1 Install, setup, sign in, folder, first sync | passed with a detour: install 2 s; Your server, Sign in, Folders; the server's folder list is read once at sign-in, so the owned folder created afterwards was missing; the interface was killed (SyncD kept running, the new window showed the account) and the folder added through Add a folder under a new local parent chosen in the system folder picker; first sync 10 s. The Start step of setup was not exercised | interface, local files |
+| 2 Local add, modify, rename, delete; remote add, modify, delete | partial: both sides matched by names and contents within 4 s each round; Activity lists the uploads, downloads and the server deletion but nothing for a local deletion caused by the server or for a rename, and shows its times in UTC | interface, WebDAV, local files |
+| 3 Bulk deletion | passed: 25 of 30 files deleted on this PC; the review appeared in Overview and Activity within 2 s (count, direction, group, expiry); Decide later kept it with all 30 files on the server; Allow asked a second time; afterwards the server held 5 | interface, WebDAV |
+| 4 Conflict | passed: both versions kept (the server's in place, this PC's as a conflicted copy), the conflict shown in Activity and closed with Mark as resolved | interface, local files |
+| 5 Pause and resume | passed: a folder paused by the user stayed paused through Pause sync and Resume sync; a file created meanwhile was not uploaded in 20 s and was uploaded after Resume | interface, WebDAV |
+| 6 Addresses | partial: the alternate address added as Internet (certificate and server shown before any credential, explicit approval, verified in 6 s, answer times of both); Use this one during a 20 MiB upload showed the pending switch for 20 s until the transfer finished, then switched with its reason, the upload's hash matched; switched back in 8 s. Fixed and automatic cannot be chosen while `endpointAutoSwitch` is false. A first attempt during a 64 MiB upload hit the account's quota (shown correctly as a full server); the pending switch then vanished without a switch or a reason | interface, WebDAV |
+| 7 Close, reopen, quit | passed: closing the window kept the UI and SyncD running and both sides synced within 5 s; the tray icon and flyout worked; the Start menu shortcut raised the running instance; Quit and stop syncing ended both processes within 1 s | interface, processes |
+| 8 Reinstall over the running copy | partial: same-version reinstall in 3 s closed the interface and stopped SyncD through `daemon.shutdown` (exit code 0, not terminated); account and folder kept, sync resumed within 8 s. The installer does not call `daemon.prepareUpdate`. Diagnostics then showed the self-check failed with `CANCELLED` and protocol 1.8. No higher-version package: `tools/package.ps1` takes the version only from the committed `mygo.json` | interface, processes, local files |
+| 9 Remove the account, uninstall | passed: removal asked first, setup returned in 2 s, the saved credential was gone and no Nextcloud MyGo app password active in the last 10 minutes remained on the server; `uninstall.exe -uninstall` left no process, shortcut, Apps entry or install folder (no startup entry had been created), and the 15 local files stayed | interface, registry, server token list |
+
+The exported support bundle (1,033 bytes) contained no password, user name, server name, local path,
+folder or file name. Product findings of this run: Activity and Recent switches format times without
+converting to local time (`clock`, `internal/gui/text.go`); SyncD's diagnostics and start report
+still say protocol 1.8 (`backend/control_diagnostics.cpp`, `backend/startup_control.cpp`); the
+self-check counts every folder in error, and after an ordinary shutdown it reported `CANCELLED`
+(`selfCheck`, `backend/control_update.cpp`; cause not established); a switch pending while a cycle
+fails disappears without a reason; setup preselects Documents and Photos and never re-reads the
+server's folders (`loadRemote`, `internal/gui/setup.go`); quitting left `window-state.json.tmp` in
+`%AppData%\Nextcloud-MyGo`; the protocol has no activity kind for a local deletion or a rename.
+
+Not run: sleep and resume (needs the user), the Start step of setup, notifications, the startup
+entry, an upgrade between two versions, on-demand folders, x64 hardware. Capability evidence:
+`fullSync` passed every basic-sync, conflict, deletion-review and pause step here, but Activity is
+incomplete and no 24-hour run exists; `endpointAutoSwitch` has only a manual switch deferred
+correctly to a safe point and the vanished switch above; `virtualFiles` was not exercised. All three
+stay `false`.
 
 ## Known limitations
 

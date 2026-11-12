@@ -24,15 +24,15 @@ here in plan order.
 |---|---|---|---|
 | S01 | `passed` | [platform notes](platform-notes.md): CLI, adapter and daemon fixtures upload, download, and an unchanged cycle with zero DAV content requests (positive control passed); ARM64 and x64e, 35.0.2 | 1,000-file manifest dataset; native x64 |
 | S02 | `passed` | [platform notes](platform-notes.md): bidirectional modifications with journal reuse; ARM64 and x64e, 35.0.2 | Manifest content check on a large dataset |
-| S03 | `passed` | [platform notes](platform-notes.md): conflict content of both sides preserved; ARM64 and x64e, 35.0.2 | A truly independent second client |
-| S04 | `not run` | No real-server rename or directory move is recorded ([platform notes](platform-notes.md)); upstream suites run on a fake server | Both directions on a real server |
+| S03 | `passed` | [platform notes](platform-notes.md): conflict content of both sides preserved; ARM64 and x64e, 35.0.2; B14: shown and resolved in the installed interface, ARM64 | A truly independent second client |
+| S04 | `partial` | [platform notes](platform-notes.md), B14 (installed package, real window, 2026-11-12): a local rename reached the server, both sides matched; ARM64, 35.0.2 | A server-side rename; directory moves |
 | S05 | `partial` | [platform notes](platform-notes.md): transfers cut through the owned relay recover with matching hashes (ARM64 12 min 26 s, x64e 14 min 28 s) | A modification of an existing file; plain network loss without failover |
 | S06 | `partial` | [platform notes](platform-notes.md): 112 MiB upload cut in its second chunk resumes, hashes match (ARM64 2 min 52 s, x64e 2 min 56 s); upstream `ChunkingNgTest` 22/22 | Other cut points, downloads, files above 4 GiB |
 | S07 | `passed` | [platform notes](platform-notes.md): a server-committed PUT with its acknowledgement withheld is recovered by rediscovery, hashes and original journal match; ARM64 and x64e | Withheld final MOVE; failure-stage injection |
 | S08 | `not run` | [backend progress](backend-progress.md) lists uncertain MOVE/DELETE as not done | All of it |
 | S09 | `partial` | [platform notes](platform-notes.md): real filesystem notifications, dirty work during a cycle kept (ARM64 1.27 s, x64e 2.75 s) | Event at the cycle-end boundary with a live engine on a real server |
 | S10 | `partial` | [platform notes](platform-notes.md): real buffer overflow requests a full audit; [engine](engine.md) | An omitted change found by the audit on a real server |
-| S11 | `partial` | [platform notes](platform-notes.md): deletion blocked before propagation, one-use approval, consumed decision refused; ARM64 and x64e, 35.0.2 | The 100-object and 10-object/20% thresholds at scale; direction and count check |
+| S11 | `partial` | [platform notes](platform-notes.md): deletion blocked before propagation, one-use approval, consumed decision refused; ARM64 and x64e, 35.0.2; B14: 25 of 30 files reviewed in the interface, Decide later kept all, Allow after a second question; ARM64 | The 100-object and 10-object/20% thresholds at scale; direction and count check |
 | S12 | `not run` | [engine](engine.md) describes descendant counting; no run is recorded | All of it |
 | S13 | `partial` | [engine](engine.md), [platform notes](platform-notes.md): unavailable-root contract tests keep work pending, changed roots refused | Root removed or denied against a real server, with nothing propagated |
 | S14 | `not run` | Only synthetic 403/423/429 classification ([platform notes](platform-notes.md)) | 404, maintenance page, partial 207 on a real server |
@@ -58,7 +58,7 @@ here in plan order.
 | N08 | `partial` | [engine](engine.md): generation-bound probes; contracts | Real rapid interface changes and late DNS |
 | N09 | `partial` | [ipc](ipc.md), [engine](engine.md): deterministic policy with debounce on a caller clock | Margin, dwell and cooldown cases listed one by one |
 | N10 | `partial` | [engine](engine.md): circuit opens on three independent failures; connected regressions | Real three-failure run |
-| N11 | `partial` | [platform notes](platform-notes.md): healthy deferral contracts, 11/11; ARM64 and x64e | Healthy large transfer with a better address appearing |
+| N11 | `partial` | [platform notes](platform-notes.md): healthy deferral contracts, 11/11; ARM64 and x64e; B14: a switch chosen during a 20 MiB upload waited for the transfer to finish; ARM64, 35.0.2 | Healthy large transfer with a better address appearing |
 | N12 | `passed` | [platform notes](platform-notes.md): interrupted transfers fail over to the other origin after drainage with a new epoch; ARM64 and x64e, 35.0.2 | none |
 | N13 | `partial` | [engine](engine.md): old-epoch completions ignored in Control regressions | Real late request from an old epoch |
 | N14 | `partial` | [platform notes](platform-notes.md): failed-target verification and fresh previous-origin recovery on both architectures | First business failure after successful verification |
@@ -76,7 +76,7 @@ here in plan order.
 
 | Case | Status | Evidence | Missing |
 |---|---|---|---|
-| R01 | `partial` | [platform notes](platform-notes.md): the daemon survives a client disconnect, real Go↔C++ pipe, ARM64 and x64e | A forced kill of the real MyGo window |
+| R01 | `passed` | [platform notes](platform-notes.md): the daemon survives a client disconnect, real Go↔C++ pipe, ARM64 and x64e; B14: the installed window force-killed, SyncD kept running, the new window showed the account; ARM64, 35.0.2 | x64e of the forced kill |
 | R02 | `partial` | [platform notes](platform-notes.md): process kills during unfinished uploads and downloads; ARM64 | Discovery and finish phases; x64e |
 | R03 | `partial` | [platform notes](platform-notes.md): kill after binding publication, prepared and committed crashes in Control contracts | A kill at every durable phase |
 | R04 | `passed` | [platform notes](platform-notes.md): pauses survive switching and recovery in real daemon runs; ARM64 and x64e, 35.0.2 | none |
@@ -94,10 +94,10 @@ here in plan order.
 | R16 | `not run` | [backend progress](backend-progress.md): no installer or update channel | All of it |
 | R17 | `not run` | No run is recorded | All of it |
 | R18 | `not run` | No run is recorded | All of it |
-| R19 | `partial` | [packaging](packaging.md): ARM64 per-user install, reinstall and uninstall; startup entry, shortcut, Apps entry and install folder removed; official client registration unchanged | x64 hardware; synced files kept with a signed-in account |
-| R20 | `partial` | [platform notes](platform-notes.md): ARM64 real runs; [packaging](packaging.md): packaged dependency closure checked, installed UI and SyncD run as ARM64 | Full daemon sync; TLS backend at run time |
+| R19 | `partial` | [packaging](packaging.md): ARM64 per-user install, reinstall and uninstall; startup entry, shortcut, Apps entry and install folder removed; official client registration unchanged; B14: synced files kept after account removal and uninstall, ARM64 | x64 hardware; uninstall with the account still signed in |
+| R20 | `passed` | [platform notes](platform-notes.md): ARM64 real runs and B14: the installed ARM64 package (30 PE files native ARM64) signed in, synced, switched, reinstalled and uninstalled over publicly trusted TLS, 35.0.2; [packaging](packaging.md): dependency closure | Sleep and resume (§15.2 item 7) |
 | R21 | `not run` | [backend progress](backend-progress.md): no 24-hour run | All of it |
-| R22 | `partial` | [ipc](ipc.md): the support bundle holds only sanitized fields | A log and bundle scan for secrets |
+| R22 | `partial` | [ipc](ipc.md): the support bundle holds only sanitized fields; B14: an exported bundle held no password, user, server, path or file name | A log scan for secrets |
 
 ## Properties (§20.5)
 
@@ -121,8 +121,8 @@ property, so none is `passed`.
 | Item | Status | Evidence | Missing |
 |---|---|---|---|
 | 23.1-1 latest upstream, dependencies, patches | `partial` | [backend progress](backend-progress.md): Desktop v35.0.3, sixteen patches | Fresh sixteen-patch build and full upstream suite |
-| 23.1-2 native ARM64 engine and dependencies | `partial` | [platform notes](platform-notes.md): ARM64 real runs, PE scans | Full daemon sync; dependency closure |
-| 23.1-3 sync after the UI exits | `partial` | [platform notes](platform-notes.md): daemon survives disconnect | Real window forced kill |
+| 23.1-2 native ARM64 engine and dependencies | `passed` | [platform notes](platform-notes.md): ARM64 real runs, PE scans; B14: full sync through the checked installed package | none on ARM64 |
+| 23.1-3 sync after the UI exits | `passed` | [platform notes](platform-notes.md): daemon survives disconnect; B14: sync with the window closed and after a forced kill of the installed window | none |
 | 23.1-4 identity, credential reference, journal stable | `partial` | [platform notes](platform-notes.md): journal files kept across switches and renewal | Credential reference across all switches |
 | 23.1-5 scheduling and blocking semantics | `partial` | [engine](engine.md): scheduler contracts | Fairness at scale; two accounts |
 | 23.1-6 origin, namespace, TLS, redirects | `partial` | [platform notes](platform-notes.md): N02 passed | N04, N05, N06 |
@@ -135,13 +135,13 @@ property, so none is `passed`.
 | 23.2-3 idempotent commands after reconnect | `partial` | [ipc](ipc.md): contracts | R10, R11 on the real pipe |
 | 23.2-4 snapshot and event races, backpressure | `partial` | [ipc](ipc.md): design and contracts | R12, R13 |
 | 23.2-5 frontend holds no secrets or database | `partial` | [gui](gui.md): the interface goes through IPC only | A scan of the connected interface |
-| 23.2-6 consent, deletion confirm, reauth completable | `partial` | [ipc](ipc.md): real backend runs; [gui](gui.md): Mock only | Interface controls for deletion decisions |
+| 23.2-6 consent, deletion confirm, reauth completable | `partial` | [ipc](ipc.md): real backend runs; B14 ([platform notes](platform-notes.md)): sign-in, address approval, deletion review and conflict completed in the installed interface | Reauthentication through the interface |
 | 23.3-1 naming and icon | `partial` | [packaging](packaging.md): installer, shortcut and Apps entry named Nextcloud-MyGo; executable icon from the upstream icon | Trademark check; tray and window icon |
-| 23.3-2 package architectures and dependencies | `not run` | [backend progress](backend-progress.md): no packaging | All of it |
-| 23.3-3 install, upgrade, downgrade, uninstall, coexistence | `partial` | [packaging](packaging.md): ARM64 install, same-version upgrade, uninstall and coexistence; downgrade refusal unit-tested | x64; upgrade between versions; `daemon.prepareUpdate` |
+| 23.3-2 package architectures and dependencies | `partial` | [packaging](packaging.md): both packages checked; B14: the ARM64 package checked and run | x64 package on x64 hardware |
+| 23.3-3 install, upgrade, downgrade, uninstall, coexistence | `partial` | [packaging](packaging.md): ARM64 install, same-version upgrade, uninstall and coexistence; downgrade refusal unit-tested; B14: same-version reinstall over a running, signed-in copy kept account and folder | x64; upgrade between versions; `daemon.prepareUpdate` |
 | 23.3-4 matrix, content checks, 24-hour report | `not run` | This document | All of it |
 | 23.3-5 auto-update only with a trusted chain | `not possible on this hardware` | [gui](gui.md): updates stay off in unsigned builds | A trusted signing chain |
-| 23.3-6 §17.1 desktop features | `partial` | [platform notes](platform-notes.md): tray, notifications, sign-in start not exercised by hand | `daemon.prepareUpdate`; hands-on run |
+| 23.3-6 §17.1 desktop features | `partial` | [platform notes](platform-notes.md): B14: tray icon and flyout, close to tray, Start menu reopen, Quit and stop syncing | `daemon.prepareUpdate`; notifications; start at sign-in; sleep and resume |
 | 23.3-7 licenses, source, limits, diagnostics notes | `partial` | [platform notes](platform-notes.md): known limitations | User guide; release source materials |
 | 23.3-8 no unverified capability listed as supported | `partial` | [backend progress](backend-progress.md): `fullSync` and `endpointAutoSwitch` stay `false` | Release list |
 
@@ -154,8 +154,26 @@ property, so none is `passed`.
 | M2 reliability and file safety | `partial` | [engine](engine.md): scheduler, root lease, deletion veto | Core §20.2 cases not passing |
 | M3 endpoint registry, read-only policy | `partial` | [ipc](ipc.md): consent, namespace check, policy | N04, N06, N07 |
 | M4 safe automatic switching | `partial` | [platform notes](platform-notes.md): manual and failover switching real; automatic capability `false` | VPN; uncertain writes |
-| M5 frontend, first release | `not run` | [backend progress](backend-progress.md): no packaging, no 24-hour run | All of it |
+| M5 frontend, first release | `partial` | [platform notes](platform-notes.md): B14 joint acceptance on ARM64, 35.0.2, six of nine steps passed | Sleep and resume; upgrade between versions; 24-hour run; B14 findings |
 | M6 cloud-file frameworks | `partial` | [on-demand](on-demand.md), [platform notes](platform-notes.md): Windows on-demand registration, hydration, free up space, always keep, switch boundary, crash recovery and unregistration on native ARM64 against server 35.0.2 through the engine runtime | Paired daemon and interface, another origin, deletion protection and offline with placeholders, uninstall unregistration; `virtualFiles` false; the macOS half is outside 0.1.0 by the user's decision of 2026-11-11 |
+
+## Joint release acceptance (B14)
+
+Native Windows 11 ARM64, installed package, real window driven by UI Automation, Nextcloud 35.0.2,
+2026-11-12; details, findings and capability evidence in [platform notes](platform-notes.md).
+
+| Step | Status | Checked by |
+|---|---|---|
+| 1 install, setup, sign in, folder, first sync | `passed` | interface; the setup's Start step not exercised |
+| 2 local and remote changes, Activity | `partial` | interface and state; Activity lacks local deletions and renames, times in UTC |
+| 3 bulk deletion review | `passed` | interface and server |
+| 4 conflict | `passed` | interface and files |
+| 5 folder pause through pause all and resume all | `passed` | interface and server |
+| 6 addresses and switching | `partial` | interface; fixed/automatic not offered, a switch vanished after a failed cycle |
+| 7 close, reopen, quit from the tray | `passed` | interface and processes |
+| 8 reinstall over the running copy | `partial` | interface and processes; `daemon.shutdown` only, no higher version, self-check `CANCELLED` |
+| 9 remove the account, uninstall | `passed` | interface, registry, server token list |
+| sleep and resume | `not run` | needs the user |
 
 ## Hardware and environment limits
 
