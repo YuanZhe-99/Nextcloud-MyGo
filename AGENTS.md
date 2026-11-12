@@ -283,9 +283,9 @@ confirms pushing. When the user confirms:
 2. Bring Go, MyGo and Nextcloud to their latest releases and re-run verification.
 3. Commit, including the `doc/en-us/version-history.md` entry (and its mirror).
 4. Create an annotated tag `vX.Y.Z`.
-5. Push **the commit first**, then the tag, to `origin` and `github`.
+5. Push **the commit first**, then the tag, to `origin` (and to every other configured remote).
 
-Signing keys and certificates live only in GitHub secrets and the maintainer's offline copy.
+Signing keys and certificates live only in the CI secret store and the maintainer's offline copy.
 
 ## Agent co-author attribution
 
@@ -300,15 +300,17 @@ model that did the work.
 
 ## Remotes and secrets
 
-- `origin` → `<local_gitea_address>` (private Gitea)
-- `github` → `git@github.com:YuanZhe-99/Nextcloud-MyGo.git` (public)
+- `origin` → `<local_gitea_address>` (private Gitea), the only remote today
+
+There is no GitHub repository at present; a public one may be added later. Do not add a remote or
+create a repository unless the user asks.
 
 Determine the repository path from the runtime workspace; do not hardcode a machine-specific
 absolute path here.
 
 **Masking rule:** keep the `origin` URL written as `<local_gitea_address>` in every committed file.
-Never write the underlying host or port anywhere in the repo. The GitHub repository is public:
-committed files never name private repositories, machines, servers, accounts or where keys are
+Never write the underlying host or port anywhere in the repo. Because the history may later be
+published, committed files never name private repositories, machines, servers, accounts or where keys are
 kept. Test server addresses and user names stay out of fixtures and logs.
 
 **Never commit:** secrets, app passwords, signing keys or certificates, `.dev/`, `build/`, backend
