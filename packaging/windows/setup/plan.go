@@ -70,9 +70,9 @@ func admit(installed *release.Manifest, next release.Manifest) error {
 	}
 	switch {
 	case installed.Arch != next.Arch:
-		return fmt.Errorf("Nextcloud-MyGo %s is installed for %s. Uninstall it first (your files and settings stay), then install the %s package", installed.Version, installed.Arch, next.Arch)
+		return fmt.Errorf("Nextcloud MyGo %s is installed for %s. Uninstall it first (your files and settings stay), then install the %s package", installed.Version, installed.Arch, next.Arch)
 	case version.Older(next.Version, installed.Version):
-		return fmt.Errorf("Nextcloud-MyGo %s is installed; installing the older %s over it is not supported", installed.Version, next.Version)
+		return fmt.Errorf("Nextcloud MyGo %s is installed; installing the older %s over it is not supported", installed.Version, next.Version)
 	case next.SyncD.ControlSchema < installed.SyncD.ControlSchema:
 		return fmt.Errorf("the installed version keeps its data in a newer format (%d) than this package reads (%d)", installed.SyncD.ControlSchema, next.SyncD.ControlSchema)
 	}

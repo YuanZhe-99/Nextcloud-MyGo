@@ -120,7 +120,7 @@ func localAppData() (string, error) {
 // shortcutPath returns the Start menu shortcut's path.
 func shortcutPath() (string, error) {
 	dir, err := windows.KnownFolderPath(windows.FOLDERID_Programs, windows.KF_FLAG_CREATE)
-	return filepath.Join(dir, "Nextcloud-MyGo.lnk"), err
+	return filepath.Join(dir, displayName+".lnk"), err
 }
 
 // COM identities of the shell link object and the interfaces used on it.
@@ -173,7 +173,7 @@ func writeShortcut(exe string) error {
 	}{
 		{20, []uintptr{str(exe)}},
 		{9, []uintptr{str(filepath.Dir(exe))}},
-		{7, []uintptr{str("Nextcloud-MyGo (test build)")}},
+		{7, []uintptr{str(displayName + " (test build)")}},
 		{17, []uintptr{str(exe), 0}},
 	} {
 		if err := vcall(sl, c.index, c.args...); err != nil {
@@ -196,10 +196,10 @@ func writeAppsEntry(root, exe, ver, arch string, sizeKB uint32) error {
 	defer k.Close()
 	uninstall := `"` + filepath.Join(root, "uninstall.exe") + `" -uninstall`
 	for name, v := range map[string]string{
-		"DisplayName":          "Nextcloud-MyGo (test build)",
+		"DisplayName":          displayName + " (test build)",
 		"DisplayVersion":       ver,
 		"DisplayIcon":          exe + ",0",
-		"Publisher":            "Nextcloud-MyGo",
+		"Publisher":            displayName,
 		"Comments":             "Unsigned " + arch + " test build; automatic updates are off.",
 		"InstallLocation":      root,
 		"InstallDate":          time.Now().Format("20060102"),

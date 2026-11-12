@@ -15,7 +15,7 @@ $root = Join-Path $programs 'Nextcloud-MyGo'
 $appsKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Nextcloud-MyGo'
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $runName = 'com.yuanzhe.nextcloud-mygo'
-$link = Join-Path ([Environment]::GetFolderPath('Programs')) 'Nextcloud-MyGo.lnk'
+$link = Join-Path ([Environment]::GetFolderPath('Programs')) 'Nextcloud MyGo.lnk'
 $profileName = 'pkgsmoke-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
 $hash = -join ([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($profileName))[0..11] | ForEach-Object { $_.ToString('x2') })
 $data = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) "Nextcloud-MyGo\syncd\$hash"
@@ -99,7 +99,7 @@ function Assert-Installed {
     $target = (New-Object -ComObject WScript.Shell).CreateShortcut($link).TargetPath
     if ($target -ne $exe) { throw "shortcut points to $target, not $exe" }
     $apps = Get-ItemProperty $appsKey
-    if ($apps.DisplayName -ne 'Nextcloud-MyGo (test build)' -or $apps.DisplayIcon -ne "$exe,0" -or $apps.UninstallString -notmatch 'uninstall\.exe" -uninstall$') { throw 'Apps entry is wrong' }
+    if ($apps.DisplayName -ne 'Nextcloud MyGo (test build)' -or $apps.DisplayIcon -ne "$exe,0" -or $apps.UninstallString -notmatch 'uninstall\.exe" -uninstall$') { throw 'Apps entry is wrong' }
     & $tool check -arch $arch $dir (Join-Path $root 'uninstall.exe') | Out-Host
     if ($LASTEXITCODE -ne 0) { throw 'installed files failed the architecture check' }
     Write-Host "  installed $($apps.DisplayVersion) in $dir; shortcut and Apps entry point there"

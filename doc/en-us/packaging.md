@@ -135,8 +135,9 @@ development profile, as it does for the interface.
 
 ## Coexistence with the official client
 
-The install folder, Apps entry (`Nextcloud-MyGo`), shortcut, configuration directories and pipe names
-are Nextcloud-MyGo's own. The installer registers no URL scheme (`nc://`) or file association, and
+The install folder, Apps entry (key `Nextcloud-MyGo`), shortcut, configuration directories and pipe
+names are Nextcloud-MyGo's own. The Start menu shortcut and the Apps entry show the display name
+**Nextcloud MyGo**; folders, keys and executables keep `Nextcloud-MyGo`. The installer registers no URL scheme (`nc://`) or file association, and
 reads or changes nothing of the official client. Startup entries are matched by the executable they
 start, so other applications' entries stay untouched.
 

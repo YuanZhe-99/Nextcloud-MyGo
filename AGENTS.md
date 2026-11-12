@@ -185,8 +185,10 @@ Other conventions:
 - Interface copy is written for the person using the app. Never surface error codes, operation
   IDs, epochs, hashes or internal paths in the main interface; Diagnostics may show them.
 - Interface strings go through the ARB catalogs; `go tool mygo i18n check` must pass.
-- The product name is **Nextcloud-MyGo** everywhere (window, tray, About, installer, shortcuts,
-  release material) and its icon is the Nextcloud icon taken from the current upstream release, with the
+- The name people see is **Nextcloud MyGo** (window, tray, About, setup, Start menu shortcut, Apps
+  list, release material; the user's decision of 2026-11-12, matching `PLAN.md`). Identifiers keep
+  **Nextcloud-MyGo**: the repository, module path, executables, install and data folders, pipe and
+  mutex names, registry keys, the Cloud Files provider ID and the package manifest. Its icon is the Nextcloud icon taken from the current upstream release, with the
   source path recorded in `doc/en-us/third-party.md`.
 
 ## Behavior contract

@@ -9,6 +9,6 @@ import (
 
 // main reports that the installer exists for Windows only.
 func main() {
-	fmt.Fprintln(os.Stderr, "Nextcloud-MyGo setup runs on Windows only")
+	fmt.Fprintln(os.Stderr, "Nextcloud MyGo setup runs on Windows only")
 	os.Exit(2)
 }

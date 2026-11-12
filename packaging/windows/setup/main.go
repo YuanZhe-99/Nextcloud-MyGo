@@ -29,6 +29,10 @@ import (
 	"github.com/YuanZhe-99/Nextcloud-MyGo/internal/syncd"
 )
 
+// displayName is the name people see in the Start menu, the Apps list and
+// setup's messages; identifiers keep Nextcloud-MyGo.
+const displayName = "Nextcloud MyGo"
+
 // Executable names inside a version directory.
 const (
 	uiExe    = "Nextcloud-MyGo.exe"
@@ -37,9 +41,9 @@ const (
 
 // main parses the flags and runs the install or the uninstall.
 func main() {
-	uninstall := flag.Bool("uninstall", false, "uninstall Nextcloud-MyGo for this user")
+	uninstall := flag.Bool("uninstall", false, "uninstall Nextcloud MyGo for this user")
 	removeData := flag.Bool("remove-user-data", false, "with -uninstall: also remove the accounts, their saved credentials and the settings; synced files always stay")
-	noLaunch := flag.Bool("no-launch", false, "do not start Nextcloud-MyGo after installing")
+	noLaunch := flag.Bool("no-launch", false, "do not start Nextcloud MyGo after installing")
 	flag.Parse()
 	programs, err := programsDir()
 	if err == nil {
@@ -62,7 +66,7 @@ func main() {
 		}
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Nextcloud-MyGo setup:", err)
+		fmt.Fprintln(os.Stderr, "Nextcloud MyGo setup:", err)
 		os.Exit(1)
 	}
 }
@@ -96,7 +100,7 @@ func install(root, profile string, start bool) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Nextcloud-MyGo %s for %s: TEST BUILD, unsigned, automatic updates off\n", m.Version, m.Arch)
+	fmt.Printf("Nextcloud MyGo %s for %s: TEST BUILD, unsigned, automatic updates off\n", m.Version, m.Arch)
 
 	native, err := nativeMachine()
 	if err != nil {
