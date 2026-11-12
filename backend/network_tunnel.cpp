@@ -11,6 +11,7 @@ bool stallPrimary = true;
 quint64 stallCarried[2] = {0, 0}; // upstream, downstream
 constexpr quint64 smallRelay = 1048576;
 QString target;
+qint64 replyDelay = 0;
 constexpr int tickMilliseconds = 10;
 QList<NetworkTunnel *> tunnels;
 } // namespace
@@ -68,6 +69,10 @@ NetworkTunnel::NetworkTunnel(QTcpSocket *client, QUrl primary, QUrl alternate,
 NetworkTunnel::~NetworkTunnel() { tunnels.removeOne(this); }
 
 void NetworkTunnel::setTarget(const QString &host) { target = host; }
+
+void NetworkTunnel::setReplyDelay(qint64 milliseconds) {
+  replyDelay = qMax<qint64>(0, milliseconds);
+}
 
 void NetworkTunnel::setStallAfter(qint64 bytes, bool primary) {
   stallAfter = qMax<qint64>(0, bytes);
@@ -164,13 +169,19 @@ void NetworkTunnel::tick() {
       stallCarried[0] += quint64(bytes.size());
     upstreamBytes_ += quint64(bytes.size());
     remote_.write(bytes);
+    if (!bytes.isEmpty() && !awaiting_) {
+      awaiting_ = true;
+      flight_.start();
+    }
     // The client speaking again after the server's first flight is the end of
     // its handshake and the request: everything the server says next is the
     // reply this relay exists to lose.
     withheld_ = withheld_ || (withholdReplies_ && replied_ && !bytes.isEmpty());
   }
-  const bool hold = withheld_ || (upstreamBytes_ > quint64(bufferLimit) &&
-                                  held_ && held_(primaryOrigin_));
+  const bool hold = withheld_ ||
+                    (upstreamBytes_ > quint64(bufferLimit) && held_ &&
+                     held_(primaryOrigin_)) ||
+                    (replyDelay && awaiting_ && flight_.elapsed() < replyDelay);
   if (!hold && client_->bytesToWrite() < bufferLimit &&
       remote_.bytesAvailable() && allowance(downstreamBytes_, 1) > 0) {
     const auto bytes = remote_.read(qMin(allowance(downstreamBytes_, 1),
@@ -180,6 +191,7 @@ void NetworkTunnel::tick() {
     downstreamBytes_ += quint64(bytes.size());
     client_->write(bytes);
     replied_ = replied_ || !bytes.isEmpty();
+    awaiting_ = awaiting_ && bytes.isEmpty();
   }
   if (remoteEnded_ && remote_.bytesAvailable() == 0 &&
       client_->bytesToWrite() == 0)

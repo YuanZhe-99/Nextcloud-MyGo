@@ -4,7 +4,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$Executable,
-    [ValidateSet('lifetime','held-revocation','network','network-lifetime','network-active','network-chunked','network-uncertain','network-large','file-safety','multi-account','switch-kill','wrong-instance')][string]$Scenario = 'lifetime',
+    [ValidateSet('lifetime','held-revocation','network','network-lifetime','network-active','network-chunked','network-uncertain','network-large','file-safety','multi-account','slow-server','switch-kill','wrong-instance')][string]$Scenario = 'lifetime',
     [ValidateSet('prepared','quiescing','verifying','committed','reconciling')][string[]]$Stage = @('prepared','quiescing','verifying','committed','reconciling'),
     # network-active and network-uncertain run each case in its own process and profile, so every case
     # starts on healthy endpoints instead of waiting out the circuit history of the case before it.

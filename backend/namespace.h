@@ -39,10 +39,18 @@ struct ServerCapabilities {
 /// syncCapabilities validates the OCS response and excludes
 /// interactive/background feature groups.
 ServerCapabilities syncCapabilities(const QJsonObject &response);
+/// metadataDeadline is how long one metadata request may take before it counts
+/// as NETWORK_UNAVAILABLE: four seconds without credentials (reaching the
+/// server), fifteen with them. Notes: a reachable server spends seconds on
+/// every request that authenticates afresh, more under concurrent sign-ins;
+/// that is load, not an unreachable address.
+constexpr int metadataDeadline(bool credentialed) {
+  return credentialed ? 15000 : 4000;
+}
 /// readServerJson reads one bounded JSON response without redirects or
-/// unapproved credential forwarding. Notes: runs a four-second control-thread
-/// event loop; callers retain context and recheck consent between steps
-/// (INV-03/06).
+/// unapproved credential forwarding. Notes: runs a control-thread event loop
+/// bounded by metadataDeadline; callers retain context and recheck consent
+/// between steps (INV-03/06).
 QJsonObject readServerJson(const QUrl &base, const QString &path,
                            const QString &login = {},
                            const QString &credential = {},

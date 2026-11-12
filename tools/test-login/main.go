@@ -248,9 +248,10 @@ func abort(ctx context.Context, s state, executable, file string) {
 		// Started here so its own fatal messages are reported; a daemon that is
 		// already running keeps the profile and this one exits.
 		launchDaemon(s.Profile) // exits at once if a daemon still holds the profile
-		connectCtx, cancel := context.WithTimeout(ctx, 75*time.Second)
-		defer cancel()
-		r := connect(connectCtx, s, executable)
+		// The client lives for the whole abort: a shorter context here would close its own pipe in
+		// the middle of a slow account removal (x64 shared-server run, 2026-11-12). The connection
+		// wait itself is bounded by the step budget, which covers the crash backoff.
+		r := connect(ctx, s, executable)
 		defer r.Close()
 		if s.Renewal != "" {
 			_ = r.CancelLogin(s.Renewal)

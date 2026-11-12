@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #pragma once
+#include <QElapsedTimer>
 #include <QObject>
 #include <QTcpSocket>
 #include <QTimer>
@@ -53,6 +54,11 @@ public:
   /// never proxies loopback destinations, so an isolated loopback server is
   /// addressed through reserved names that only this relay maps back.
   static void setTarget(const QString &host);
+  /// setReplyDelay makes every relay hold the server's answer to each client
+  /// flight (TLS handshake, request) until this many milliseconds after that
+  /// flight left, until cleared with 0. Notes: models a reachable server that
+  /// is slow to answer, not a lost connection; nothing is dropped.
+  static void setReplyDelay(qint64 milliseconds);
 
 private:
   /// handshake admits an exact approved CONNECT authority, without interpreting
@@ -70,8 +76,9 @@ private:
   std::function<bool(bool)> failed_;
   std::function<bool(bool)> held_;
   QByteArray header_;
+  QElapsedTimer flight_; // since the unanswered client flight left
   quint64 upstreamBytes_ = 0, downstreamBytes_ = 0;
   bool primaryOrigin_ = false, connecting_ = false, ready_ = false,
        closed_ = false, remoteEnded_ = false, withholdReplies_ = false,
-       replied_ = false, withheld_ = false;
+       replied_ = false, withheld_ = false, awaiting_ = false;
 };

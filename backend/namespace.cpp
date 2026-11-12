@@ -156,7 +156,7 @@ QJsonObject readServerJson(const QUrl &base, const QString &path,
   });
   QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
   QObject::connect(&deadline, &QTimer::timeout, &loop, [&] { reply->abort(); });
-  deadline.start(4000);
+  deadline.start(metadataDeadline(!credential.isEmpty()));
   loop.exec();
   body += reply->readAll();
   checkMetadataReply(*reply, 200, QDateTime::currentDateTimeUtc());

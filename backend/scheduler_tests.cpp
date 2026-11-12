@@ -84,13 +84,15 @@ void fairness() {
   }
   require(s.take(10100).has_value(), "continuous changes postponed forever");
 }
-/// recovery proves transient preflight errors retry while safety blocks and
-/// pauses survive (INV-10/13/14).
+/// recovery proves transient preflight errors and server constraints retry
+/// while safety blocks and pauses survive (INV-10/13/14). Notes: a full server
+/// quota once blocked its folder for good and held a switch open (2026-11-12).
 void recovery() {
   for (const auto &reason :
        {"NETWORK_UNAVAILABLE", "LOCAL_ROOT_UNAVAILABLE",
         "REMOTE_ROOT_UNAVAILABLE", "DISCOVERY_INCOMPLETE", "REMOTE_LOCKED",
-        "SERVER_THROTTLED", "PERMISSION_DENIED", "TLS_ERROR",
+        "SERVER_THROTTLED", "REMOTE_QUOTA_EXCEEDED", "PERMISSION_DENIED",
+        "TLS_ERROR",
         "ENDPOINT_IDENTITY_MISMATCH", "AUTH_REQUIRED", "FOLDER_ROOT_CHANGED",
         "JOURNAL_ERROR", "UNSUPPORTED_FOLDER_MODE",
         "DELETION_CONFIRMATION_REQUIRED"}) {
@@ -107,7 +109,8 @@ void recovery() {
     const bool transient = QString(reason).endsWith("UNAVAILABLE") ||
                            QString(reason) == "DISCOVERY_INCOMPLETE" ||
                            QString(reason) == "REMOTE_LOCKED" ||
-                           QString(reason) == "SERVER_THROTTLED";
+                           QString(reason) == "SERVER_THROTTLED" ||
+                           QString(reason) == "REMOTE_QUOTA_EXCEEDED";
     const auto retry = s.take(1000);
     require(retry.has_value() == transient,
             "transient recovery or safety gate incorrect");

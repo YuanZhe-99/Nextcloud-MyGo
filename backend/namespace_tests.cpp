@@ -4,6 +4,7 @@
 #include <QNetworkReply>
 #include <cstdio>
 #include <stdexcept>
+#include <utility>
 
 namespace {
 /// Reply supplies completed boundary inputs without issuing a network request.
@@ -296,17 +297,58 @@ int collections() {
   }
   return failures;
 }
+/// deadlines runs two-step health probes (status.php, then the authenticated
+/// user check) on a controlled clock: a server that answers slowly but
+/// answers is not NETWORK_UNAVAILABLE; one that never reaches status.php in
+/// time, or never answers the credentialed step, still is.
+/// Notes: the shared server took 2.3 s per fresh authentication and over 4 s
+/// under concurrent sign-ins, which the former four-second total misread.
+int deadlines() {
+  struct Case {
+    const char *name;
+    qint64 status, user; // milliseconds each step takes
+    bool reachable;
+  };
+  const Case cases[] = {
+      {"fast server", 120, 300, true},
+      {"fresh authentication", 300, 2300, true},
+      {"loaded server", 3000, 4500, true},
+      {"relay 1.5 s per flight", 3000, 1500, true},
+      {"status beyond reach", 4000, 100, false},
+      {"credentialed step never answered", 300, 15000, false},
+  };
+  int failures = 0;
+  for (const auto &test : cases) {
+    qint64 clock = 0; // the probe's monotonic time
+    bool timedOut = false;
+    for (const auto &[taken, credentialed] :
+         {std::pair{test.status, false}, std::pair{test.user, true}}) {
+      const auto sent = clock;
+      clock += taken;
+      if (clock - sent >= metadataDeadline(credentialed)) {
+        timedOut = true;
+        break;
+      }
+    }
+    if (timedOut == test.reachable) {
+      std::fprintf(stderr, "FAIL deadline %s\n", test.name);
+      ++failures;
+    }
+  }
+  return failures;
+}
 } // namespace
 
 /// main exercises synthetic HTTP/DAV boundaries, not real DAV acceptance.
 int main(int argc, char **argv) {
   QCoreApplication app(argc, argv);
-  const auto failures = replies() + collections();
+  const auto failures = replies() + collections() + deadlines();
   if (failures) {
     std::fprintf(stderr, "FAIL namespace metadata cases=%d\n", failures);
     return 1;
   }
-  std::puts("PASS namespace HTTP classification, bounded Retry-After, DAV "
+  std::puts("PASS namespace HTTP classification, bounded Retry-After, metadata "
+              "deadlines, DAV "
             "property availability and valid metadata (synthetic only)");
   return 0;
 }

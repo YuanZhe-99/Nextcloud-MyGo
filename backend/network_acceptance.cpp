@@ -373,7 +373,8 @@ void networkAcceptance(const QString &scenario) {
                  scenario == "network-chunked" ||
                  scenario.section('=', 0, 0) == "network-uncertain" ||
                  scenario == "network-large" || scenario == "file-safety";
-  const bool multi = scenario == "multi-account";
+  const bool multi = scenario == "multi-account",
+             slow = scenario == "slow-server";
   const auto stage = scenario.section('=', 1);
   // One transfer case per process: each starts on healthy endpoints, with no
   // circuit history (and its growing open time) left by an earlier fault.
@@ -383,7 +384,7 @@ void networkAcceptance(const QString &scenario) {
   // only the relay maps back; its direct origin is the cleanup address. The
   // relay then carries every request, also those of the network scenario.
   const bool relayed =
-      activeTransfers || multi ||
+      activeTransfers || multi || slow ||
       (scenario == "network" &&
        qEnvironmentVariableIsSet("NEXTCLOUD_TEST_CLEANUP_URL"));
   if (relayed && qEnvironmentVariableIsSet("NEXTCLOUD_TEST_CLEANUP_URL"))
@@ -610,6 +611,27 @@ void networkAcceptance(const QString &scenario) {
           "automatic policy failed");
   waitFor([&] { return NetworkTestAccess::ready(c, account); },
           "initial real health/root evidence did not become ready");
+  if (slow) {
+    // A reachable server that answers every client flight 1.5 s late (a
+    // probe on a fresh connection then takes about 4.5 s, like the shared
+    // server under concurrent sign-ins) is slow, not unavailable.
+    NetworkTunnel::setReplyDelay(1500);
+    NetworkTestAccess::changed(c);
+    bool failed = false;
+    waitFor(
+        [&] {
+          failed = failed || NetworkTestAccess::failed(c, account, primary) ||
+                   NetworkTestAccess::failed(c, account, target);
+          return failed || NetworkTestAccess::ready(c, account);
+        },
+        "slow server health evidence did not refresh");
+    NetworkTunnel::setReplyDelay(0);
+    require(!failed, "a slow but reachable server was classified unavailable");
+    settled(c, call(c, "daemon.shutdown", {{"reason", "user"}}));
+    std::puts("PASS a server answering 1.5 s late per request stays healthy "
+              "on both addresses");
+    return;
+  }
   if (lifetimeOnly) {
     NetworkTestAccess::removeDuringVerification(
         c, account, target, [&] { return faults->capabilityRequests.load(); });

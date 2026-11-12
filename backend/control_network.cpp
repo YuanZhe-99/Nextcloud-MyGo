@@ -45,9 +45,11 @@ EndpointPolicy::Outcome outcome(const QString &reason) {
     return EndpointPolicy::Outcome::AuthFailure;
   return EndpointPolicy::Outcome::NetworkFailure;
 }
-/// HealthProbe performs one public+approved authenticated sequence under one
-/// total four-second deadline. Notes: no redirects, user content or writes;
-/// QObject ownership cancels replies before callback storage dies.
+/// HealthProbe performs one public+approved authenticated sequence, each step
+/// within its metadataDeadline: a slow authenticated answer from a server that
+/// already answered status.php is load, not an unreachable address. Notes: no
+/// redirects, user content or writes; QObject ownership cancels replies before
+/// callback storage dies.
 class HealthProbe final : public QObject {
 public:
   /// HealthProbe starts read-only checks after its complete callback and
@@ -62,7 +64,6 @@ public:
     deadline_.setSingleShot(true);
     QObject::connect(&deadline_, &QTimer::timeout, this,
                      [this] { finish("NETWORK_UNAVAILABLE"); });
-    deadline_.start(4000);
     request(false);
   }
 
@@ -104,6 +105,7 @@ private:
       }
     }
     body_.clear();
+    deadline_.start(metadataDeadline(authenticated));
     reply_ = network_.get(req);
     reply_->setReadBufferSize(1048577);
     QObject::connect(reply_, &QIODevice::readyRead, this, [this] {

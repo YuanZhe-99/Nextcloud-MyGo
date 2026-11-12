@@ -50,6 +50,15 @@ run's payloads peak at 16 MiB. Every request that authenticates afresh costs the
 and more than about five at once exceed the daemon's 4-second metadata deadline, which a lane then
 sees as a 60 s `NETWORK_UNAVAILABLE` stall; a killed upload's recovery took 25–67 s.
 
+After the quota, metadata-deadline and abort fixes ([backend progress](backend-progress.md)), same
+host and builds: fast tier passed on ARM64 (37.5 s) and emulated x64 (36.5 s); the server tier
+passed on ARM64 in 477.9 s (server start 82.0 s, the new `slow-server` case 28.9 s, two accounts
+with the quota phase 79.0 s, every other case within 150 s) and the x64 smoke in 199.2 s
+(`switch-kill` at `committed` 120.4 s). The shared-server fixture passed once on emulated x64 in
+244.9 s (lanes 211.6–241.3 s), with no daemon, profile, root or container of its own left behind.
+Before the fixes the quota phase left a fixed policy running for 180 s and `slow-server` failed
+within 15 s. The daemon that stopped itself on the shared server was not reproduced.
+
 
 On-demand files on the same ARM64 host (2026-11-12), Desktop v35.0.3 with patches 0001–0017 in
 `build/at-D0C17DFD07B7` (native ARM64), SyncD in `build/syncd-cfapi-ARM64`, a disposable Nextcloud

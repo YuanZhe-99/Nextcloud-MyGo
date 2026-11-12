@@ -137,11 +137,14 @@ bool Scheduler::fail(const Run &run, const QString &reason, qint64 retryAt) {
     return false;
   if (reason == "DELETION_CONFIRMATION_REQUIRED")
     block(run.folder, "awaitingDecision", true);
+  // A full server quota retries like a lock: blocking it for good stopped the
+  // folder (downloads too) and held every switch that waits for its
+  // reconciliation open (quota regression, 2026-11-12).
   else if (reason != "NETWORK_UNAVAILABLE" && reason != "SYNC_FAILED" &&
            reason != "CANCELLED" && reason != "DISCOVERY_INCOMPLETE" &&
            reason != "LOCAL_ROOT_UNAVAILABLE" &&
            reason != "REMOTE_ROOT_UNAVAILABLE" && reason != "REMOTE_LOCKED" &&
-           reason != "SERVER_THROTTLED")
+           reason != "SERVER_THROTTLED" && reason != "REMOTE_QUOTA_EXCEEDED")
     block(run.folder, reason, true);
   return true;
 }

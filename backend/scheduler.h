@@ -44,7 +44,8 @@ public:
   bool complete(const Run &run, bool success, qint64 retryAt);
   /// fail retains failed work for retry, or adds an independent safety/decision
   /// blocker (INV-10/13/14). Notes: stale completions cannot add blockers to a
-  /// newer cycle.
+  /// newer cycle. Server constraints (full quota, lock, throttle) and transport
+  /// failures retry after backoff; they are never a safety block.
   bool fail(const Run &run, const QString &reason, qint64 retryAt);
   /// pending reports unfinished generations, including a currently running
   /// generation.

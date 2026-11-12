@@ -18,7 +18,7 @@ not imported. Cached metadata belongs to that immutable binding; rebinding requi
 The B09–B12 network integration work connects Windows interface/address/route notifications and
 resume events to generation-bound read-only health checks. DNS configuration is also polled without
 recording interface names or addresses. Events invalidate evidence immediately and evaluation is
-debounced for 2–10 seconds. Health sequences have a four-second total budget, at most two per account
+debounced for 2–10 seconds. A health sequence gives reaching the server (`status.php`) four seconds and the authenticated user check after it fifteen (`metadataDeadline`, also used by every metadata read), at most two sequences per account
 and four globally; full UID/capability/all-root checks remain separate and mandatory before activation.
 Ordinary health checks never read or write user content. Unknown route cost/preferences remain neutral;
 strict VPN egress and metered-network enforcement are not advertised.
@@ -226,8 +226,10 @@ failures or failure to persist attachment errors stop engine admission without r
 The normal folder projection exposes the sanitized `reasonCode` independently of a user's pause;
 the interface must not display that technical code as user-facing copy.
 
-Preflight network and unavailable-root errors retain pending work and retry after backoff; they do
-not permanently block a folder. TLS, identity, credential, journal and unsupported-mode failures
+Preflight network and unavailable-root errors and server constraints (a full quota, a lock, a
+throttle) retain pending work and retry after backoff; they do not permanently block a folder. A
+full quota once blocked its folder for good, which also held every switch waiting for that folder's
+reconciliation open. TLS, identity, credential, journal and unsupported-mode failures
 remain independent safety blockers. A user's pause and a deletion decision survive retries.
 Hard blockers now retain their individual reason instead of a shared safety bit. Verified credential
 renewal clears only `AUTH_REQUIRED`/`CREDENTIALS_LOCKED` under closed admission, then reloads login and

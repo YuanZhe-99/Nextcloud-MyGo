@@ -76,6 +76,16 @@ journal 复用及无变化周期请求检查。自有资源清理通过。新版
   其目录不断以同步中状态重试。这样的周期现在为 `REMOTE_QUOTA_EXCEEDED`，并计为已核对
   （`testQuotaReconciles`）。共享测试账号已满，是因为之前的夹具运行留下了它们的集合；这六个 profile 已通过
   守护进程自己的账号移除删除，每个都确认了撤销。
+- 配额已满冻结了其目录：调度器把 `REMOTE_QUOTA_EXCEEDED` 当作永久安全阻断，该目录不再运行（包括下载），
+  等待其核对的切换或固定策略永远无法完成。已在一次性服务器上用 1 KB 用户配额复现（固定策略 180 秒后仍在运行）；
+  配额已满现在像锁定一样在退避后重试（`SyncDSchedulerContracts` 中的 `recovery`、`multi-account` 的配额阶段）。
+- 缓慢的服务器被视为不可达：一次健康探测对 `status.php` 和认证用户检查共只有四秒，而共享服务器每次重新认证约需
+  2.3 秒。到达服务器仍为四秒；携带凭据的元数据请求现在有十五秒（`metadataDeadline`、`SyncDNamespaceContracts`
+  中的 `deadlines`、`slow-server`，修改前该用例失败）。端点信任与切换规则不变。
+- 配对守护进程夹具的 `abort` 在账号移除期间失去与仍在运行的守护进程的管道：其客户端只存在于 75 秒的连接等待内。
+  这是夹具的缺陷，不是守护进程的。
+- 共享服务器上上传遇到配额已满时守护进程自行停止（退出码 0）的情况未能在一次性服务器上复现：同步、切换、固定策略和
+  账号移除期间的配额已满都没有让进程内 Control 停止服务。其调用位置尚未确定。
 - 账号移除不再因账号忙碌而被拒绝（[账号](accounts.md)）；`removalWhileStuck`、`removalDuringRenewal` 与
   `removalWaitsForProbe` 覆盖根目录缺失导致切换卡住、续期进行中以及地址检查未完成的情况。
 - 多个账号并拒绝重复账号（`testSecondAccount`）；真实的 2 个账号 × 2 个目录运行（`multi-account`）在一次性

@@ -286,6 +286,66 @@ void multiAccountAcceptance(Control &c, const QString &root,
           "accounts did not keep their own addresses");
   std::puts("PASS multi-account: one account switched address while the "
             "other's folders kept syncing on their own binding and epoch");
+  // A full server quota is the server's constraint, never a local storage
+  // failure: the folder names it, a fixed policy still commits, the daemon
+  // keeps serving and the other account keeps syncing (shared server,
+  // 2026-11-12: the daemon stopped itself here).
+  require(davRequest(base, "PUT",
+                     "ocs/v2.php/cloud/users/" +
+                         QString::fromLatin1(QUrl::toPercentEncoding(user)),
+                     admin, adminPassword, "key=quota&value=1%20KB", nullptr,
+                     "application/x-www-form-urlencoded") == 200,
+          "owned second fixture user quota could not be set");
+  {
+    QFile file(mapped[2].local + "/full.bin");
+    require(file.open(QIODevice::WriteOnly) &&
+                file.write(QByteArray(256 * 1024, 'q')) == 256 * 1024,
+            "owned multi-account local write failed");
+  }
+  calls.call("folders.syncNow", {{"folderId", mapped[2].folder}});
+  calls.wait(
+      [&] {
+        return folderState(c, mapped[2].folder).value("reasonCode") ==
+               "REMOTE_QUOTA_EXCEEDED";
+      },
+      "a full server quota was not named on the folder");
+  std::puts("PASS multi-account: a full server quota is named on the folder");
+  auto receipt = calls.settled(
+      calls.call("endpoints.stage",
+                 {{"accountId", second},
+                  {"name", "Owned alternate"},
+                  {"baseUrl", qEnvironmentVariable("NEXTCLOUD_TEST_ALTERNATE_URL")}}));
+  require(receipt.value("state") == "succeeded",
+          "the second account's alternate could not be staged");
+  receipt = calls.settled(calls.call(
+      "endpoints.approveOrigin",
+      {{"stagingId",
+        receipt.value("result").toObject().value("id").toString()}}));
+  require(receipt.value("state") == "succeeded",
+          "the second account's alternate could not be approved");
+  const auto alternate =
+      receipt.value("result").toObject().value("endpointId").toString();
+  // The folder refused by its quota still reconciles at the new epoch, so the
+  // policy commits; a quota blocker held this switch open for good before.
+  receipt = calls.settled(calls.call("endpoints.setPolicy",
+                                     {{"accountId", second},
+                                      {"policy", "fixed"},
+                                      {"fixedEndpointId", alternate}}));
+  require(receipt.value("state") == "succeeded" &&
+              calls.binding(second).first == alternate,
+          "a fixed policy did not commit while the server quota was full");
+  put(mapped[0], "quota.txt");
+  calls.call("folders.syncNow", {{"folderId", mapped[0].folder}});
+  calls.wait(
+      [&] {
+        return onServer(mapped[0], "quota.txt") &&
+               folderState(c, mapped[2].folder).value("reasonCode") ==
+                   "REMOTE_QUOTA_EXCEEDED";
+      },
+      "the other account stopped syncing or the full folder did not retry");
+  require(!c.shutdownRequested(), "a full server quota stopped the daemon");
+  std::puts("PASS multi-account: a full server quota keeps the daemon serving, "
+            "commits a fixed policy and leaves the other account syncing");
   // Removing the second account leaves the first syncing and every file.
   require(calls.settled(calls.call("accounts.remove", {{"accountId", second}}))
                   .value("state") == "succeeded",

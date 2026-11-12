@@ -66,6 +66,21 @@ durations are in the [platform notes](platform-notes.md).
   (`testQuotaReconciles`). The shared test account was full because earlier fixture runs had left
   their collections behind; those six profiles were removed through the daemon's own account
   removal, each with a confirmed revocation.
+- A full quota froze its folder: the scheduler kept `REMOTE_QUOTA_EXCEEDED` as a permanent safety
+  blocker, so the folder never ran again (downloads included) and a switch or fixed policy waiting
+  for its reconciliation stayed open for good. Reproduced on the disposable server with a 1 KB user
+  quota (the fixed policy was still running after 180 s); the quota now retries after backoff like a
+  lock (`recovery` in `SyncDSchedulerContracts`, the quota phase of `multi-account`).
+- A slow server read as unreachable: a health probe had four seconds in total for `status.php` and
+  the authenticated user check, and the shared server spends about 2.3 s on every fresh
+  authentication. Reaching the server keeps four seconds; a credentialed metadata request now has
+  fifteen (`metadataDeadline`, `deadlines` in `SyncDNamespaceContracts`, `slow-server`, which failed
+  before the change). Endpoint trust and switching rules are unchanged.
+- The paired-daemon abort lost its pipe to a live daemon during account removal: its client lived
+  only for the 75 s connection wait. A fixture fault, not the daemon's.
+- The daemon that stopped itself (exit 0) on the shared server while uploads met the full quota was
+  not reproduced on the disposable server: a full quota during sync, a switch, a fixed policy and an
+  account removal left the in-process Control serving. Its call site is not established.
 - Account removal is never refused for a busy account ([accounts](accounts.md));
   `removalWhileStuck`, `removalDuringRenewal` and `removalWaitsForProbe` cover a stuck switch with a
   missing root, a renewal and a pending address check.

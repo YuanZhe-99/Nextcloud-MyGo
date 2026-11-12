@@ -158,9 +158,15 @@ profile's `owned-user.json`, removed by the run and by the parent's `--cleanup`)
 accounts through the production login path, maps two folders each (one of them a local folder that
 does not exist yet), moves content both ways in all four, switches the first account to the other
 address while the second account's folders keep uploading (none of them may show the
-`switchInProgress` blocker or a pause, and its binding and epoch must not change), and removes the
-second account while the first keeps syncing. It needs a server where the fixture user may create
-users, so it runs only in the server tier.
+`switchInProgress` blocker or a pause, and its binding and epoch must not change), gives the second user a 1 KB quota so its uploads are refused (`REMOTE_QUOTA_EXCEEDED` on the folder),
+commits a fixed policy for that account while its quota is full, requires the first account to keep
+syncing and the daemon to keep serving, and removes the second account while the first keeps syncing.
+It needs a server where the fixture user may create users, so it runs only in the server tier.
+
+`-Scenario slow-server` makes the relay answer every client flight 1.5 s late
+(`NetworkTunnel::setReplyDelay`; a health probe on a fresh connection then takes about 4.5 s) and
+requires both addresses to stay healthy: a reachable server that is slow to answer is not
+`NETWORK_UNAVAILABLE`. Before `metadataDeadline` it failed within 15 s.
 
 `-Scenario file-safety` runs fault-free cases on the real server: renames and directory moves in
 both directions with server file IDs kept, deletion review for one directory with twelve
@@ -245,6 +251,8 @@ daemon that is gone is never mistaken for a busy one. All wrappers relaunch them
 one too, so no daemon, probe or test executable outlives a failed, killed or interrupted run.
 Cleanup is direct: the probe's `abort` removes the owned account through the daemon (waiting out
 at most its 60 s crash backoff), then the owned collections and roots; it never replays the flow.
+Its client lives for the whole abort; it once lived only for the 75 s connection wait and closed its
+own pipe in the middle of a slow account removal.
 When the daemon refuses to remove the account, the abort keeps the profile, roots and state file
 and says so, because only an existing root lets an interrupted switch finish.
 
