@@ -30,6 +30,26 @@ struct ReauthTestAccess {
   static LoginFlow &flow(Control &control, const QString &session) {
     return *control.logins_.at(session);
   }
+  /// stopped observes the fail-closed storage stop and any shutdown request.
+  static bool stopped(const Control &control) {
+    return control.storageFailed_ || control.shutdownRequested();
+  }
+};
+
+/// LoginTestAccess marks a renewal's namespace verified without a server, so
+/// the real installation and reload run next.
+struct LoginTestAccess {
+  /// verify sets the identity a verified Login Flow v2 would have produced
+  /// and hands the flow to its owner.
+  static void verify(LoginFlow &flow, const QString &user, const QString &uid,
+                     const QString &root) {
+    flow.loginName = user;
+    flow.uid = uid;
+    flow.rootId = root;
+    flow.rootVerified_ = true;
+    flow.state_ = "verifying";
+    flow.verified(flow);
+  }
 };
 
 namespace {
@@ -680,6 +700,140 @@ void removalDuringRenewal() {
   db = {};
   QSqlDatabase::removeDatabase(connection);
 }
+/// refusedReload makes the reload after a durable installation refuse with
+/// QUIESCE_STALLED (an endpoint check is running) and proves SyncD keeps
+/// serving, the renewal stays `installed` with the new credential and the old
+/// one reserved, and the reload completes once the check ends (INV-03/12/13).
+/// Inputs: atStartup restarts in `installed` first: the refusal must not stop
+/// every restart.
+/// Notes: regression for a refused reload read as a storage failure.
+void refusedReload(bool atStartup) {
+  QTemporaryDir root;
+  require(root.isValid(), "temporary profile unavailable");
+  VaultSlots vault;
+  const auto path = root.filePath("control.sqlite"), connection = uuid();
+  auto db = QSqlDatabase::addDatabase("QSQLITE", connection);
+  db.setDatabaseName(path);
+  QString account, renewal;
+  const auto phase = [&] {
+    QSqlQuery q(db);
+    q.prepare("SELECT phase FROM reauthentication WHERE session_id=?");
+    q.addBindValue(renewal);
+    return q.exec() && q.next() ? q.value(0).toString() : QString{};
+  };
+  const auto refuse = [&](bool on) {
+    QSqlQuery q(db);
+    q.prepare(on ? "INSERT INTO endpoints(id,account_id,name,base_url,approved,"
+                   "state,expires,operation_id) VALUES('busy-check',?,'Busy',"
+                   "'https://busy.example.invalid/',0,'probing','2999-01-01',?)"
+                 : "DELETE FROM endpoints WHERE id='busy-check' AND "
+                   "account_id=?");
+    q.addBindValue(account);
+    if (on)
+      q.addBindValue(uuid());
+    require(q.exec(), "endpoint check fixture failed");
+  };
+  // Holds on Qt events for a fixed span: long enough for a refused reload to
+  // have stopped SyncD, shorter than its first one-second retry.
+  const auto settle = [] {
+    QElapsedTimer span;
+    span.start();
+    while (span.elapsed() < 500)
+      QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+  };
+  const auto installedKept = [&](Control &control, const char *message) {
+    require(!ReauthTestAccess::stopped(control) && phase() == "installed" &&
+                readCredential(vault.stable) == "owned-new-secret" &&
+                findCredential(vault.previous).has_value() &&
+                call(control, "accounts.list").value("result").toArray().size() ==
+                    1,
+            message);
+  };
+  const auto completed = [&](Control &control, const char *message) {
+    refuse(false);
+    waitFor([&] { return phase() == "succeeded"; });
+    require(!ReauthTestAccess::stopped(control) && phase() == "succeeded" &&
+                readCredential(vault.stable) == "owned-new-secret" &&
+                !findCredential(vault.previous) &&
+                !findCredential(vault.candidate),
+            message);
+  };
+  {
+    Control control(path);
+    call(control, "accounts.login.start",
+         {{"canonicalBaseUrl", "https://primary.example.invalid/"}});
+    require(db.open(), "fixture profile open failed");
+    QSqlQuery q(db);
+    require(q.exec("SELECT id,credential_ref FROM accounts") && q.next(),
+            "owned reservation missing");
+    account = q.value(0).toString();
+    vault.stable = q.value(1).toString();
+    q.finish();
+    sql(db, "UPDATE accounts SET state='ready',uid='owned-uid',root_id='owned-"
+            "home',login_name='owned-user'");
+    writeCredential(vault.stable, "owned-user", "owned-old-secret");
+    require(!call(control, "accounts.reauthenticate", {{"accountId", account}})
+                 .contains("error"),
+            "renewal fixture refused");
+    require(q.exec("SELECT session_id FROM reauthentication") && q.next(),
+            "durable renewal reservation missing");
+    renewal = q.value(0).toString();
+    q.finish();
+    vault.candidate =
+        vault.stable + "/reauthentication/" + renewal + "/candidate";
+    vault.previous =
+        vault.stable + "/reauthentication/" + renewal + "/previous";
+    writeCredential(vault.candidate, "owned-user", "owned-new-secret");
+    if (!atStartup) {
+      refuse(true);
+      LoginTestAccess::verify(ReauthTestAccess::flow(control, renewal),
+                              "owned-user", "owned-uid", "owned-home");
+      waitFor([&] { return phase() == "installed"; });
+      settle();
+      installedKept(control, "a refused reload after installation stopped "
+                             "SyncD or undid the installed credential");
+      completed(control, "the refused reload did not complete once the "
+                         "endpoint check ended");
+    } else {
+      // The state a refused reload leaves when SyncD exits before cleanup.
+      writeCredential(vault.previous, "owned-user", "owned-old-secret");
+      writeCredential(vault.stable, "owned-user", "owned-new-secret");
+      sql(db, "UPDATE reauthentication SET phase='installed',"
+              "previous_present=1");
+      q.prepare("INSERT INTO folders(id,account_id,local_path,remote_path,"
+                "local_identity,remote_identity,journal_path,paused) VALUES("
+                "'owned-folder',?,'owned-root','/owned','owned-local-id',"
+                "'owned-remote-id',?,0)");
+      q.addBindValue(account);
+      q.addBindValue(root.filePath("journals/owned-folder.sqlite"));
+      require(q.exec(), "mapped folder fixture failed");
+      q.finish();
+    }
+  }
+  if (atStartup) {
+    Control restart(path);
+    refuse(true); // Startup recovery has already settled interrupted checks.
+    waitFor([&] {
+      QSqlQuery q(db);
+      return q.exec("SELECT reason FROM folders") && q.next() &&
+             q.value(0) == "QUIESCE_STALLED";
+    });
+    settle();
+    installedKept(restart, "a refused reload at startup stopped SyncD or "
+                           "undid the installed credential");
+    require(call(restart, "folders.list")
+                    .value("result")
+                    .toArray()[0]
+                    .toObject()
+                    .value("state") == "error",
+            "a refused reload hid the account's attention state");
+    completed(restart, "the refused startup reload did not complete once the "
+                       "endpoint check ended");
+  }
+  db.close();
+  db = {};
+  QSqlDatabase::removeDatabase(connection);
+}
 } // namespace
 
 /// main exercises native-vault crash contracts by default; explicit acceptance
@@ -742,6 +896,8 @@ int main(int argc, char **argv) {
     interrupted("installed-same");
     interrupted("cancelled");
     removalDuringRenewal();
+    refusedReload(false);
+    refusedReload(true);
     std::puts("PASS account-preserving renewal cancellation, vault rollback "
               "and committed restart");
     return 0;

@@ -22,7 +22,12 @@ Rollback first commits `discarding` before deleting its backup, so a crash durin
 `prepared` without its restoration source. A previously absent credential is restored to absence, not
 invented. An identical candidate/previous password is never revoked as a superseded credential.
 An unavailable local root after installation leaves its runtime blocked; it does not undo verified
-credentials or force a repeated startup failure. Only credential-specific scheduler blockers may be
+credentials or force a repeated startup failure. A reload refused after installation — at once or on
+restart, for example `QUIESCE_STALLED` while an endpoint check runs, or a quarantined endpoint —
+keeps `installed`, the new credential and the reserved previous slot; it marks the account's folders
+with the reason (attention, not sign-in) and retries after 1 s, doubling to 60 s. Cleanup and
+revocation of the previous password wait for a successful reload. Only Control storage failures
+(`INTERNAL_ERROR` or a database error) stop SyncD. Only credential-specific scheduler blockers may be
 cleared by renewal; user pauses, TLS, root, journal and deletion-safety gates remain independent.
 Pending or rolling-back renewal projects `waitingSignIn` for unpaused folders rather than retaining
 stale green status. Global and individual user pauses still project as paused.

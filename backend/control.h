@@ -231,8 +231,16 @@ private:
   /// gate.
   bool reauthenticating(const QString &account) const;
   /// reloadCredentials queues fresh same-origin verification/rebinding without
-  /// clearing user pauses.
-  void reloadCredentials(const QString &account);
+  /// clearing user pauses, then cleans up the given installed renewal.
+  /// Inputs: session is empty when a retired, failed renewal only rebinds;
+  /// retryMs is the wait before the next attempt after a refusal.
+  /// Side effects: a refusal (a fixed reason code such as QUIESCE_STALLED or
+  /// a quarantine reason) marks the account's folders and retries after
+  /// retryMs, doubling to 60 s; the installed phase and credential stay.
+  /// Notes: only Control storage failures (INTERNAL_ERROR or a free-text
+  /// database error) propagate, and only they may stop SyncD.
+  void reloadCredentials(const QString &account, const QString &session = {},
+                         qint64 retryMs = 1000);
   /// switchMutation reserves one account-wide manual activation and its receipt
   /// (INV-06/12).
   QJsonObject switchMutation(const QJsonObject &params,

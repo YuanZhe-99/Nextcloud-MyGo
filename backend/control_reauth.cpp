@@ -6,6 +6,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QNetworkReply>
+#include <QRegularExpression>
 #include <QSqlQuery>
 #include <QUuid>
 #include <algorithm>
@@ -59,8 +60,8 @@ void Control::resumeReauthentication() {
   q.finish();
   for (const auto &entry : installed) {
     try {
-      reloadCredentials(entry.first);
-      cleanupReauthentication(entry.first, entry.second);
+      // A refused reload retries itself; only storage failures reach here.
+      reloadCredentials(entry.first, entry.second);
     } catch (...) {
       stopForStorageFailure();
       return;
@@ -408,8 +409,9 @@ void Control::installReauthentication(const QString &session,
                        // revoke the installed password.
     if (flow.status() != "succeeded")
       return;
-    reloadCredentials(flow.accountId);
-    cleanupReauthentication(flow.accountId, session);
+    // A refused reload keeps `installed` and retries; only a storage failure
+    // throws past this point.
+    reloadCredentials(flow.accountId, session);
   } catch (const std::exception &error) {
     try {
       metadataFailed(flow.accountId, error);
@@ -476,19 +478,26 @@ void Control::installReauthentication(const QString &session,
   }
 }
 
-void Control::reloadCredentials(const QString &account) {
+void Control::reloadCredentials(const QString &account, const QString &session,
+                                qint64 retryMs) {
 #ifdef SYNCD_WITH_ENGINE
+  const auto retry = [this, account, session](qint64 delay, qint64 next) {
+    QTimer::singleShot(std::min<qint64>(delay, 2147483647), &networkTasks_,
+                       [this, account, session, next] {
+                         if (storageFailed_ || shutdown_ ||
+                             !shutdownOperation_.isEmpty())
+                           return;
+                         try {
+                           reloadCredentials(account, session, next);
+                         } catch (...) {
+                           stopForStorageFailure();
+                         }
+                       });
+  };
   const auto remaining = throttleRemaining(account);
   if (remaining > 0) {
     if (remaining != std::numeric_limits<qint64>::max())
-      QTimer::singleShot(std::min<qint64>(remaining, 2147483647),
-                         &networkTasks_, [this, account] {
-                           try {
-                             reloadCredentials(account);
-                           } catch (...) {
-                             stopForStorageFailure();
-                           }
-                         });
+      retry(remaining, retryMs);
     return;
   }
   try {
@@ -518,10 +527,15 @@ void Control::reloadCredentials(const QString &account) {
     const QStringList unavailable{"AUTH_REQUIRED", "CREDENTIALS_LOCKED",
                                   "LOCAL_ROOT_UNAVAILABLE",
                                   "FOLDER_ROOT_CHANGED", "JOURNAL_ERROR"};
-    if (!unavailable.contains(reason))
+    // Storage failures carry INTERNAL_ERROR or free text; every other fixed
+    // code is a refusal (a busy account, a quarantined endpoint).
+    static const QRegularExpression code("^[A-Z][A-Z_]+$");
+    if (reason == "INTERNAL_ERROR" || !code.match(reason).hasMatch())
       throw;
-    // Credential installation is committed. An unavailable root must not undo
-    // it or create a startup loop.
+    if (reason == "NOT_FOUND")
+      return; // The account is being removed; removal owns its renewal.
+    // Credential installation is committed. A refusal or an unavailable root
+    // must not undo it, stop SyncD or create a startup loop.
     accountChange([&] {
       QSqlQuery q(db_);
       q.prepare(
@@ -530,10 +544,16 @@ void Control::reloadCredentials(const QString &account) {
       q.addBindValue(account);
       execute(q);
     });
+    if (!unavailable.contains(reason)) {
+      retry(retryMs, std::min<qint64>(retryMs * 2, 60000));
+      return; // Cleanup waits until the runtime holds the new credential.
+    }
   }
 #else
-  Q_UNUSED(account);
+  Q_UNUSED(retryMs);
 #endif
+  if (!session.isEmpty())
+    cleanupReauthentication(account, session);
 }
 
 void Control::cleanupReauthentication(const QString &account,

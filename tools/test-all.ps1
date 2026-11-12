@@ -110,7 +110,7 @@ function Lanes([object[]]$Groups) {
         # every profile this tier created and left behind (remote content first, then native credentials).
         foreach ($dir in Get-ChildItem -LiteralPath (Join-Path $root 'build') -Directory -Filter 'reauth-lifetime-*' | Where-Object CreationTime -ge $started) {
             $env:SYNCD_REAUTH_LIFETIME_ROOT = $dir.FullName
-            $p = Start-Process -FilePath $exe -ArgumentList '--cleanup' -NoNewWindow -PassThru -RedirectStandardOutput 'NUL' -RedirectStandardError 'NUL'
+            $p = Start-Process -FilePath $exe -ArgumentList '--cleanup' -NoNewWindow -PassThru -RedirectStandardOutput 'NUL'
             if ($p.WaitForExit(60000) -and $p.ExitCode -eq 0) { Remove-Item -LiteralPath $dir.FullName -Recurse -Force }
             else { if (-not $p.HasExited) { $p.Kill($true) }; Write-Output "  owned profile $($dir.Name) kept: its cleanup did not finish" }
             $env:SYNCD_REAUTH_LIFETIME_ROOT = $null
