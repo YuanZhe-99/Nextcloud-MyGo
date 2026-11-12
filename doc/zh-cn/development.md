@@ -191,7 +191,8 @@ M0 CTest 运行排除 `UtilityTest`，因为其中的启动测试会实际创建
 夹具本地根证书和管理员密码在此之前保存在被忽略的 `build/test-server-<id>/` 中。该根证书只在各验收进程内部受信任
 （`SYNCD_TEST_CA_*`）；不修改任何信任存储、hosts 文件或代理设置，TLS 检查始终开启。客户端通过夹具中继以
 `primary.syncd.test` 和 `alternate.syncd.test` 访问服务器，清理步骤和 `lifetime` 用例使用直接回环源。
-该层不需要私有服务器。
+该层不需要私有服务器。`-ServerVersion` 选择服务器版本（默认 `35.0.2`，即最新版）；也要用上一个受支持主版本的
+最新发行版运行（2026-11-12 使用 `-ServerVersion 34.0.5`：ARM64 通过，用时 431.4 秒）。
 
 每个用例都在独立的进程和配置目录中运行，因此每个用例都从健康的端点开始，而不必等待前一个用例留下的熔断历史：
 `network-active` 将 `upload`、`download` 和 `unacknowledged-upload` 作为独立用例运行，`network-uncertain`

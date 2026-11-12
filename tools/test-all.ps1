@@ -1,6 +1,8 @@
 # Runs one test tier for one architecture with per-scenario durations and a hard total budget.
 # Inputs: -Tier fast (no server, <= 2 min) or server (disposable local container, <= 10 min);
 #   -Architecture ARM64 (everything) or x64 (fast tier plus one server smoke scenario).
+#   -ServerVersion picks the disposable server's Nextcloud release (default the latest tested one;
+#   run the previous supported major too, PLAN.md §15.3).
 #   -Large adds the opt-in above-4-GiB chunk scenario (about 30 min, outside the budget).
 #   -SharedServer adds the paired-daemon login fixture against the already approved server in
 #   NEXTCLOUD_TEST_* (outside the budget: the paired daemon trusts only a publicly trusted chain).
@@ -13,6 +15,7 @@ param(
     [ValidateSet('fast', 'server')][string]$Tier = 'fast',
     [ValidateSet('ARM64', 'x64')][string]$Architecture = 'ARM64',
     [ValidateSet('wslc', 'docker')][string]$Runtime = 'wslc',
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$ServerVersion = '35.0.2',
     [switch]$Large,
     [switch]$SharedServer
 )
@@ -138,7 +141,7 @@ try {
         Step 'syncd ctest (all targets)' { & $ctest --test-dir $build -C Release --no-tests=error --timeout 60 -j 4 --output-on-failure }
     } else {
         Step 'disposable server start' {
-            $script:server = & (Join-Path $PSScriptRoot 'test-server.ps1') -Start -Runtime $Runtime | Select-Object -Last 1
+            $script:server = & (Join-Path $PSScriptRoot 'test-server.ps1') -Start -Runtime $Runtime -Version $ServerVersion | Select-Object -Last 1
         }
         $state = Get-Content -LiteralPath $server -Raw | ConvertFrom-Json
         $values = @{}

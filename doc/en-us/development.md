@@ -228,6 +228,9 @@ root is trusted only inside each acceptance process (`SYNCD_TEST_CA_*`); no trus
 file or proxy setting changes, and TLS checks stay on. Clients address the server as
 `primary.syncd.test` and `alternate.syncd.test` through the fixture relay, the cleanup step and the
 `lifetime` case use the direct loopback origin. The tier needs no private server.
+`-ServerVersion` picks the server release (default `35.0.2`, the latest); run it with the newest
+release of the previous supported major too (`-ServerVersion 34.0.5` on 2026-11-12: passed on ARM64
+in 431.4 s).
 
 Its cases each run in a process and profile of their own, so every case starts on healthy
 endpoints instead of waiting out the circuit history of the one before it: `network-active` runs

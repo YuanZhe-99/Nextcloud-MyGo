@@ -2,6 +2,18 @@
 
 ## 0.1.0 (in progress)
 
+- Multi-account and protocol 1.9 (2026-11-12): several accounts (`multiAccount` after a real 2×2
+  run), account removal that never waits on a stuck switch, credential renewal that reconciles with
+  a full quota and retries a refused reload instead of stopping SyncD, a full quota that retries
+  instead of freezing its folder, separate reach and metadata deadlines so a slow server is not
+  unreachable, `daemon.prepareUpdate`, `--version`, DLL loading limited to the install folder.
+  Control schema 11. The interface shows them; the display name is Nextcloud MyGo. Per-user
+  packages per architecture with a PE architecture check (ARM64X Visual C++ runtime accepted by the
+  user). Test tiers: fast about 37 s per architecture, server about 7–8 min on ARM64 with its own
+  container. Server tier passed against 35.0.2 and the previous major 34.0.5 on ARM64. Go 1.27.4 /
+  MyGo v0.9.0 / Desktop v35.0.3 / server v35.0.2 checked, unchanged. Committed and pushed to
+  `origin`; no tag.
+
 - Windows on-demand files (M6, 2026-11-12): upstream's CFAPI plugin serves on-demand folders through
   SyncD; patch 0017 (plugin without shell extension, endpoint-independent sync-root identity, no
   unregistered handler classes, a request gate for the switch boundary). Protocol 1.8 adds the
