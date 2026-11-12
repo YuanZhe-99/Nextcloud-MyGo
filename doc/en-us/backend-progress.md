@@ -5,7 +5,7 @@
 Read this section first; everything below it is the dated record, newest first.
 
 The backend is **not complete** and no milestone has passed its exit criteria. Product 0.1.0,
-protocol 1.7, Control schema 8, Desktop v35.0.3 with sixteen recorded patches.
+protocol 1.9, Control schema 11, Desktop v35.0.3 with seventeen recorded patches.
 
 Built and verified on native ARM64 and emulated x64 (evidence in [platform notes](platform-notes.md)):
 
@@ -16,28 +16,149 @@ Built and verified on native ARM64 and emulated x64 (evidence in [platform notes
 - Real-server faults against server 35.0.2: an interrupted upload, an interrupted download, a
   committed PUT whose reply is withheld, a chunk session cut in its second chunk, and a second
   instance with the same user but another namespace (refused).
+- Lost replies of writes the server committed, recovered by rediscovery and never by a second
+  request: a MOVE and a DELETE of existing entries whose path another client created again, and the
+  final MOVE of a chunk session.
+- A process kill at five durable stages of a switch, each followed by a restart on the same
+  journal, credential reference and folder binding, without retransfer of reconciled files.
+- The fresh sixteen-patch upstream build with its full suite; on a real server, renames and
+  directory moves in both directions, deletion review for one directory with descendants, a stale
+  approval, and a remote root answering 404; a held login revocation sent once by a restarted daemon.
+- On native ARM64 only: a chunk session of a file above 4 GiB cut after its 4 GiB boundary.
+- On native ARM64, through SyncD's engine runtime against a disposable server 35.0.2: on-demand
+  folders on upstream's CFAPI plugin ([on-demand](on-demand.md)) — placeholders, hydration on open,
+  directory population, free up space, always keep on this device, a switch that waits for a running
+  hydration, a kill during a hydration with restart, and complete unregistration.
 
 Not done:
 
 | Item | What is missing |
 |---|---|
-| Uncertain writes | A real withheld final MOVE, uncertain MOVE/DELETE of existing items, failure-stage injection, files above 4 GiB |
-| Upstream patch 0016 | Ran only as an incremental build in the fifteen-patch trees; a fresh sixteen-patch build and the full upstream suite are owed |
-| Login throttling | Covered by scripted-transport regressions only; no real-server 429 acceptance. A daemon restart during a held revocation reports it unconfirmed instead of retrying |
-| Packaging and update (B13) | No installer, dependency closure or update channel; `daemon.prepareUpdate` is declared but not dispatched. Depends on B08/B12 acceptance |
+| Uncertain writes | Downloads above 4 GiB and the above-4-GiB case on x64, other chunk cut points, kills during discovery and at the end of a cycle (R02) |
+| File safety on a real server | S05 with a modified existing file, S09, S10, the 100-object threshold of S11, S15, S16 with a corrupt journal under the daemon, S17, S18, S21, and the maintenance-page and partial-207 parts of S14 |
+| Network and trust on a real path | N04, N05 on the engine path, N06, N07, N08, N11, N13, N14 after a first business failure, N16, N17, N19, N20, N22, N23, and R15 |
+| Paired-daemon fixture | Passed on 2026-11-12 against the shared server on native ARM64 (`tools/test-login.ps1 -SyncFolders -Reauthenticate`, 561.7 s) after the quota fix; earlier runs that day also stopped at slower steps (the shared server takes 2.5–3 s per authenticated request), once in a state where every command answered busy, which is not explained. Not run on x64 against the shared server |
+| Login throttling | No real-server 429 acceptance. A renewal's candidate password still ends unconfirmed when the daemon restarts during its held revocation |
+| Packaging and update (B13) | The installer is in `packaging/windows/setup`; SyncD now provides `daemon.prepareUpdate`, the post-start report, `--version`, a connect-only client and installed-layout DLL/plugin restriction ([packaging](packaging.md)), none of them adopted by the installer yet or verified in an installed package; no update channel |
+| On-demand files (M6, Windows) | `virtualFiles` stays `false`. Not run: through the paired daemon and interface (the interface cannot choose a mode yet), a switch to another origin, deletion protection and offline behavior with placeholders, the §20 cases for on-demand folders. The uninstaller does not end registrations yet; the SyncD executable has no icon for Explorer's sync-root entry; thumbnails and lock/share overlays need the shell extension, which is not built |
 | Platform evidence | No native x64 hardware, interactive browser/SSO/MFA login, suspend/resume, previous-major server 34 or 24-hour run; clang-tidy could not be run |
 
 What the interface must respect until those pass:
 
-- The `fullSync` and `endpointAutoSwitch` capabilities stay `false`; never present them as supported.
+- The `fullSync`, `endpointAutoSwitch` and `virtualFiles` capabilities stay `false`; never present
+  them as supported.
+  Both were assessed on 2026-11-11 against the cases they depend on: the first three rows above
+  name what `fullSync` still lacks, the fourth what `endpointAutoSwitch` lacks.
 - While `daemon.stateAvailable` is `false` nothing is shown as healthy, and a missing collection is
   unknown, not empty.
 - The interface goes only through IPC ([IPC](ipc.md)); the account and engine rules are in
   [accounts](accounts.md) and [engine](engine.md).
 
+## Backend completion for 0.1.0 (2026-11-12)
+
+Protocol 1.9 and Control schema 11 ([IPC](ipc.md)); no upstream patch was added. Runs and
+durations are in the [platform notes](platform-notes.md).
+
+- Credential renewal that never reconciled: on a full server quota upstream reports
+  `InsufficientRemoteStorage` on every later cycle, SyncD turned it into `SYNC_FAILED`, no cycle
+  succeeded at the new epoch, and the credential-reload switch stayed `reconciling` with its folder
+  retried as syncing. Such a cycle is now `REMOTE_QUOTA_EXCEEDED` and counts as reconciled
+  (`testQuotaReconciles`). The shared test account was full because earlier fixture runs had left
+  their collections behind; those six profiles were removed through the daemon's own account
+  removal, each with a confirmed revocation.
+- Account removal is never refused for a busy account ([accounts](accounts.md));
+  `removalWhileStuck`, `removalDuringRenewal` and `removalWaitsForProbe` cover a stuck switch with a
+  missing root, a renewal and a pending address check.
+- Several accounts with duplicate refusal (`testSecondAccount`); the real 2 accounts × 2 folders run
+  (`multi-account`) passed on the disposable server, so `multiAccount` is advertised.
+- The protocol gaps the interface listed, `daemon.prepareUpdate`, the start report, `--version`,
+  `ConnectRemote`, the `engine` capability, inspection of a folder that does not exist yet, and the
+  installed-layout DLL and plugin restriction ([packaging](packaging.md)).
+- `stopForStorageFailure` now logs the calling file, line and exception code on stderr, and the
+  paired-daemon fixture reports the daemon's own sanitized output and why the client last
+  disconnected.
+
+A `restore` answer to a deletion proposal was built and then removed again: it worked by forgetting
+the journal records of exactly the proposal's entries, which conflicts with the behavior
+contract. It stays out unless the user decides otherwise.
+
+## M6 (Windows): on-demand files
+
+### First connected path (2026-11-12)
+
+The user decided on 2026-11-12 that Windows on-demand files belong to 0.1.0. SyncD reuses
+upstream's CFAPI plugin; patch 0017 builds it without its shell extension, names sync roots by
+account ID, never points them at unregistered handler classes and gives the owner a request gate
+([upstream](upstream.md)). `OnDemandRoot` in `backend/platform/windows/` registers and connects one
+folder per binding epoch; the root lease admits its own cloud tags; the adapter counts running
+hydrations as activity for the switch and re-authentication boundary; Control schema 10 stores the
+mode chosen at `folders.add` (protocol 1.8) and removal ends the registration
+([on-demand](on-demand.md), [IPC](ipc.md)). Runs and durations are in the
+[platform notes](platform-notes.md). The open items are the "On-demand files" row above.
+
 ## M0 / B01: dependency and interface audit
 
 Status: in progress; no backend milestone has passed its exit criteria.
+
+### Reliability package (2026-11-11)
+
+Work packages B08, B11 and B12 were taken as far as this machine allows; none of them, and no
+milestone, reaches its exit condition. Exact runs, durations and build trees are in the
+[platform notes](platform-notes.md).
+
+The sixteen recorded patches were built from a fresh source clone on both architectures and the
+full upstream suite passed 96/96 on each, `UtilityTest` excluded as before. SyncD is now built and
+tested against those trees. No upstream patch was added: nothing in this package needed a change
+to upstream code.
+
+Lost replies (`PLAN.md` §12.3, S07, S08): the acceptance relay can now deliver one named request
+and lose its reply, so a real server commits a write the daemon never sees confirmed. A MOVE and a
+DELETE of existing entries, each followed by another client creating the path again, and the
+final MOVE of a 112 MiB chunk session were recovered on the other origin by rediscovery. The
+server file ID and ETag of each committed result were unchanged afterwards, the re-created objects
+were downloaded instead of moved or deleted, and no chunk was sent again. No product change was
+needed for this; the fixture and the relay are the change.
+
+Switch stages (`PLAN.md` §9.3–9.5, R03): the fixture ends its own process at `prepared`,
+`quiescing`, `verifying`, `committed` and `reconciling` of a real switch and restarts on the same
+profile. The first three came back on the previous binding, the last two on the committed one;
+all five kept the credential reference, the folder rows and the native journal file, allocated a
+fresh epoch, left the interrupted receipt failed and transferred only the file the kill had
+interrupted. No product defect was found.
+
+Login throttling: a new login's held revocation now survives a restart
+([accounts](accounts.md)). Control schema 9 adds the `held_revocations` table; the flow records
+"only delayed, nothing in flight" and clears it before any DELETE leaves. A real restart against an
+isolated server sent the DELETE once after the 60-second floor, the server confirmed it, and the
+password was rejected afterwards. A real 429 was not produced, and a renewal's candidate password
+is not covered. This is new behavior with regressions, not a fixed defect: the previous binaries
+cannot host the new contract tests, so there is no before-run.
+
+File safety without faults, on a real server: renames and directory moves in both directions kept
+the server file IDs and moved no content again (S04); deleting one directory with twelve
+descendants was held before propagation with thirteen remote deletions and no local ones (S11,
+S12); approving that proposal after one more deletion did not authorize the new set, which was
+proposed again and applied only after its own approval (S20); the mapped root could not be renamed
+away (S13); and a remote root answering 404 was reported as `REMOTE_ROOT_UNAVAILABLE` with every
+local file kept (S14). A chunk session of a 4,296 MiB file was cut after its 4 GiB boundary and
+resumed on the other origin with matching streamed hashes, on native ARM64 only.
+
+Not run, and why. Two accounts with two folders each (`PLAN.md` §2.1, R05): the daemon accepts a
+single account by design of the current protocol (`multiAccount` is `false`), so the case cannot be
+run without a product decision. Downloads above 4 GiB and the x64 run of the large upload: not
+attempted in this package. A real 429 on the login endpoints: the isolated server offers no
+supported way to produce one. Maintenance page and partial 207 (S14), E2EE and placeholder folders
+(S18, S21), names and locked files (S17), a corrupt journal under the daemon (S16), drive-letter
+reuse (S15) and the network cases listed at the top of this page have no fixture yet. Suspend and
+resume, a 24-hour run, native x64 hardware and clang-tidy are unchanged from the earlier record.
+
+Capabilities: `fullSync` and `endpointAutoSwitch` stay `false`, so `protocol/`, both contract tests
+and `internal/syncd` are unchanged. `fullSync` depends on the M2 exit and the MVP coverage of
+`PLAN.md` §2.1: two accounts cannot run, and the file-safety and uncertain-write cases in the
+table at the top of this page have no real passing run. `endpointAutoSwitch` depends on the M3 and
+M4 exits: the network and trust cases in that table have no real passing run, and no real VPN path
+exists here. The temporary isolated server, its volume, image, credentials and TLS files were
+removed afterwards; the pre-existing container was not touched.
 
 ### Early handoff (2026-11-09)
 

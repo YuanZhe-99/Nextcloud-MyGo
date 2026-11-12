@@ -35,33 +35,38 @@ func (a *App) accountSection(c *ui.Context, acc syncd.Account) {
 	s := a.snap
 	approved := 0
 	for _, e := range s.Endpoints {
-		if e.AccountID == acc.ID && e.Approved && !e.Blocked {
+		if e.AccountID == acc.ID && e.Approved && e.Verified == syncd.VerifyVerified {
 			approved++
 		}
 	}
+	signIn := needsSignIn(s, acc)
+	live := s.Daemon.Connected
 	card(c.Key("acc-" + acc.ID)).FillWidth().Clip().Children(func() {
 		ui.Row(c).FillWidth().Gap(12).Padding(14, 16).Background(p.subtle).BorderWidth(0, 0, 1, 0).BorderColor(p.border).Children(func() {
 			avatar(c, acc, 36)
 			ui.Column(c).Grow(1).MinWidth(0).Children(func() {
 				ui.Text(c, accountName(acc)).FontSize(fontSection).FontWeight(600).Level(2)
-				if acc.SignedIn {
+				if !signIn {
 					muted(c, L.AccountSignedIn(approved), fontSmall)
 				} else {
 					ui.Text(c, L.AccountSignedOut()).FontSize(fontSmall).FontWeight(600).TextColor(p.warn)
 				}
 			})
-			if acc.SignedIn {
-				if button(c, "acc-add-"+acc.ID, L.ActionAddFolder(), icPlus).Clicked() {
-					a.startAddFolders(acc.ID)
-				}
-			} else if primary(c, "acc-signin-"+acc.ID, L.ActionSignInBrowser(), nil).Disabled(a.busy["login-"+acc.ID]).Clicked() {
-				a.reauthenticate(acc.ID)
+			if signIn {
+				a.signInButtons(c, "acc", acc.ID)
+			} else if button(c, "acc-add-"+acc.ID, L.ActionAddFolder(), icPlus).Disabled(!live).Clicked() {
+				a.startAddFolders(acc.ID)
 			}
 			more := button(c, "acc-more-"+acc.ID, "", icMore).Label(L.ActionMore()).Tooltip(L.ActionMore())
 			more.PopoverMenuButton(func(m *ui.Menu) {
-				if m.Item(L.MenuRemoveAccount()).Chosen() {
+				_, renewing := a.renewing[acc.ID]
+				if m.Item(L.MenuSignInAgain()).Disabled(!live || renewing || a.busy["login-"+acc.ID]).Chosen() {
+					a.reauthenticate(acc.ID)
+				}
+				m.Separator()
+				if m.Item(L.MenuRemoveAccount()).Danger().Disabled(!live || a.busy["acc-rm-"+acc.ID]).Chosen() {
 					a.ask(L.ConfirmRemoveAccountTitle(accountName(acc)), L.ConfirmRemoveAccountBody(), L.ConfirmRemoveAccount(), func() {
-						a.do("acc-rm-"+acc.ID, func() error { return a.client.RemoveAccount(acc.ID) }, nil)
+						a.removeAccount(acc.ID)
 					})
 				}
 			})
@@ -78,16 +83,36 @@ func (a *App) accountSection(c *ui.Context, acc syncd.Account) {
 				n++
 			}
 		}
-		if n == 0 {
+		if n == 0 && stateKnown(s) {
 			ui.Box(c).Padding(14, 16).Children(func() { muted(c, L.NoFolders(), 13) })
 		}
 	})
 }
 
+// removeAccount stops syncing the account's folders, then removes the
+// account, as its question said; SyncD removes an account only without
+// folders, and every file stays on both sides.
+func (a *App) removeAccount(accountID string) {
+	var folders []string
+	for _, f := range a.snap.Folders {
+		if f.AccountID == accountID {
+			folders = append(folders, f.ID)
+		}
+	}
+	a.do("acc-rm-"+accountID, func() error {
+		for _, id := range folders {
+			if err := a.client.RemoveFolder(id); err != nil {
+				return err
+			}
+		}
+		return a.client.RemoveAccount(accountID)
+	}, nil)
+}
+
 // folderRow is a folder: where it syncs, its state, and its buttons.
 func (a *App) folderRow(c *ui.Context, f syncd.Folder, rule bool) {
 	p := pal(c)
-	word, col, hollow := folderWord(f, p)
+	word, col, hollow := folderWord(f, a.snap, p)
 	detail := folderDetail(f, a.snap)
 	row := ui.Grid(c.Key("fr-"+f.ID)).ColumnTracks(folderTracks...).FillWidth().Padding(12, 16).GapX(12).AlignItems(ui.Center)
 	if rule {
@@ -102,10 +127,11 @@ func (a *App) folderRow(c *ui.Context, f syncd.Folder, rule bool) {
 				ui.Text(c, word).FontSize(13).FontWeight(600).TextColor(col)
 			})
 			if detail != "" {
-				muted(c, detail, fontSmall)
+				muted(c, detail, fontSmall).Wrap()
 			}
 		})
 		ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
+			busy := a.busy["f-"+f.ID] || !a.snap.Daemon.Connected
 			if button(c, "fr-open-"+f.ID, L.ActionOpen(), nil).Clicked() {
 				a.openPath(f.LocalPath)
 			}
@@ -115,16 +141,21 @@ func (a *App) folderRow(c *ui.Context, f syncd.Folder, rule bool) {
 					a.page = pageActivity
 				}
 			case f.UserPaused:
-				if button(c, "fr-resume-"+f.ID, L.ActionResume(), nil).Disabled(a.busy["f-"+f.ID]).Clicked() {
+				if button(c, "fr-resume-"+f.ID, L.ActionResume(), nil).Disabled(busy).Clicked() {
 					a.do("f-"+f.ID, func() error { return a.client.ResumeFolder(f.ID) }, nil)
 				}
 			case f.State != syncd.FolderWaitingSignIn:
-				if button(c, "fr-pause-"+f.ID, L.ActionPause(), nil).Disabled(a.busy["f-"+f.ID]).Clicked() {
+				if button(c, "fr-pause-"+f.ID, L.ActionPause(), nil).Disabled(busy).Clicked() {
 					a.do("f-"+f.ID, func() error { return a.client.PauseFolder(f.ID) }, nil)
 				}
 			}
 			button(c, "fr-more-"+f.ID, "", icMore).Label(L.ActionMore()).Tooltip(L.ActionMore()).PopoverMenuButton(func(m *ui.Menu) {
-				if m.Item(L.MenuStopFolder(f.Name)).Chosen() {
+				canCheck := !f.UserPaused && !a.snap.Daemon.AllPaused && f.State != syncd.FolderNeedsReview && f.State != syncd.FolderWaitingSignIn
+				if m.Item(L.ActionCheckNow()).Disabled(busy || !canCheck).Chosen() {
+					a.do("f-"+f.ID, func() error { return a.client.SyncNow(f.ID) }, nil)
+				}
+				m.Separator()
+				if m.Item(L.MenuStopFolder(f.Name)).Danger().Disabled(busy).Chosen() {
 					a.ask(L.ConfirmStopFolderTitle(f.Name), L.ConfirmStopFolderBody(), L.ConfirmStopFolder(), func() {
 						a.do("f-"+f.ID, func() error { return a.client.RemoveFolder(f.ID) }, nil)
 					})

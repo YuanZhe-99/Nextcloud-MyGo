@@ -474,6 +474,13 @@ void Control::networkOutcome(const QString &account,
   if (!network_ || shutdown_ || storageFailed_ || !shutdownOperation_.isEmpty())
     return;
   try {
+    QSqlQuery ready(db_);
+    ready.prepare("SELECT 1 FROM accounts WHERE id=? AND state='ready'");
+    ready.addBindValue(account);
+    execute(ready);
+    if (!ready.next())
+      return; // A late probe of an account being removed.
+    ready.finish();
     refreshNetwork(account);
     auto &state = network_->accounts.at(account);
     const auto now = network_->clock.elapsed();
@@ -980,6 +987,12 @@ void Control::switchFailed(const QString &account, qint64 epoch,
   auto target = q.value(0).toString();
   const auto cause = q.value(1).toString(), operation = q.value(2).toString();
   q.finish();
+  q.prepare("SELECT 1 FROM accounts WHERE id=? AND state='ready'");
+  q.addBindValue(account);
+  execute(q);
+  if (!q.next())
+    return; // Removal ends the account's switching, with no recovery.
+  q.finish();
   accountChange([&] {
     q.prepare("DELETE FROM pending_policies WHERE operation_id=?");
     q.addBindValue(operation);
@@ -1031,6 +1044,13 @@ void Control::endpointResult(const QString &account, bool success,
 #ifdef SYNCD_WITH_ENGINE
   if (!network_ || network_->generation != generation)
     return;
+  QSqlQuery ready(db_);
+  ready.prepare("SELECT 1 FROM accounts WHERE id=? AND state='ready'");
+  ready.addBindValue(account);
+  execute(ready);
+  if (!ready.next())
+    return; // A late cycle of an account being removed.
+  ready.finish();
   refreshNetwork(account);
   auto &state = network_->accounts.at(account);
   const auto now = network_->clock.elapsed();

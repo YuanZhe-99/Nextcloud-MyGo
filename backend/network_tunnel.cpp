@@ -4,7 +4,12 @@
 
 namespace {
 constexpr qint64 headerLimit = 8192, bufferLimit = 65536;
-qint64 bytesPerTick = 8192;
+// Unthrottled by default: faults come from explicit stall points and cuts.
+qint64 bytesPerTick = bufferLimit;
+qint64 stallAfter = 0;
+bool stallPrimary = true;
+quint64 stallCarried[2] = {0, 0}; // upstream, downstream
+constexpr quint64 smallRelay = 1048576;
 QString target;
 constexpr int tickMilliseconds = 10;
 QList<NetworkTunnel *> tunnels;
@@ -12,10 +17,11 @@ QList<NetworkTunnel *> tunnels;
 
 NetworkTunnel::NetworkTunnel(QTcpSocket *client, QUrl primary, QUrl alternate,
                              std::function<bool(bool)> failed,
-                             std::function<bool(bool)> held)
+                             std::function<bool(bool)> held,
+                             bool withholdReplies)
     : QObject(client->parent()), client_(client), primary_(std::move(primary)),
       alternate_(std::move(alternate)), failed_(std::move(failed)),
-      held_(std::move(held)) {
+      held_(std::move(held)), withholdReplies_(withholdReplies) {
   client_->setParent(this);
   client_->setReadBufferSize(bufferLimit);
   remote_.setReadBufferSize(bufferLimit);
@@ -62,6 +68,12 @@ NetworkTunnel::NetworkTunnel(QTcpSocket *client, QUrl primary, QUrl alternate,
 NetworkTunnel::~NetworkTunnel() { tunnels.removeOne(this); }
 
 void NetworkTunnel::setTarget(const QString &host) { target = host; }
+
+void NetworkTunnel::setStallAfter(qint64 bytes, bool primary) {
+  stallAfter = qMax<qint64>(0, bytes);
+  stallPrimary = primary;
+  stallCarried[0] = stallCarried[1] = 0;
+}
 
 void NetworkTunnel::setThroughput(qint64 bytes) {
   bytesPerTick = qBound<qint64>(1, bytes, bufferLimit);
@@ -132,20 +144,42 @@ void NetworkTunnel::tick() {
   }
   if (!ready_)
     return;
+  // Only content-sized relays stall, so probes and small requests stay
+  // healthy; the bytes they carry past their first MiB count together, so a
+  // transfer split over several connections stalls at the same offset.
+  const auto stalls = [&](quint64 own) {
+    return stallAfter && primaryOrigin_ == stallPrimary && own >= smallRelay;
+  };
+  const auto allowance = [&](quint64 own, int way) {
+    if (!stalls(own))
+      return bytesPerTick;
+    return qBound<qint64>(0, stallAfter - qint64(stallCarried[way]),
+                          bytesPerTick);
+  };
   if (!remoteEnded_ && remote_.bytesToWrite() < bufferLimit &&
-      client_->bytesAvailable()) {
-    const auto bytes =
-        client_->read(qMin(bytesPerTick, bufferLimit - remote_.bytesToWrite()));
+      client_->bytesAvailable() && allowance(upstreamBytes_, 0) > 0) {
+    const auto bytes = client_->read(qMin(allowance(upstreamBytes_, 0),
+                                          bufferLimit - remote_.bytesToWrite()));
+    if (stalls(upstreamBytes_))
+      stallCarried[0] += quint64(bytes.size());
     upstreamBytes_ += quint64(bytes.size());
     remote_.write(bytes);
+    // The client speaking again after the server's first flight is the end of
+    // its handshake and the request: everything the server says next is the
+    // reply this relay exists to lose.
+    withheld_ = withheld_ || (withholdReplies_ && replied_ && !bytes.isEmpty());
   }
-  const bool hold =
-      upstreamBytes_ > quint64(bufferLimit) && held_ && held_(primaryOrigin_);
+  const bool hold = withheld_ || (upstreamBytes_ > quint64(bufferLimit) &&
+                                  held_ && held_(primaryOrigin_));
   if (!hold && client_->bytesToWrite() < bufferLimit &&
-      remote_.bytesAvailable()) {
-    const auto bytes =
-        remote_.read(qMin(bytesPerTick, bufferLimit - client_->bytesToWrite()));
+      remote_.bytesAvailable() && allowance(downstreamBytes_, 1) > 0) {
+    const auto bytes = remote_.read(qMin(allowance(downstreamBytes_, 1),
+                                         bufferLimit - client_->bytesToWrite()));
+    if (stalls(downstreamBytes_))
+      stallCarried[1] += quint64(bytes.size());
+    downstreamBytes_ += quint64(bytes.size());
     client_->write(bytes);
+    replied_ = replied_ || !bytes.isEmpty();
   }
   if (remoteEnded_ && remote_.bytesAvailable() == 0 &&
       client_->bytesToWrite() == 0)

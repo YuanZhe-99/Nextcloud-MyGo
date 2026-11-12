@@ -18,20 +18,30 @@ import (
 func (a *App) networkPage(c *ui.Context) {
 	s := a.snap
 	n, _ := s.Network(a.account)
+	auto := s.Daemon.Capabilities["endpointAutoSwitch"]
+	live := s.Daemon.Connected
 	pageHeader(c, L.NavNetwork(), func() {
-		mode := 0
-		if n.Policy == syncd.PolicyFixed {
-			mode = 1
-		}
-		if ui.Segmented(c.Key("net-mode"), &mode, L.NetworkModeAuto(), L.NetworkModeFixed()).Label(L.NetworkHowChosen()).Changed() {
-			pol := syncd.PolicyAuto
-			if mode == 1 {
-				pol = syncd.PolicyFixed
+		// Automatic choice is offered only when SyncD supports it; an
+		// account already on it can still leave it (never presented as
+		// supported otherwise).
+		if auto || n.Policy == syncd.PolicyAuto {
+			mode := 0
+			if n.Policy != syncd.PolicyAuto {
+				mode = 1
 			}
-			id := a.account
-			a.do("policy", func() error { return a.client.SetPolicy(id, pol, "") }, nil)
+			seg := ui.Segmented(c.Key("net-mode"), &mode, L.NetworkModeAuto(), L.NetworkModeFixed()).Label(L.NetworkHowChosen()).Disabled(!live || a.busy["policy"] || a.account == "")
+			if seg.Changed() && (mode == 1 || auto) {
+				pol, fixed := syncd.PolicyAuto, ""
+				if mode == 1 {
+					pol, fixed = syncd.PolicyFixed, n.ActiveID
+					if fixed == "" {
+						fixed = mainEndpoint(s, a.account)
+					}
+				}
+				a.requestPolicy(a.account, pol, fixed)
+			}
 		}
-		if primary(c, "net-add", L.ActionAddAddress(), icPlus).Disabled(a.account == "").Clicked() {
+		if primary(c, "net-add", L.ActionAddAddress(), icPlus).Disabled(a.account == "" || !live).Clicked() {
 			a.addr = addrForm{open: true, accountID: a.account}
 		}
 	})
@@ -39,6 +49,13 @@ func (a *App) networkPage(c *ui.Context) {
 		a.accountTabs(c)
 	}
 	pageBody(c, "net-body", func() {
+		if !auto && s.Daemon.Connected {
+			pl := pal(c)
+			ui.Row(c).FillWidth().Gap(10).Padding(10, 14).Radius(radiusCard).Background(pl.subtle).Children(func() {
+				ui.Icon(c, icInfo).FontSize(16).TextColor(pl.muted)
+				muted(c, L.AutoUnavailable(), 13).Wrap().Grow(1).MinWidth(0)
+			})
+		}
 		ui.Grid(c).ColumnTracks(ui.Fr(1.65), ui.Fr(1)).Gap(20).FillWidth().AlignItems(ui.Start).Children(func() {
 			ui.Column(c).Gap(10).MinWidth(0).Children(func() {
 				sectionTitle(c, L.AddressesOf())
@@ -52,6 +69,25 @@ func (a *App) networkPage(c *ui.Context) {
 			})
 		})
 	})
+}
+
+// mainEndpoint is the ID of an account's main address, or "".
+func mainEndpoint(s syncd.Snapshot, accountID string) string {
+	for _, e := range s.Endpoints {
+		if e.AccountID == accountID && e.Main {
+			return e.ID
+		}
+	}
+	return ""
+}
+
+// requestPolicy asks SyncD for a policy; accepted is not done: the
+// address changes at a safe point, shown as pending meanwhile.
+func (a *App) requestPolicy(accountID string, pol syncd.Policy, fixed string) {
+	a.do("policy", func() error {
+		_, err := a.client.RequestPolicy(accountID, pol, fixed)
+		return err
+	}, nil)
 }
 
 // accountTabs chooses the account whose addresses the page shows.
@@ -80,7 +116,7 @@ func (a *App) accountTabs(c *ui.Context) {
 }
 
 // sortedEndpoints puts the address in use first, then the main one, then
-// the others, and blocked ones last.
+// the others, and those that failed verification last.
 func sortedEndpoints(s syncd.Snapshot, accountID string) []syncd.Endpoint {
 	var out []syncd.Endpoint
 	for _, e := range s.Endpoints {
@@ -92,7 +128,7 @@ func sortedEndpoints(s syncd.Snapshot, accountID string) []syncd.Endpoint {
 		switch {
 		case e.InUse:
 			return 0
-		case e.Blocked:
+		case e.Verified == syncd.VerifyFailed:
 			return 3
 		case e.Main:
 			return 1
@@ -104,34 +140,42 @@ func sortedEndpoints(s syncd.Snapshot, accountID string) []syncd.Endpoint {
 }
 
 // endpointCard is an address: its name, URL, the two trust steps, and how
-// it answers.
+// it answers. A failed verification is a hard block (INV-04); an address
+// not usable for now (unreachable, its breaker open) only says so.
 func (a *App) endpointCard(c *ui.Context, e syncd.Endpoint, n syncd.Network) {
 	p := pal(c)
+	live := a.snap.Daemon.Connected
+	failed := e.Verified == syncd.VerifyFailed
+	usable := e.Verified == syncd.VerifyVerified && e.Reachable && !e.Blocked && live
+	pending := n.RequestedEndpointID == e.ID
 	border, bg, iconCol := p.border, p.pane, p.muted
 	switch {
-	case e.InUse:
+	case e.InUse && live:
 		border, bg, iconCol = p.tintBorder, p.tint.Alpha(0.35), p.success
-	case e.Blocked:
+	case failed:
 		border, bg, iconCol = p.dangerBorder, p.dangerBg, p.danger
 	}
 	icon := kindIcon(e.Kind)
-	if e.Blocked {
+	if failed {
 		icon = icBlock
 	}
 	ui.Row(c.Key("ep-"+e.ID)).FillWidth().Gap(14).Padding(14, 16).Radius(radiusCard).Border(1, border).Background(bg).Children(func() {
 		ui.Icon(c, icon).FontSize(22).TextColor(iconCol)
 		ui.Column(c).Grow(1).MinWidth(0).Gap(4).Children(func() {
-			ui.Row(c).Gap(8).Children(func() {
+			ui.Row(c).Gap(8).Wrap().Children(func() {
 				ui.Text(c, e.Name).FontWeight(600)
 				switch {
-				case e.InUse:
+				case e.InUse && live:
 					pill(c, L.EndpointInUse(), p.accent, p.onAccent)
-				case e.Main:
+				case pending:
+					pill(c, L.EndpointSwitchingTo(), p.tint, p.accentText)
+				}
+				if e.Main {
 					pill(c, L.EndpointMain(), p.hover, p.muted)
 				}
 			})
-			muted(c, e.URL, 13)
-			if e.Blocked {
+			muted(c, e.URL, 13).Ellipsis("…").MaxLines(1)
+			if failed {
 				ui.Text(c, L.TrustBlocked()).FontSize(fontSmall).FontWeight(600).TextColor(p.danger).Wrap()
 				return
 			}
@@ -142,47 +186,57 @@ func (a *App) endpointCard(c *ui.Context, e syncd.Endpoint, n syncd.Network) {
 				switch e.Verified {
 				case syncd.VerifyVerified:
 					trustStep(c, icCheck, L.TrustVerified(), p.success)
-				case syncd.VerifyPending:
+				default:
 					trustStep(c, icClock, L.TrustPending(), p.warn)
 				}
 			})
 		})
-		switch {
-		case e.Blocked:
-			if button(c, "ep-rm-"+e.ID, L.ActionRemove(), nil).Disabled(a.busy["ep-"+e.ID]).Clicked() {
-				a.do("ep-"+e.ID, func() error { return a.client.RemoveEndpoint(e.ID) }, nil)
-			}
-		case e.Verified == syncd.VerifyPending:
-			if button(c, "ep-verify-"+e.ID, L.ActionVerifyNow(), nil).Disabled(a.busy["ep-"+e.ID]).Clicked() {
-				a.do("ep-"+e.ID, func() error { return a.client.VerifyEndpoint(e.ID) }, nil)
-			}
-		case n.Policy == syncd.PolicyFixed && !e.InUse && e.Reachable:
-			if button(c, "ep-use-"+e.ID, L.ActionUseThis(), nil).Disabled(a.busy["policy"]).Clicked() {
-				id, acc := e.ID, e.AccountID
-				a.do("policy", func() error { return a.client.SetPolicy(acc, syncd.PolicyFixed, id) }, nil)
-			}
-		default:
-			ui.Column(c).AlignItems(ui.End).Shrink(0).Children(func() {
-				if !e.Reachable {
-					muted(c, L.Unreachable(), 13)
-					return
+		ui.Row(c).Gap(8).Shrink(0).AlignSelf(ui.Center).Children(func() {
+			switch {
+			case failed:
+			case e.Verified != syncd.VerifyVerified:
+				if button(c, "ep-verify-"+e.ID, L.ActionVerifyNow(), nil).Disabled(a.busy["ep-"+e.ID] || !live).Clicked() {
+					a.do("ep-"+e.ID, func() error { return a.client.VerifyEndpoint(e.ID) }, nil)
 				}
-				word := L.LatencyReachable()
-				if fastest(a.snap, e) {
-					word = L.LatencyFastest()
+			case n.Policy != syncd.PolicyAuto && !e.InUse && usable && !pending:
+				if button(c, "ep-use-"+e.ID, L.ActionUseThis(), nil).Disabled(a.busy["policy"] || n.RequestedEndpointID != "").Clicked() {
+					a.requestPolicy(e.AccountID, syncd.PolicyFixed, e.ID)
 				}
-				ui.Text(c, word).FontSize(13)
-				muted(c, L.LatencyMs(strconv.Itoa(e.LatencyMs)), fontSmall)
+			default:
+				ui.Column(c).AlignItems(ui.End).Children(func() {
+					if !usable {
+						muted(c, L.Unreachable(), 13)
+						return
+					}
+					word := L.LatencyReachable()
+					if e.LatencyMs > 0 && fastest(a.snap, e) {
+						word = L.LatencyFastest()
+					}
+					ui.Text(c, word).FontSize(13)
+					if e.LatencyMs > 0 {
+						muted(c, L.LatencyMs(strconv.Itoa(e.LatencyMs)), fontSmall)
+					}
+				})
+			}
+			if e.Main || e.InUse {
+				return // SyncD keeps the main address and the one in use
+			}
+			button(c, "ep-more-"+e.ID, "", icMore).Label(L.ActionMore()).Tooltip(L.ActionMore()).PopoverMenuButton(func(m *ui.Menu) {
+				if m.Item(L.MenuRemoveAddress()).Danger().Disabled(a.busy["ep-"+e.ID] || !live || pending).Chosen() {
+					a.ask(L.ConfirmRemoveAddressTitle(e.Name), L.ConfirmRemoveAddressBody(), L.ActionRemove(), func() {
+						a.do("ep-"+e.ID, func() error { return a.client.RemoveEndpoint(e.ID) }, nil)
+					})
+				}
 			})
-		}
+		})
 	})
 }
 
 // fastest tells whether e answers fastest of its account's reachable,
-// trusted addresses.
+// trusted addresses whose answer time is known.
 func fastest(s syncd.Snapshot, e syncd.Endpoint) bool {
 	for _, o := range s.Endpoints {
-		if o.AccountID == e.AccountID && o.Reachable && !o.Blocked && o.Verified == syncd.VerifyVerified && o.LatencyMs < e.LatencyMs {
+		if o.AccountID == e.AccountID && o.Reachable && !o.Blocked && o.Verified == syncd.VerifyVerified && o.LatencyMs > 0 && o.LatencyMs < e.LatencyMs {
 			return false
 		}
 	}
@@ -197,23 +251,37 @@ func trustStep(c *ui.Context, icon *ui.SVG, word string, col ui.Color) {
 	})
 }
 
-// whyCard says why the address in use was chosen, in words.
+// whyCard says why the address in use was chosen, in words: SyncD's
+// reasons when it gives them, else what the snapshot itself shows (the
+// address verified, chosen by the user), never a guess.
 func (a *App) whyCard(c *ui.Context, n syncd.Network) {
 	p := pal(c)
 	e, ok := a.snap.Endpoint(n.ActiveID)
-	if !ok {
+	if !ok || !a.snap.Daemon.Connected {
 		return
+	}
+	why := n.Why
+	if len(why) == 0 {
+		if e.Verified == syncd.VerifyVerified {
+			why = append(why, syncd.ReasonVerified)
+		}
+		if n.Policy == syncd.PolicyFixed && !e.Main {
+			why = append(why, syncd.ReasonUserChoice)
+		}
 	}
 	ui.Column(c).Gap(10).Padding(16).Radius(radiusCard).Background(p.subtle).Children(func() {
 		sectionTitle(c, L.WhyTitle(e.Name))
-		if n.Switching {
+		if n.Switching || n.RequestedEndpointID != "" {
 			ui.Text(c, L.Switching()).FontSize(13).TextColor(p.accentText).Wrap()
 		}
-		for _, r := range n.Why {
+		for _, r := range why {
 			var words string
 			switch r {
 			case syncd.ReasonVerified:
 				words = L.WhyVerified()
+				if e.Main {
+					words = L.WhyMain()
+				}
 			case syncd.ReasonFaster:
 				if n.Speedup < 2 {
 					continue
@@ -251,7 +319,7 @@ func (a *App) switchList(c *ui.Context) {
 	}
 	ui.Column(c).Children(func() {
 		ui.Box(c).Margin(0, 0, 8, 0).Children(func() { sectionTitle(c, L.RecentSwitches()) })
-		if len(list) == 0 {
+		if len(list) == 0 && stateKnown(s) {
 			muted(c, L.NoSwitches(), 13)
 		}
 		now := time.Now()
@@ -264,6 +332,8 @@ func (a *App) switchList(c *ui.Context) {
 				body = L.SwitchUnreachable()
 			case syncd.ReasonUserChoice:
 				body = L.SwitchUser()
+			case syncd.ReasonFaster:
+				body = L.SwitchFaster()
 			case syncd.ReasonPostponed:
 				title, body = L.SwitchPostponedTitle(int(sw.Postponed/time.Minute)), L.SwitchPostponedBody()
 			}
@@ -290,9 +360,10 @@ type addrForm struct {
 	open      bool
 	accountID string
 	name, url string
-	invalid   bool
-	staged    *syncd.Staging
-	agree     bool
+	// failed says why the address could not be looked at, or "".
+	failed string
+	staged *syncd.Staging
+	agree  bool
 }
 
 // addrDialog adds an address in two trust steps: the user approves the
@@ -324,8 +395,8 @@ func (a *App) addrDialog(c *ui.Context) {
 				ui.Column(c).Grow(2).Gap(6).Children(func() {
 					ui.Text(c, L.FieldAddress()).FontSize(13).FontWeight(600)
 					in := ui.TextInput(c.Key("addr-url"), &f.url).Placeholder("https://cloud.vpn.example").ReadOnly(f.staged != nil).Label(L.FieldAddress())
-					if f.invalid {
-						in.Error(L.AddressInvalid())
+					if f.failed != "" {
+						in.Error(f.failed)
 					}
 				})
 			})
@@ -374,10 +445,13 @@ func (a *App) stageAddress() {
 		st, err := a.client.StageEndpoint(f.accountID, name, f.url)
 		a.later(func() {
 			if err != nil {
-				a.addr.invalid = true
+				a.addr.failed = L.AddressInvalid()
+				if t := reasonText(syncd.ReasonOf(err)); t != "" {
+					a.addr.failed = t
+				}
 				return
 			}
-			a.addr.invalid, a.addr.staged, a.addr.name = false, &st, name
+			a.addr.failed, a.addr.staged, a.addr.name = "", &st, name
 		})
 		return nil
 	}, nil)

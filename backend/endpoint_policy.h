@@ -78,10 +78,15 @@ public:
   void activated(const QString &id, qint64 now);
   /// Health exposes scheduling evidence without exposing credentials or network
   /// identifiers.
+  /// Notes: latencyMs is the smoothed probe round trip once a probe has
+  /// succeeded (0 before); quarantined and authBlocked name why failed is set
+  /// when it is not the circuit.
   struct Health {
     bool failed = false, fresh = false, halfOpen = false;
     int successes = 0;
     qint64 span = 0;
+    qint64 latencyMs = 0;
+    bool quarantined = false, authBlocked = false;
   };
   /// health reports current circuit/security and sample freshness to the
   /// bounded probe scheduler.

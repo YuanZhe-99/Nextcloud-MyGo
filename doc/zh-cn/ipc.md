@@ -2,7 +2,7 @@
 
 ## 契约
 
-协议 1.7 在本地 Named Pipe 上传输 JSON-RPC 2.0：四字节小端长度后跟 UTF-8 JSON，
+协议 1.9 在本地 Named Pipe 上传输 JSON-RPC 2.0：四字节小端长度后跟 UTF-8 JSON，
 最多 1 MiB、64 层嵌套容器。重复对象键无效。`protocol/contract.json` 记录方法及能力门槛。
 `protocol/fixtures.json` 由 Go 和 C++ 契约测试共享。线上状态投影使用小驼峰字段名。
 夹具的 `valid` 表示 JSON 边界接受与否；RPC 消息外形与方法校验单独测试。
@@ -23,8 +23,52 @@
 
 ## 实现范围
 
+协议 1.9 与 Control schema 11 增加界面和安装程序需要的内容（示例见 `protocol/state.examples.json`，
+schema 见 `protocol/message.schema.json`）：
+
+- 多个账号。可以在同一或另一台服务器上添加第二个账号；同一服务器上的同一用户（相同 UID 与 DAV
+  根身份，无论使用哪个地址）在其登录证明身份后被拒绝，返回 `ACCOUNT_EXISTS`，该登录取得的密码被撤销。
+  `multiAccount` 能力报告这一点（[账号](accounts.md)）。
+- 账号移除不再因账号忙碌而被拒绝：`accounts.remove` 停止该账号的登录、引擎与检查，移除其映射
+  （文件与日志数据库保留），然后照旧撤销密码。
+- `account.auth` 为 `signedIn`、`needsSignIn`（凭据无法在本机使用，或续期正在等待浏览器）或 `revoked`
+  （服务器拒绝了应用密码）；`signedIn` 保留，等于 `auth == signedIn`。
+- 周期运行时 `folder.phase` 为 `checking`、`uploading` 或 `downloading`，否则为空；`folder.filesDone`
+  统计本周期已完成的文件。运行中的周期在两者变化时最多每秒发布一次快照事件。
+- `endpoint.latencyMs`（平滑后的探测往返时间，探测成功前为 0）、`endpoint.kind`（`internet`、`home`、
+  `vpn`，在 `endpoints.stage` 用可选的 `kind` 选择，从不影响信任）以及 `endpoint.blockedReason`：
+  `blocked` 为 true 的唯一原因，按强弱排序：安全隔离、`AUTH_REQUIRED`、`VERIFICATION_PENDING` 或
+  `NETWORK_UNAVAILABLE`。
+- `network.why`（选择当前地址的原因）、`network.switchReason` 与 `network.switched`（最近一次已提交的切换）。
+- 批量删除携带 `groups`（最多八个顶层条目及其文件数，零散文件合为一组）。上游保留的冲突副本是 `conflict`
+  类决定，带 `file` 与 `copy`；`resolved` 关闭一条，两个副本都保留。
+- `daemon.prepareUpdate(targetVersion)` 已分派。删除等待用户时拒绝并返回 `DECISION_PENDING`，切换、
+  续期、地址检查、登录或移除进行中时返回 `QUIESCE_STALLED`；否则不再开始新周期，运行中的周期自然结束，
+  写出一致的 Control 副本 `control.pre-update.<id>.sqlite`（只保留最新一份），回执以 `{"ready": true}`
+  成功。保持状态持续十分钟或直到关闭。之后 `daemon.startupReport` 说明一次启动从何迁移
+  （`previousVersion`、`previousSchema`、`schema`）以及自检是否通过（`selfCheck`：pending、passed 或
+  failed，并带 `reasonCodes`）。
+- `engine` 能力区分链接上游引擎的构建与基础构建。
+- `folders.inspect` 接受尚不存在、但父目录存在的本地目录（`localExists` 为 false）；随后 `folders.add`
+  将其创建为空目录。
+
+Go 客户端发送 `minor: 9`，把 `ACCOUNT_EXISTS` 映射为 `ErrAccountExists`、`DECISION_PENDING` 映射为
+`ErrBusy`，并提供从不启动 SyncD 的 `ConnectRemote`，以及 `Remote.Disconnect`：供诊断使用的稳定短语，
+说明上一次连接为何结束。`nextcloud-mygo-syncd.exe --version` 输出一行包含版本、协议与 Control schema
+的 JSON，不启动任何东西（[打包](packaging.md)）。
+
+协议 1.8 增加目录文件模式（[按需文件](on-demand.md)）。`folders.add` 接受可选的 `mode`：`full`（默认）或
+`onDemand`；其他取值或非字符串为 `INVALID_PARAMS`，缺少 CFAPI 插件时 `onDemand` 为 `UNSUPPORTED_CAPABILITY`。
+模式在目录的整个生命周期内固定，由 Control schema 10 存储（`folders.mode`，既有行为 `full`），每个目录投影都携带它。
+移除按需目录时先注销其 Cloud Files 注册；其按需下载仍在运行时拒绝并返回 `QUIESCE_STALLED`。`virtualFiles` 能力仍为
+false：按需路径已在原生 ARM64 上通过 SyncD 的引擎运行时针对真实服务器运行，但尚未经过配对守护进程与界面。参见
+`protocol/folders.schema.json`（`addParams`）和 `protocol/folders.examples.json`（`addOnDemand`）。Go 客户端解码
+`Folder.Mode`，`AddFolder` 接受可选的模式；schema 9 的映射迁移后为 `full`（`testFolderModeMigration`）。界面中选择模式
+尚待加入。
+
 协议 1.7 增加显式启动可用性及稳定目录 `reasonCode` 投影。Control schema 8 正在集成
-持久账号级服务器限流（此前启动验收使用 schema 7）。
+持久账号级服务器限流（此前启动验收使用 schema 7）。Control schema 9 仅新增
+`held_revocations` 表（[账号](accounts.md)）；协议 1.7 的方法、字段、事件和错误均未随之改变。
 `snapshot.daemon.stateAvailable=false` 表示账号/文件状态未知：快照省略全部账号/目录/
 端点/网络/切换/决策/活动数组，而非报告空的成功结果。`startupState` 为 `normal`、
 `backoff`、`diagnostic`、`stopped` 或 `databaseUnavailable`。经过认证的诊断 bootstrap
@@ -103,12 +147,12 @@ origin。旧回执保持失败；不重放记录的 HTTP 写入。此前硬验�
 重用旧操作键仍返回原来的结果。
 
 链接引擎的构建实现了 `folders.inspect`、`folders.add`、`folders.pause`、`folders.resume`、
-`folders.syncNow` 和 `folders.remove`。检查目前要求本地目录已经存在；返回的五分钟 token
+`folders.syncNow` 和 `folders.remove`。检查接受已存在的本地目录，自 1.9 起也接受父目录存在、自身尚不存在的目录；返回的五分钟 token
 绑定两侧根身份，添加时重新检查。移除映射保留文件及 journal；运行中的映射须先静止。
-移除账号前须移除其目录映射。仅基础层的构建拒绝这些引擎操作。
+自 1.9 起移除账号时会自行移除其目录映射。仅基础层的构建拒绝这些引擎操作。
 
 `decisions.list` 及快照公开带有 `localDeletes`、`remoteDeletes`、`digest` 和 `expires` 的
-`bulkDeletions`。`decisions.resolve` 接受 `decisionId`、`proposalDigest` 及取值为
+`bulkDeletions`（自 1.9 起还有 `groups`）。`decisions.resolve` 接受 `decisionId`、`proposalDigest` 及取值为
 `approveDeletion` 或 `later` 的 `action`；批准消耗待处理决策，
 并授权在提案创建后十分钟内进行一次摘要匹配的重新发现。重启使旧提案失效。批准不代表
 传播成功：须观察目录状态及可能替换的决策。当前 UI 仍需增加此类决策的操作控件。
@@ -117,7 +161,7 @@ origin。旧回执保持失败；不重放记录的 HTTP 写入。此前硬验�
 端点切换协调器作为独立控制线程组件检查信任、身份、epoch 和静止条件；引擎适配器必须
 提供实际静止证明后才可激活端点。登录现使用内存中的 Login Flow v2 会话和 Windows
 凭据管理器，见[账号](accounts.md)。`accounts.login.status` 以独立于启动操作的会话 ID
-查询状态。更新准备、完整同步和自动切换在完整路径实现前保持能力禁用。Mock 保留为显式开发模式。
+查询状态。完整同步和自动切换在完整路径实现前保持能力禁用。Mock 保留为显式开发模式。
 
 Windows 守护进程在当前用户的应用数据目录下拥有按 profile 哈希区分的 Control DB。
 SQLite 连接留在 Qt 线程；设置、操作回执和 outbox 行以完全同步持久性一起提交。

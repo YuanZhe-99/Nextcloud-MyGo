@@ -50,12 +50,20 @@ type Client interface {
 
 	// RemoteFolders lists the folders at the top of an account's files.
 	RemoteFolders(accountID string) ([]RemoteFolder, error)
-	AddFolder(accountID, remotePath, localPath string) error
+	// AddFolder maps a remote folder to a local one (folders.add); mode, at
+	// most one, is fixed for the folder's lifetime and defaults to FolderFull.
+	AddFolder(accountID, remotePath, localPath string, mode ...FolderMode) error
 
-	SetPolicy(accountID string, policy Policy, fixedEndpointID string) error
+	// RequestPolicy asks SyncD to choose addresses automatically or to
+	// always use fixedEndpointID (endpoints.setPolicy).
+	// Returns: once SyncD accepted it; the change completes at a safe point,
+	// and Network.RequestedEndpointID shows a fixed target still pending.
+	RequestPolicy(accountID string, policy Policy, fixedEndpointID string) (operationID string, err error)
 	// StageEndpoint looks at an address without sending any credential
 	// (endpoints.stage).
-	StageEndpoint(accountID, name, url string) (Staging, error)
+	// kind, at most one, says how the address is reached (protocol 1.9);
+	// it never affects trust and defaults to KindInternet.
+	StageEndpoint(accountID, name, url string, kind ...EndpointKind) (Staging, error)
 	// ApproveEndpoint records the user's permission to send the account's
 	// credential to the staged origin, then verifies it is the same server.
 	ApproveEndpoint(stagingID string) (endpointID string, err error)
@@ -67,6 +75,13 @@ type Client interface {
 	PrepareUpdate(targetVersion string) error
 	// Shutdown stops background sync (daemon.shutdown).
 	Shutdown() error
+
+	// Diagnostics reads SyncD's sanitized runtime counters
+	// (diagnostics.snapshot); it works while application state is unavailable.
+	Diagnostics(ctx context.Context) (RuntimeDiagnostics, error)
+	// ExportDiagnostics writes a local sanitized support bundle
+	// (diagnostics.export). Returns: the bundle's path, for Diagnostics only.
+	ExportDiagnostics() (path string, err error)
 }
 
 // Errors the interface tells apart.
@@ -78,7 +93,19 @@ var (
 	ErrRevocationUnconfirmed = errors.New("syncd: account removed; server credential revocation unconfirmed")
 	ErrCredentialCleanup     = errors.New("syncd: app-password revocation unconfirmed")
 	ErrStateUnavailable      = errors.New("syncd: application state is unavailable")
+	// ErrAccountExists: this user on this server is already an account.
+	ErrAccountExists = errors.New("syncd: this account is already added")
 )
+
+// ReasonOf returns the stable reason code SyncD gave for err
+// (PLAN.md §13.8), or "" when err carries none.
+// Notes: for the interface to put into words; never shown as it is.
+func ReasonOf(err error) string {
+	if e, ok := errors.AsType[*rpcError](err); ok {
+		return e.Data.Reason
+	}
+	return ""
+}
 
 // Snapshot is SyncD's whole state as the interface shows it.
 // Notes: nil collections mean unknown, not a confirmed empty account or folder list.
@@ -116,12 +143,30 @@ type Daemon struct {
 	Capabilities map[string]bool `json:"capabilities"`
 	Version      string          `json:"version"`
 	Protocol     int             `json:"protocol"`
+	// ProtocolMinor is the minor version session.hello negotiated.
+	ProtocolMinor int `json:"-"`
 	// Demo is true for Mock: the interface says it shows sample data.
 	Demo bool `json:"demo"`
 	// AllPaused is the user's pause of every folder.
 	AllPaused bool `json:"allPaused"`
 	// CheckedAt is when the last full check of every folder ended.
 	CheckedAt time.Time `json:"checkedAt"`
+	// StartupReport says what this start migrated from and whether its
+	// self-check passed (protocol 1.9), for the installer after an update.
+	StartupReport StartupReport `json:"startupReport"`
+}
+
+// StartupReport is what a SyncD start found after an update.
+type StartupReport struct {
+	// PreviousVersion is the SyncD version that used this profile before;
+	// empty on a new profile or one last used before protocol 1.9.
+	PreviousVersion string `json:"previousVersion"`
+	// PreviousSchema and Schema are the Control schemas before and after.
+	PreviousSchema int `json:"previousSchema"`
+	Schema         int `json:"schema"`
+	// SelfCheck is pending, passed or failed; ReasonCodes say why it failed.
+	SelfCheck   string   `json:"selfCheck"`
+	ReasonCodes []string `json:"reasonCodes"`
 }
 
 // Account is one Nextcloud account: its identity never depends on the
@@ -131,9 +176,26 @@ type Account struct {
 	User        string
 	DisplayName string
 	// Server is the canonical address's host, as people know it.
-	Server   string
+	Server string
+	// Auth is whether the account's credential still works (protocol 1.9);
+	// empty means a daemon before 1.9, which reported SignedIn only.
+	Auth     AuthState `json:"auth"`
 	SignedIn bool
 }
+
+// AuthState is whether an account's credential still works.
+type AuthState string
+
+const (
+	// AuthSignedIn: nothing is known to be wrong with the credential.
+	AuthSignedIn AuthState = "signedIn"
+	// AuthNeedsSignIn: the credential cannot be used on this computer (its
+	// store refused it or it is missing), or a renewal waits for the browser.
+	AuthNeedsSignIn AuthState = "needsSignIn"
+	// AuthRevoked: the server refused the app password; it was revoked or
+	// expired there, and signing in again replaces it.
+	AuthRevoked AuthState = "revoked"
+)
 
 // FolderState is what a folder is doing, for the interface to say.
 type FolderState string
@@ -170,11 +232,27 @@ type Folder struct {
 	// UserPaused is kept apart from every other blocking reason, which
 	// never overrides it (INV-13).
 	UserPaused bool
-	Phase      Phase
+	// Mode is fixed when the folder is added; empty means a daemon before
+	// protocol 1.8, which knew only full-file folders.
+	Mode FolderMode `json:"mode"`
+	// Phase is what a syncing folder does now; empty while it does not sync
+	// (protocol 1.9; earlier daemons always said checking).
+	Phase Phase `json:"phase"`
 	// FilesDone counts the files of the current cycle so far; SyncD gives
 	// no total while discovery runs, so there is none to show.
-	FilesDone int
+	FilesDone int `json:"filesDone"`
 }
+
+// FolderMode is how a folder keeps its files on this computer.
+type FolderMode string
+
+const (
+	// FolderFull downloads every file.
+	FolderFull FolderMode = "full"
+	// FolderOnDemand keeps Windows Cloud Files placeholders and downloads a
+	// file when it is opened (protocol 1.8).
+	FolderOnDemand FolderMode = "onDemand"
+)
 
 // Policy is how an account's address is chosen.
 type Policy string
@@ -216,9 +294,15 @@ type Endpoint struct {
 	Approved bool
 	Verified Verification
 	// Blocked is a hard block no score overrides (INV-04).
-	Blocked   bool
-	Reachable bool
-	LatencyMs int
+	Blocked bool
+	// BlockedReason is the one reason code Blocked has, strongest first:
+	// a security quarantine (TLS_ERROR, ENDPOINT_IDENTITY_MISMATCH,
+	// ENDPOINT_UNTRUSTED), AUTH_REQUIRED, VERIFICATION_PENDING or
+	// NETWORK_UNAVAILABLE; empty when not blocked (protocol 1.9).
+	BlockedReason string `json:"blockedReason"`
+	Reachable     bool
+	// LatencyMs is the smoothed probe round trip; 0 before a probe succeeded.
+	LatencyMs int `json:"latencyMs"`
 	InUse     bool
 }
 
@@ -271,12 +355,11 @@ type Switch struct {
 type DecisionKind string
 
 const (
-	// DecisionLocalDeletions: many files were deleted on this PC; their
-	// deletion on the server waits for the user (deletion protection).
-	DecisionLocalDeletions DecisionKind = "localDeletions"
-	// DecisionBulkDeletions reports the separate local and remote effects of a guarded cycle.
+	// DecisionBulkDeletions: a cycle would delete many files; it waits for
+	// the user (deletion protection, PLAN.md §11.2–§11.3).
 	DecisionBulkDeletions DecisionKind = "bulkDeletions"
-	// DecisionConflict: a file changed in both places; both were kept.
+	// DecisionConflict: a file changed in both places; both were kept
+	// (protocol 1.9: SyncD reports each conflict copy upstream kept).
 	DecisionConflict DecisionKind = "conflict"
 )
 
@@ -284,12 +367,12 @@ const (
 type Action string
 
 const (
-	ActionRestore      Action = "restore"
-	ActionDeleteRemote Action = "deleteRemote"
-	ActionLater        Action = "later"
-	ActionResolved     Action = "resolved"
+	// ActionLater keeps a proposal pending; nothing is deleted.
+	ActionLater Action = "later"
 	// ActionApproveDeletion authorizes one matching, unexpired recomputed proposal.
 	ActionApproveDeletion Action = "approveDeletion"
+	// ActionResolved closes a conflict notice; both copies stay.
+	ActionResolved Action = "resolved"
 )
 
 // Decision waits for the user.
@@ -300,12 +383,16 @@ type Decision struct {
 	FolderID  string
 	// Digest binds an answer to exactly this proposal.
 	Digest string
-	// Count is how many files a deletion proposal covers.
+	// Count is how many files a deletion proposal covers: LocalDeletes
+	// would go on this PC, RemoteDeletes on the server.
 	Count         int
 	LocalDeletes  int
 	RemoteDeletes int
-	Expires       time.Time
-	Groups        []FileGroup
+	// Expires is when an approval stops being accepted; the folder is then
+	// checked again and a new proposal made.
+	Expires time.Time
+	// Groups are what the proposal covers, when SyncD names it.
+	Groups []FileGroup
 	// File and Copy name a conflict's file and the copy kept beside it.
 	File string
 	Copy string

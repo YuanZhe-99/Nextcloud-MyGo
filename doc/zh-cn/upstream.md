@@ -56,8 +56,23 @@ M0 检出为 `third_party/nextcloud` 中的提交
 
 Windows 实现在 `src/libsync/vfs/cfapi`（`vfs_cfapi`、`hydrationjob`、`cfapiwrapper`）及其
 `shellext` 子树。`CfApiWrapper` 提供注册与注销操作；`VfsCfApi` 在生命周期中调用它们。
-这些会真实改变系统，因此 M0 必须保持插件未激活。产品专属注册标识、下载静止边界及完整清理
-仍属 M6 工作；此处尚未运行上游实现。
+SyncD 为按需目录复用该插件（[按需文件](on-demand.md)）；Desktop v35.0.3 的以下要点决定了集成方式
+（已阅读，并由按需运行覆盖）：
+
+- 同步根 ID 为 `provider!SID!账号显示名!alias`，而显示名是 `user@host[:port]`：端点切换会把同一目录注册到
+  第二个注册项下并遗留第一个。补丁 0017 增加 `VfsSetupParams::syncRootAccountId`。
+- `createSyncRootRegistryKeys` 总会写入 Shell 扩展的处理类和导航窗格类。不构建扩展时，这些 ID 在本机未注册，
+  或属于已安装的官方客户端。补丁 0017 只在扩展已注册时写入它们。
+- 当某提供程序的同步根全部移除时，`unregisterFolder` 会删除 HKCU 下的 Shell 扩展类注册项；这些类 ID 是上游
+  自己的，因此可能删除另一套安装的注册。SyncD 只调用 `CfApiWrapper::unregisterSyncRoot`。
+- 按需下载和目录填充回调运行在 Cloud Files 线程上，在本地事件循环中等待 VFS 线程上排队的工作，并读取
+  `params().account`。在回调运行期间断开或销毁 VFS，会让该线程永久等待。补丁 0017 增加由回调自身计数的
+  `Vfs::refuseNewRequests` 与 `Vfs::hasRequestsInFlight`。
+- 新的远程目录成为按需目录（`postProcessServerNew`）；列举它时会请求提供程序通过 `Account::listRemoteFolder`
+  填充，这发生在同步周期之外，并在 VFS 线程上写 journal。来自提供程序自身进程的请求会被拒绝。
+- 插件及其 Shell 扩展受 `BUILD_SHELL_INTEGRATION` 控制（补丁 0001）；补丁 0017 为单独构建插件增加
+  `BUILD_CFAPI_VFS`。
+- `Folder::setVirtualFilesEnabled` 会删除并重建 journal，因此不提供切换目录模式。
 
 macOS 扩展目标在 `shell_integration/MacOSX/NextcloudIntegration/FileProviderExt`。
 其桩文件将实际实现指定为 `shell_integration/MacOSX/NextcloudFileProviderKit` 中的
@@ -71,6 +86,7 @@ macOS 扩展目标在 `shell_integration/MacOSX/NextcloudIntegration/FileProvide
 |---|---|---|
 | Login Flow v2 打开系统浏览器并轮询取得应用密码 | 由 SyncD 执行登录；界面永远拿不到应用密码 | 已阅读 |
 | WebDAV `oc:id` 带有实例命名空间；`oc:fileid` 只在实例内唯一 | 身份校验比较完整的 `oc:id`，从不只比较 `fileid` | 已阅读 |
+| MOVE 保留条目的 `oc:fileid`；分块会话的最终 MOVE 在文件组装完成后才应答；已提交的写入即使回复丢失也仍然已提交 | 上游发现按文件 ID 识别已改名的条目、按校验和识别已组装的文件，因此回复丢失通过重新发现恢复，绝不通过第二个请求恢复 | 针对服务器 35.0.2 的真实运行 |
 
 ## Qt
 

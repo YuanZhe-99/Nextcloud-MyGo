@@ -87,7 +87,7 @@ void unavailable(Control &control, const QString &state) {
                       .toObject()
                       .value("protocol")
                       .toObject()
-                      .value("minor") == 7,
+                      .value("minor") == 9,
           "diagnostic hello failed");
   subscribed = true;
   const auto reply = control

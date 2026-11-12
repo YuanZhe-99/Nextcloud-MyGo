@@ -20,6 +20,10 @@ public:
     QString localIdentity, remoteIdentity;
     quint64 epoch = 0;
     std::shared_ptr<quint64> networkGeneration;
+    /// onDemand serves the folder as Windows Cloud Files placeholders; the
+    /// folder and account IDs then name its sync root.
+    bool onDemand = false;
+    QString folderId, accountId;
   };
   /// Result reports sanitized completion only after teardown; it is not a
   /// switch-quiescence proof.
@@ -35,6 +39,13 @@ public:
     /// retryAfterMs is an internal remaining monotonic delay, not an IPC field;
     /// zero is absent/expired and -1 forbids an earlier automatic retry.
     qint64 retryAfterMs = 0;
+    /// groups names what a held deletion proposal covers: up to eight
+    /// top-level entries with their file counts, as compact JSON
+    /// [{"name","files","loose"}] (protocol 1.9).
+    QByteArray groups;
+    /// conflicts lists the conflict copies upstream kept, as compact JSON
+    /// [[copy, original]] of folder-relative paths, after a finished cycle.
+    QByteArray conflicts;
   };
   /// Requests counts creation, active/retained replies, live managers and
   /// unconfirmed writes without recording paths, headers, credentials or
@@ -63,6 +74,12 @@ public:
   void stop();
   /// active remains true through engine and deferred-discovery teardown.
   bool active() const;
+  /// closeRequests refuses new hydration and placeholder requests of an
+  /// on-demand folder until the next cycle or rebinding reconnects it.
+  void closeRequests();
+  /// quiescent is true when no cycle and no on-demand request of this epoch is
+  /// running; a running hydration is a transfer the switch waits for (§2.3).
+  bool quiescent() const;
   /// epoch identifies the immutable binding used for this adapter's cycle
   /// results.
   quint64 epoch() const;
@@ -72,6 +89,9 @@ public:
   /// requests returns cumulative request-creation counters, not transferred
   /// byte measurements.
   Requests requests() const;
+  /// filesDone counts the files the current cycle completed so far; there is
+  /// no total while discovery runs.
+  quint64 filesDone() const;
   /// Retirement reports actual resource destruction and commit status
   /// separately from uncertainty; it is not proof that remote writes have been
   /// reconciled.
@@ -108,6 +128,9 @@ private:
   /// createAccount constructs only the private network/credential context for
   /// the current binding.
   void createAccount();
+  /// connectOnDemand connects an on-demand folder's sync root to the current
+  /// account and journal; a no-op for full-file folders.
+  void connectOnDemand();
   /// State keeps upstream implementation headers out of the domain and IPC
   /// boundaries.
   struct State;

@@ -34,6 +34,14 @@ is recorded in [platform notes](platform-notes.md), with remaining switch blocke
 
 ## Current switch blockers
 
+2026-11-11 real acceptance against server 35.0.2: the MOVE and chunked-upload rows of the table
+above (S06–S08) were run with the reply of a committed request lost and the origin changed before
+recovery. No request was replayed: a committed MOVE and a committed DELETE of existing entries,
+with the path created again by another client, and the committed final MOVE of a chunk session all
+converged by rediscovery, with the server file ID and ETag of the committed result unchanged
+([platform notes](platform-notes.md)). Destination encoding under an installation subpath or with
+non-ASCII names (N06) was not run.
+
 2026-11-09 portable-resume source audit of Desktop v35.0.3: `propagateuploadv1.cpp:51–68`
 persists single-PUT uncertainty with zero transfer ID/chunk and a content checksum; `discovery.cpp:1952–2003`
 compares that checksum after remote discovery. `propagatedownload.cpp:662–742` uses relative local

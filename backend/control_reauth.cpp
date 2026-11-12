@@ -270,6 +270,12 @@ bool Control::reauthChanged(LoginFlow &flow) {
     if (failed) {
       cancellations_.erase(flow.id);
 #ifdef SYNCD_WITH_ENGINE
+      q.prepare("SELECT 1 FROM accounts WHERE id=? AND state='ready'");
+      q.addBindValue(flow.accountId);
+      execute(q);
+      if (!q.next())
+        return true; // Removal cancelled this renewal; nothing resumes.
+      q.finish();
       runtime_->blockAccount(flow.accountId, "reauthInProgress", false);
       if (retired)
         reloadCredentials(flow.accountId);

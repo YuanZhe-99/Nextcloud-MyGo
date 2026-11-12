@@ -1,7 +1,18 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "SyncD 1.2 folder inspection and deletion proposal results",
+  "title": "SyncD 1.9 folder inspection and decision results",
   "$defs": {
+    "addParams": {
+      "type": "object",
+      "required": ["operationKey", "expectedRevision", "inspectToken"],
+      "properties": {
+        "operationKey": {"type": "string", "format": "uuid"},
+        "expectedRevision": {"type": "string", "pattern": "^[0-9]+$"},
+        "inspectToken": {"type": "string", "format": "uuid"},
+        "mode": {"enum": ["full", "onDemand"], "default": "full", "description": "Fixed for the folder's lifetime; onDemand needs Windows Cloud Files and answers UNSUPPORTED_CAPABILITY without it."}
+      },
+      "additionalProperties": false
+    },
     "resolveParams": {
       "type": "object",
       "required": ["operationKey", "decisionId", "proposalDigest", "action"],
@@ -9,8 +20,8 @@
         "operationKey": {"type": "string", "format": "uuid"},
         "expectedRevision": {"type": "string", "pattern": "^[0-9]+$"},
         "decisionId": {"type": "string", "format": "uuid"},
-        "proposalDigest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-        "action": {"enum": ["approveDeletion", "later"]}
+        "proposalDigest": {"type": "string", "pattern": "^([a-f0-9]{64})?$", "description": "Empty for a conflict notice."},
+        "action": {"enum": ["approveDeletion", "later", "resolved"], "description": "1.9: resolved closes a conflict notice (both copies stay)."}
       },
       "additionalProperties": false
     }
@@ -39,7 +50,21 @@
         "count": {"type": "integer", "minimum": 0},
         "localDeletes": {"type": "integer", "minimum": 0},
         "remoteDeletes": {"type": "integer", "minimum": 0},
-        "expires": {"type": "string", "format": "date-time"}
+        "expires": {"type": "string", "format": "date-time"},
+        "groups": {"type": "array", "maxItems": 8, "items": {"type": "object", "required": ["name", "files", "loose"], "properties": {"name": {"type": "string"}, "files": {"type": "integer", "minimum": 0}, "loose": {"type": "boolean"}}, "additionalProperties": false}}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["id", "kind", "accountId", "folderId", "file", "copy"],
+      "properties": {
+        "id": {"type": "string", "format": "uuid"},
+        "kind": {"const": "conflict"},
+        "accountId": {"type": "string", "format": "uuid"},
+        "folderId": {"type": "string", "format": "uuid"},
+        "file": {"type": "string"},
+        "copy": {"type": "string"}
       },
       "additionalProperties": false
     }

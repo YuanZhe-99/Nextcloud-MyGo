@@ -217,6 +217,12 @@ void Control::advanceSwitch(const QString &account, qint64 epoch,
     operation = q.value(0).toString();
     target = q.value(1).toString();
     q.finish();
+    q.prepare("SELECT 1 FROM accounts WHERE id=? AND state='ready'");
+    q.addBindValue(account);
+    execute(q);
+    if (!q.next())
+      return; // An account being removed: releaseAccount owns the intent.
+    q.finish();
     if (storageFailed_ || shutdown_ || !shutdownOperation_.isEmpty())
       throw std::runtime_error("CANCELLED");
     if (throttleRemaining(account) > 0)

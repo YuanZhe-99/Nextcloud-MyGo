@@ -9,7 +9,7 @@ what it uses, and what that obliges. `THIRD_PARTY_NOTICES.md` holds the notices 
 |---|---|---|---|---|---|
 | MyGo | `egoist/mygo`, latest tag | UI framework, packaging | MIT | none | keep the copyright notice; its embedded Kage compiler and MingCute icon are Apache-2.0 |
 | Kyokai and Easytier-MyGo files | `YuanZhe-99/Kyokai`, `YuanZhe-99/Easytier-MyGo` | `tools/checkdocs`, the `internal/version` pattern, the MyGo maintenance skill, the conventions | AGPL-3.0 / GPL-3.0, relicensed under GPL-3.0 by their author | adapted names and comments | none beyond Nextcloud-MyGo's own license |
-| Nextcloud Desktop | `nextcloud/desktop`, latest release tag | the sync engine (`libsync`, `common`) linked into SyncD; the application icon | GPL-2.0-or-later and other file-level licenses | patches in `patches/nextcloud/` only | keep file headers; ship the license texts, the corresponding source and the build patches |
+| Nextcloud Desktop | `nextcloud/desktop`, latest release tag | the sync engine (`libsync`, `common`) linked into SyncD, and its Windows CFAPI plugin (`nextcloudsync_vfs_cfapi.dll`, without the shell extension) for on-demand folders; the application icon | GPL-2.0-or-later and other file-level licenses | patches in `patches/nextcloud/` only | keep file headers; ship the license texts, the corresponding source and the build patches |
 
 ## Trademarks
 
@@ -19,6 +19,8 @@ commit `809fadb79180eeacb3fd5b83c804765822e2cd09`. Its original license files re
 
 The Nextcloud name and icon are trademarks of Nextcloud GmbH. The product name and the reuse of the
 icon follow the user's decision; the trademark terms are checked before the first release.
+`resources/icon.png` is `third_party/nextcloud/theme/colored/Nextcloud-icon.svg` rendered unchanged
+at 1024×1024; `mygo build` makes it the executable's icon, which the shortcut and the Apps entry show.
 
 ## Planned components
 

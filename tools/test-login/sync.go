@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -14,7 +15,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/YuanZhe-99/Nextcloud-MyGo/internal/syncd"
 )
@@ -93,6 +96,8 @@ func fixtureHome() string {
 
 // retryCommand retries only an optimistic revision conflict, never an uncertain destructive operation.
 func retryCommand(ctx context.Context, command func() error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	for {
 		err := command()
 		if err == nil {
@@ -103,21 +108,66 @@ func retryCommand(ctx context.Context, command func() error) {
 		}
 		select {
 		case <-ctx.Done():
-			panic("fixture command deadline")
+			fail("fixture command retry (step deadline)")
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
 }
 
-// await waits for an observable domain condition rather than assuming a cycle duration.
+// stepBudget bounds every single fixture step, so a hang names its step instead of a whole phase.
+const stepBudget = 90 * time.Second
+
+// observed is the daemon connection whose sanitized state a failing step reports.
+var observed *syncd.Remote
+
+// daemonState summarizes the daemon's last known state without paths, URLs, names or credentials.
+func daemonState() string {
+	if observed == nil {
+		return "daemon unobserved"
+	}
+	s := observed.Snapshot()
+	out := fmt.Sprintf("daemon connected=%v startup=%s paused=%v", s.Daemon.Connected, s.Daemon.StartupState, s.Daemon.AllPaused)
+	for i, f := range s.Folders {
+		out += fmt.Sprintf("; folder%d=%s/%s userPaused=%v", i, f.State, f.ReasonCode, f.UserPaused)
+	}
+	for _, n := range s.Networks {
+		out += fmt.Sprintf("; switching=%v", n.Switching)
+	}
+	return out + fmt.Sprintf("; decisions=%d; lastDisconnect=%s", len(s.Decisions), observed.Disconnect())
+}
+
+// fail ends the fixture with the step name and the daemon's sanitized last state.
+func fail(step string) {
+	panic("step: " + step + "; " + daemonState())
+}
+
+// await waits for one observable domain condition within its own step budget.
 func await(ctx context.Context, condition func() bool, message string) {
+	ctx, cancel := context.WithTimeout(ctx, stepBudget)
+	defer cancel()
 	for !condition() {
 		select {
 		case <-ctx.Done():
-			panic(message)
+			fail(message + " (step deadline)")
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+// waitOperation waits for one receipt within its own step budget.
+func waitOperation(ctx context.Context, r *syncd.Remote, id string) error {
+	ctx, cancel := context.WithTimeout(ctx, stepBudget)
+	defer cancel()
+	return r.WaitOperation(ctx, id)
+}
+
+// waitLogin waits for one login session within its own step budget.
+// Notes: a renewal holds the old password's revocation for at least the server's 60-second
+// floor, longer when the server answers 429, and a slow shared server takes seconds per request.
+func waitLogin(ctx context.Context, r *syncd.Remote, id string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, stepBudget+3*time.Minute)
+	defer cancel()
+	return r.WaitLogin(ctx, id)
 }
 
 // exerciseSync verifies two real daemon mappings, pause isolation and deletion-proposal approval.
@@ -306,7 +356,7 @@ func exerciseEndpoints(ctx context.Context, r *syncd.Remote, account, alternate,
 		}
 		return false
 	}, "interrupted switch did not freshly verify committed alternate after restart")
-	if err := r.WaitOperation(ctx, operation); !errors.Is(err, syncd.ErrRefused) {
+	if err := waitOperation(ctx, r, operation); !errors.Is(err, syncd.ErrRefused) {
 		panic("interrupted receipt was replayed or reported successful")
 	}
 	retryCommand(ctx, func() error {
@@ -401,7 +451,7 @@ func exerciseEndpoints(ctx context.Context, r *syncd.Remote, account, alternate,
 		}
 		return false
 	}, "crash recovery did not reverify committed primary")
-	if err := r.WaitOperation(ctx, operation); !errors.Is(err, syncd.ErrRefused) {
+	if err := waitOperation(ctx, r, operation); !errors.Is(err, syncd.ErrRefused) {
 		panic("crashed switch receipt replayed or reported success")
 	}
 	retryCommand(ctx, r.ResumeAll)
@@ -459,7 +509,7 @@ func exercisePolicy(ctx context.Context, r *syncd.Remote, account, primary, alte
 		panic("fixed policy erased an independent pause")
 	}
 	retryCommand(ctx, func() error { return r.ResumeFolder(paused) })
-	if r.WaitOperation(ctx, operation) != nil {
+	if waitOperation(ctx, r, operation) != nil {
 		panic("verified fixed policy did not complete")
 	}
 	await(ctx, func() bool {
@@ -475,7 +525,7 @@ func exercisePolicy(ctx context.Context, r *syncd.Remote, account, primary, alte
 		operation, err = r.RequestPolicy(account, syncd.PolicyFixed, primary)
 		return err
 	})
-	if r.WaitOperation(ctx, operation) != nil {
+	if waitOperation(ctx, r, operation) != nil {
 		panic("fixed primary policy did not reconcile")
 	}
 	fmt.Println("PASS real automatic-policy persistence and fixed-target pending/actual separation, paused-root completion and verified return")
@@ -532,4 +582,74 @@ func cleanupSync(ctx context.Context, r *syncd.Remote, s state, file string) {
 	if os.RemoveAll(filepath.Join(filepath.Dir(file), s.Profile)) != nil {
 		panic("owned local sync cleanup failed")
 	}
+}
+
+// launchDaemon starts the owned daemon on the fixture profile and reports, on
+// stderr, its own fatal messages and its exit code as sanitized
+// "SYNCD_DAEMON" lines, so a crash after a restart names itself.
+// Notes: only letters, digits and plain punctuation pass; nothing else of the
+// daemon's output leaves the fixture.
+func launchDaemon(profile string) (*exec.Cmd, <-chan struct{}) {
+	exited := make(chan struct{})
+	command := exec.Command(os.Getenv("SYNCD_TEST_EXE"), "--profile", profile)
+	output, err := command.StderrPipe()
+	if err != nil || command.Start() != nil {
+		panic("owned daemon launch failed")
+	}
+	go func() {
+		scanner := bufio.NewScanner(output)
+		for scanner.Scan() {
+			line := []rune(scanner.Text())
+			clean := make([]rune, 0, len(line))
+			for _, r := range line {
+				if r < 128 && (unicode.IsLetter(r) || unicode.IsDigit(r) || strings.ContainsRune(" _.,:()-", r)) {
+					clean = append(clean, r)
+				}
+			}
+			if len(clean) > 160 {
+				clean = clean[:160]
+			}
+			fmt.Fprintln(os.Stderr, "SYNCD_DAEMON "+string(clean))
+		}
+		err := command.Wait()
+		code := 0
+		if exit, ok := errors.AsType[*exec.ExitError](err); ok {
+			code = exit.ExitCode()
+		}
+		fmt.Fprintf(os.Stderr, "SYNCD_DAEMON exit %d\n", code)
+		close(exited)
+	}()
+	return command, exited
+}
+
+// reasonWord names a client error by its stable reason code or sentinel,
+// never by server text.
+func reasonWord(err error) string {
+	if err == nil {
+		return "no error"
+	}
+	if code := syncd.ReasonOf(err); code != "" {
+		return code
+	}
+	for _, known := range []error{syncd.ErrCredentialCleanup, syncd.ErrBusy, syncd.ErrStale, syncd.ErrRefused, syncd.ErrNotFound, context.DeadlineExceeded, context.Canceled} {
+		if errors.Is(err, known) {
+			return strings.TrimPrefix(known.Error(), "syncd: ")
+		}
+	}
+	return "other"
+}
+
+// ownDaemon starts the fixture's daemon itself once the previous one has
+// released the profile: a start that exits at once found it still held.
+func ownDaemon(profile string) {
+	for attempt := 0; attempt < 15; attempt++ {
+		_, exited := launchDaemon(profile)
+		select {
+		case <-exited:
+			time.Sleep(time.Second)
+		case <-time.After(3 * time.Second):
+			return
+		}
+	}
+	panic("owned daemon could not take its profile")
 }

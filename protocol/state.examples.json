@@ -1,0 +1,71 @@
+{
+  "event": {
+    "jsonrpc": "2.0", "method": "event",
+    "params": {
+      "bootId": "10000000-0000-4000-8000-000000000001", "seq": "7", "revision": "3",
+      "snapshot": {
+        "daemon": {
+          "version": "0.1.0", "protocol": 1, "demo": false, "allPaused": false,
+          "stateAvailable": true, "startupState": "normal",
+          "capabilities": {"multiAccount": true, "login": true, "fullSync": false, "endpointAutoSwitch": false, "virtualFiles": false, "endToEndEncryption": false, "engine": true},
+          "startupReport": {"previousVersion": "0.1.0", "previousSchema": 10, "schema": 11, "selfCheck": "failed", "reasonCodes": ["LOCAL_ROOT_UNAVAILABLE"]}
+        },
+        "accounts": [
+          {"id": "20000000-0000-4000-8000-000000000001", "user": "alice", "displayName": "Alice", "server": "cloud.example.invalid", "auth": "signedIn", "signedIn": true},
+          {"id": "20000000-0000-4000-8000-000000000002", "user": "bob", "displayName": "Bob", "server": "cloud.example.invalid", "auth": "revoked", "signedIn": false}
+        ],
+        "folders": [
+          {"id": "30000000-0000-4000-8000-000000000001", "accountId": "20000000-0000-4000-8000-000000000001", "name": "Photos", "localPath": "C:/Sync/Photos", "remotePath": "/Photos", "userPaused": false, "state": "syncing", "reasonCode": "", "mode": "full", "phase": "uploading", "filesDone": 12},
+          {"id": "30000000-0000-4000-8000-000000000002", "accountId": "20000000-0000-4000-8000-000000000002", "name": "Work", "localPath": "C:/Sync/Work", "remotePath": "/Work", "userPaused": false, "state": "error", "reasonCode": "AUTH_REQUIRED", "mode": "full", "phase": "", "filesDone": 0}
+        ],
+        "endpoints": [
+          {"id": "40000000-0000-4000-8000-000000000001", "accountId": "20000000-0000-4000-8000-000000000001", "name": "cloud.example.invalid", "kind": "internet", "url": "https://cloud.example.invalid/", "main": true, "approved": true, "verified": "verified", "reachable": true, "blocked": false, "blockedReason": "", "latencyMs": 48, "inUse": false},
+          {"id": "40000000-0000-4000-8000-000000000002", "accountId": "20000000-0000-4000-8000-000000000001", "name": "Home", "kind": "home", "url": "https://nas.home.invalid/", "main": false, "approved": true, "verified": "verified", "reachable": true, "blocked": false, "blockedReason": "", "latencyMs": 6, "inUse": true},
+          {"id": "40000000-0000-4000-8000-000000000003", "accountId": "20000000-0000-4000-8000-000000000001", "name": "Old", "kind": "vpn", "url": "https://old.vpn.invalid/", "main": false, "approved": true, "verified": "failed", "reachable": false, "blocked": true, "blockedReason": "ENDPOINT_IDENTITY_MISMATCH", "latencyMs": 0, "inUse": false}
+        ],
+        "networks": [
+          {"accountId": "20000000-0000-4000-8000-000000000001", "policy": "auto", "fixedEndpointId": "", "activeId": "40000000-0000-4000-8000-000000000002", "switching": false, "why": ["faster"], "switchReason": "faster", "switched": "2026-11-12T08:30:00.000Z"}
+        ],
+        "switches": [],
+        "decisions": [
+          {"id": "50000000-0000-4000-8000-000000000001", "kind": "bulkDeletions", "accountId": "20000000-0000-4000-8000-000000000001", "folderId": "30000000-0000-4000-8000-000000000001", "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "count": 13, "localDeletes": 0, "remoteDeletes": 13, "expires": "2026-11-12T08:40:00.000Z",
+           "groups": [{"name": "2024", "files": 12, "loose": false}, {"name": "", "files": 1, "loose": true}]},
+          {"id": "50000000-0000-4000-8000-000000000002", "kind": "conflict", "accountId": "20000000-0000-4000-8000-000000000001", "folderId": "30000000-0000-4000-8000-000000000001", "file": "Budget.xlsx", "copy": "Budget (conflicted copy 2026-11-12 093000).xlsx"}
+        ],
+        "activity": []
+      }
+    }
+  },
+  "resolveConflict": {
+    "jsonrpc": "2.0", "id": "resolved", "method": "decisions.resolve",
+    "params": {
+      "operationKey": "60000000-0000-4000-8000-000000000002", "expectedRevision": "3",
+      "decisionId": "50000000-0000-4000-8000-000000000002", "proposalDigest": "", "action": "resolved"
+    }
+  },
+  "stageHome": {
+    "jsonrpc": "2.0", "id": "stage", "method": "endpoints.stage",
+    "params": {
+      "operationKey": "60000000-0000-4000-8000-000000000003", "expectedRevision": "3",
+      "accountId": "20000000-0000-4000-8000-000000000001", "name": "Home",
+      "baseUrl": "https://nas.home.invalid/", "kind": "home"
+    }
+  },
+  "prepareUpdate": {
+    "jsonrpc": "2.0", "id": "update", "method": "daemon.prepareUpdate",
+    "params": {"operationKey": "60000000-0000-4000-8000-000000000004", "expectedRevision": "3", "targetVersion": "0.1.1"}
+  },
+  "prepareUpdateReady": {
+    "jsonrpc": "2.0", "id": "update",
+    "result": {"operationId": "70000000-0000-4000-8000-000000000001", "state": "succeeded", "result": {"ready": true}}
+  },
+  "prepareUpdatePostponed": {
+    "jsonrpc": "2.0", "id": "update",
+    "error": {"code": -32000, "message": "Request could not be completed", "data": {"reasonCode": "DECISION_PENDING"}}
+  },
+  "accountExists": {
+    "jsonrpc": "2.0", "id": "status",
+    "result": {"state": "failed", "reasonCode": "ACCOUNT_EXISTS"}
+  },
+  "versionReport": {"version": "0.1.0", "protocol": {"major": 1, "minor": 9}, "controlSchema": 11, "engine": true}
+}

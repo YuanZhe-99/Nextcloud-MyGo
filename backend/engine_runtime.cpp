@@ -25,6 +25,8 @@ void EngineRuntime::add(const QString &folder, const QString &account,
     throw std::logic_error("Cannot register folder runtime");
   auto bound = binding;
   bound.networkGeneration = networkGeneration_;
+  bound.folderId = folder;
+  bound.accountId = account;
   auto adapter = std::make_unique<EngineAdapter>(bound);
   adapter->constrained = [owner = QPointer(this),
                           account](const QString &reason, qint64 delayMs) {
@@ -98,9 +100,17 @@ void EngineRuntime::block(const QString &folder, const QString &reason,
 void EngineRuntime::pause(bool value) {
   if (stopping_)
     return;
-  scheduler_.freeze(value);
+  paused_ = value;
+  scheduler_.freeze(paused_ || held_);
   if (value && active_)
     folders_.at(active_->folder).adapter->stop();
+}
+
+void EngineRuntime::hold(bool value) {
+  if (stopping_)
+    return;
+  held_ = value;
+  scheduler_.freeze(paused_ || held_);
 }
 
 void EngineRuntime::authorize(const QString &folder, const QString &digest,
@@ -145,15 +155,21 @@ void EngineRuntime::finishShutdown() {
 bool EngineRuntime::idle() const { return !active_; }
 
 bool EngineRuntime::quiesceAccount(const QString &account, bool cancelActive) {
+  // On-demand requests of the old epoch are refused from now on; running
+  // hydrations finish like a transfer (PLAN §2.3).
+  bool quiescent = true;
   for (const auto &[id, entry] : folders_)
-    if (entry.account == account)
+    if (entry.account == account) {
       scheduler_.block(id, "switchInProgress", true);
+      entry.adapter->closeRequests();
+      quiescent = entry.adapter->quiescent() && quiescent;
+    }
   if (active_ && folders_.at(active_->folder).account == account) {
     if (cancelActive)
       folders_.at(active_->folder).adapter->stop();
     return false;
   }
-  return true;
+  return quiescent;
 }
 
 QString EngineRuntime::retireAccount(const QString &account) {
@@ -271,8 +287,17 @@ void EngineRuntime::tick() {
       entry.auditAt = now + 86400000;
     }
   }
-  if (active_)
+  if (active_) {
+    // Publish what the running cycle does, at most once a second.
+    const auto current = progress(active_->folder);
+    if (progressed && current != published_ && now - progressAt_ >= 1000) {
+      published_ = current;
+      progressAt_ = now;
+      progressed();
+    }
     return;
+  }
+  published_.reset();
   active_ = scheduler_.take(now);
   if (!active_)
     return;
@@ -321,4 +346,16 @@ void EngineRuntime::tick() {
     if (stopping_)
       finishShutdown();
   }
+}
+
+std::optional<EngineRuntime::Progress>
+EngineRuntime::progress(const QString &folder) const {
+  if (!active_ || active_->folder != folder)
+    return {};
+  const auto &adapter = *folders_.at(folder).adapter;
+  const auto counts = adapter.requests();
+  return Progress{counts.activeUploads     ? QStringLiteral("uploading")
+                  : counts.activeDownloads ? QStringLiteral("downloading")
+                                           : QStringLiteral("checking"),
+                  adapter.filesDone()};
 }

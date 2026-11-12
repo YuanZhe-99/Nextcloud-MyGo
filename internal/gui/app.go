@@ -44,6 +44,8 @@ type App struct {
 	// work off it. Tests run both inline.
 	later func(func())
 	async func(func())
+	// openURL opens a sign-in page in the system browser; tests record it.
+	openURL func(string)
 
 	prefs  Prefs
 	snap   syncd.Snapshot
@@ -64,6 +66,10 @@ type App struct {
 	confirm  confirmState
 	setup    setupState
 	upd      updateState
+	diag     diagState
+	// renewing holds the browser sign-in under way for an account that
+	// signs in again, by account ID.
+	renewing map[string]syncd.Login
 }
 
 // Prefs are the interface's own settings (gui.json); everything about sync
@@ -96,9 +102,10 @@ func defaultPrefs() Prefs {
 // New makes the interface for a SyncD client; dir holds gui.json.
 func New(client syncd.Client, dir string) *App {
 	ctx, cancel := context.WithCancel(context.Background())
-	a := &App{client: client, dir: dir, ctx: ctx, cancel: cancel, prefs: loadPrefs(dir), busy: map[string]bool{}}
+	a := &App{client: client, dir: dir, ctx: ctx, cancel: cancel, prefs: loadPrefs(dir), busy: map[string]bool{}, renewing: map[string]syncd.Login{}}
 	a.later = a.onMain
 	a.async = func(fn func()) { go fn() }
+	a.openURL = func(url string) { _ = mygo.Shell.OpenExternal(url) }
 	a.snap = client.Snapshot()
 	return a
 }
@@ -168,10 +175,11 @@ func (a *App) setSnapshot(s syncd.Snapshot) {
 }
 
 // notifyNew shows a Windows notification for each decision and sign-in
-// that was not there before, as Notifications allows.
+// that was not there before, as Notifications allows. Notifications name
+// a folder or an account, never a path or a code.
 func (a *App) notifyNew(old, s syncd.Snapshot) {
-	if old.Daemon.Version == "" {
-		return // the first snapshot: nothing is new
+	if !stateKnown(old) || !stateKnown(s) {
+		return // the first known snapshot: nothing is new
 	}
 	for _, d := range s.Decisions {
 		if slices.ContainsFunc(old.Decisions, func(o syncd.Decision) bool { return o.ID == d.ID }) {
@@ -179,15 +187,15 @@ func (a *App) notifyNew(old, s syncd.Snapshot) {
 		}
 		f, _ := s.Folder(d.FolderID)
 		switch {
-		case d.Kind == syncd.DecisionLocalDeletions && a.prefs.NotifyDecisions:
-			a.notify(d.ID, L.AttnDeletionsTitle(d.Count, f.Name), L.AttnDeletionsBody())
+		case d.Kind == syncd.DecisionBulkDeletions && a.prefs.NotifyDecisions:
+			a.notify(d.ID, L.ReviewTitle(d.Count), L.AttnDeletionsBody(f.Name))
 		case d.Kind == syncd.DecisionConflict && a.prefs.NotifyConflicts:
 			a.notify(d.ID, L.AttnConflictTitle(d.File), L.AttnConflictBody(d.Copy, f.Name))
 		}
 	}
 	for _, acc := range s.Accounts {
 		was, ok := old.Account(acc.ID)
-		if a.prefs.NotifySignIn && !acc.SignedIn && (!ok || was.SignedIn) {
+		if a.prefs.NotifySignIn && needsSignIn(s, acc) && (!ok || !needsSignIn(old, was)) {
 			a.notify("signin-"+acc.ID, L.AttnSignInTitle(accountName(acc)), L.AttnSignInBody())
 		}
 	}
@@ -223,19 +231,31 @@ func (a *App) do(key string, cmd func() error, done func(error)) {
 	})
 }
 
-// errText puts a SyncD error into words.
+// errText puts a SyncD error into words: its reason code when SyncD gave
+// one, never the code itself.
 func errText(err error) string {
 	switch {
 	case errors.Is(err, syncd.ErrRevocationUnconfirmed):
 		return L.AccountRemovedRevocationUnconfirmed()
 	case errors.Is(err, syncd.ErrCredentialCleanup):
 		return L.CredentialCleanupUnconfirmed()
-	case errors.Is(err, syncd.ErrRefused):
-		return L.ToastCannotSync()
-	case errors.Is(err, syncd.ErrStale):
+	}
+	if t := reasonText(syncd.ReasonOf(err)); t != "" {
+		return t
+	}
+	switch {
+	case errors.Is(err, syncd.ErrStateUnavailable):
+		return L.ReasonStateUnavailable()
+	case errors.Is(err, syncd.ErrStale), errors.Is(err, syncd.ErrNotFound):
 		return L.ToastStale()
 	case errors.Is(err, syncd.ErrBusy):
-		return L.UpdateWaits()
+		// Without a reason: no connection to SyncD to send it on.
+		return L.ToastNotConnected()
+	case errors.Is(err, context.DeadlineExceeded):
+		// Accepted is not done, and no answer is not a failure (INV-12).
+		return L.ToastNoAnswer()
+	case errors.Is(err, syncd.ErrRefused):
+		return L.ToastRefused()
 	}
 	return L.ToastFailed()
 }
@@ -308,12 +328,18 @@ func (a *App) QuitWindow() {
 	mygo.App.Quit()
 }
 
-// QuitAndStop stops background sync, then the interface.
+// QuitAndStop stops background sync, then the interface; the only
+// command that stops SyncD (PLAN.md §17 item 10). If SyncD does not stop,
+// the interface stays and says so.
 func (a *App) QuitAndStop() {
-	a.quitting = true
-	a.async(func() {
-		_ = a.client.Shutdown()
-		mygo.RunOnMain(mygo.App.Quit)
+	a.do("shutdown", a.client.Shutdown, func(err error) {
+		if err != nil {
+			a.setToast(L.StopFailed())
+			a.notify("shutdown", "Nextcloud MyGo", L.StopFailed())
+			return
+		}
+		a.quitting = true
+		mygo.App.Quit()
 	})
 }
 
@@ -331,7 +357,8 @@ func (a *App) openBrowser(url string) {
 	if a.snap.Daemon.Demo {
 		return
 	}
-	a.async(func() { _ = mygo.Shell.OpenExternal(url) })
+	open := a.openURL
+	a.async(func() { open(url) })
 }
 
 // ApplyTheme sets the appearance: "system", "light" or "dark".

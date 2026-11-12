@@ -1,9 +1,13 @@
 #include "control.h"
+#include "namespace.h"
+#include "platform/windows/ondemand.h"
 #include "switch_state.h"
 #include <QJsonDocument>
 #include <QNetworkReply>
 #include <QSqlQuery>
 #include <QUuid>
+#include <algorithm>
+#include <limits>
 #include <stdexcept>
 
 namespace {
@@ -65,18 +69,53 @@ void Control::recoverAccounts() {
   QStringList abandoned;
   QStringList removals;
   QStringList unrevoked;
+  QStringList held;
   while (q.next()) {
     const auto id = q.value(0).toString(), reference = credentialReference(id);
     if (q.value(1).toString() != reference)
       throw std::runtime_error("Invalid stored credential reference");
+    // The previous process recorded that this acquired password's DELETE was
+    // only delayed by the server and that none was in flight: it can still be
+    // sent once, so the slot and the reservation stay until its outcome.
+    QSqlQuery record(db_);
+    record.prepare("SELECT 1 FROM held_revocations WHERE account_id=?");
+    record.addBindValue(id);
+    execute(record);
+    if (q.value(3).toString() == "creating" && record.next() &&
+        findCredential(reference)) {
+      held.append(id);
+      continue;
+    }
     // An interrupted login that had already acquired a password cannot prove
     // its revocation: say so instead of reporting a plain expiry.
     if (q.value(3).toString() == "creating" && findCredential(reference))
       unrevoked.append(q.value(2).toString());
+    if (q.value(3).toString() == "removing") {
+      // A removal interrupted while releasing the account: its mappings,
+      // on-demand registrations and renewal slots go too; files and journals
+      // stay.
+#ifdef SYNCD_WITH_ENGINE
+      record.prepare("SELECT id,local_path FROM folders WHERE account_id=? "
+                     "AND mode='onDemand'");
+      record.addBindValue(id);
+      execute(record);
+      while (record.next())
+        OnDemandRoot::unregister(
+            record.value(1).toString(),
+            OnDemandRoot::Identity{id, record.value(0).toString(), {}});
+#endif
+      record.prepare("SELECT session_id FROM reauthentication WHERE "
+                     "account_id=?");
+      record.addBindValue(id);
+      execute(record);
+      if (record.next()) {
+        removeCredential(reauthReference(id, record.value(0).toString()));
+        removeCredential(reauthReference(id, record.value(0).toString(), true));
+      }
+      removals.append(q.value(2).toString());
+    }
     removeCredential(reference);
     abandoned.append(id);
-    if (q.value(3).toString() == "removing")
-      removals.append(q.value(2).toString());
   }
   q.finish();
   q.prepare("SELECT id,receipt,method FROM operations WHERE method IN "
@@ -98,10 +137,18 @@ void Control::recoverAccounts() {
     expired.append({q.value(0).toString(), receipt});
   }
   q.finish();
+  // No earlier than the shared 60-second floor: a lock delay is not stored,
+  // and a restart must not turn it into an immediate request.
+  for (const auto &id : held)
+    QTimer::singleShot(60000, &networkTasks_,
+                       [this, id] { retireHeldPassword(id); });
   if (abandoned.isEmpty() && expired.isEmpty())
     return;
   accountChange([&] {
     for (const auto &id : abandoned) {
+      q.prepare("DELETE FROM folders WHERE account_id=?");
+      q.addBindValue(id);
+      execute(q);
       q.prepare("DELETE FROM accounts WHERE id=?");
       q.addBindValue(id);
       execute(q);
@@ -273,12 +320,8 @@ QJsonObject Control::loginMutation(const QString &method,
     } catch (...) {
       return error("INVALID_PARAMS");
     }
-    q.prepare("SELECT COUNT(*) FROM accounts");
-    execute(q);
-    q.next();
-    if (q.value(0).toInt() != 0)
-      return error("UNSUPPORTED_CAPABILITY");
-    q.finish();
+    // Several accounts are allowed; the same server identity and user twice
+    // is refused once the new login has proven who it is (ACCOUNT_EXISTS).
     // Terminal memory-only sessions can be discarded; persistent operation
     // receipts retain deduplication.
     std::erase_if(logins_, [](const auto &item) {
@@ -301,33 +344,9 @@ QJsonObject Control::loginMutation(const QString &method,
     if (params.value("expectedRevision").toString() !=
         QString::number(revision_))
       return error("REVISION_CONFLICT");
+    // Removal is never refused for a busy account: a running sign-in, switch,
+    // probe or cycle is stopped by releaseAccount before anything is removed.
     account = params.value(field).toString();
-    if (endpointChecks_.contains(account))
-      return error("QUIESCE_STALLED");
-    q.prepare("SELECT 1 FROM reauthentication WHERE account_id=? AND phase IN "
-              "('waiting','prepared','installed','discarding')");
-    q.addBindValue(account);
-    execute(q);
-    if (q.next())
-      return error("QUIESCE_STALLED");
-    q.finish();
-    if (SwitchState(db_).gated(account))
-      return error("QUIESCE_STALLED");
-    q.prepare("SELECT COUNT(*) FROM endpoints WHERE account_id=? AND state IN "
-              "('probing','verifying')");
-    q.addBindValue(account);
-    execute(q);
-    q.next();
-    if (q.value(0).toInt())
-      return error("QUIESCE_STALLED");
-    q.finish();
-    q.prepare("SELECT COUNT(*) FROM folders WHERE account_id=?");
-    q.addBindValue(account);
-    execute(q);
-    q.next();
-    if (q.value(0).toInt())
-      return error("QUIESCE_STALLED");
-    q.finish();
     q.prepare("SELECT id FROM accounts WHERE id=? AND state='ready'");
     q.addBindValue(account);
     execute(q);
@@ -395,6 +414,22 @@ QJsonObject Control::loginMutation(const QString &method,
       }
     };
     flow->changed = [this](LoginFlow &flow) { return loginChanged(flow); };
+    // The same user on the same server (its DAV root identity names the
+    // instance) is one account, whichever address the login used.
+    flow->verified = [this](LoginFlow &flow) {
+      QSqlQuery q(db_);
+      q.prepare("SELECT 1 FROM accounts WHERE state='ready' AND uid=? AND "
+                "root_id=? AND id!=?");
+      q.addBindValue(flow.uid);
+      q.addBindValue(flow.rootId);
+      q.addBindValue(flow.accountId);
+      if (!q.exec())
+        flow.reject("INTERNAL_ERROR");
+      else if (q.next())
+        flow.reject("ACCOUNT_EXISTS");
+      else
+        flow.accept();
+    };
     flow->throttled = [this, account](qint64 delay) {
       try {
         throttleAccount(account, delay);
@@ -402,6 +437,13 @@ QJsonObject Control::loginMutation(const QString &method,
       } catch (...) {
         return false;
       }
+    };
+    flow->held = [this, account](bool value) {
+      QSqlQuery q(db_);
+      q.prepare(value ? "INSERT OR IGNORE INTO held_revocations VALUES(?)"
+                      : "DELETE FROM held_revocations WHERE account_id=?");
+      q.addBindValue(account);
+      return q.exec();
     };
     auto pointer = flow.get();
     logins_.emplace(session, std::move(flow));
@@ -413,9 +455,151 @@ QJsonObject Control::loginMutation(const QString &method,
     }
   } else
     QTimer::singleShot(0, &networkTasks_, [this, account, operation] {
-      removeAccount(account, operation);
+      releaseAccount(account, operation, QDeadlineTimer(120000));
     });
   return receipt;
+}
+
+void Control::retireHeldPassword(const QString &account) {
+  try {
+    if (storageFailed_ || shutdown_ || !shutdownOperation_.isEmpty())
+      return; // Still recorded as held: the next boot decides again.
+    const auto remaining = throttleRemaining(account);
+    if (remaining == std::numeric_limits<qint64>::max()) {
+      finishHeldPassword(account, false); // No automatic retry is allowed.
+      return;
+    }
+    if (remaining > 0) {
+      QTimer::singleShot(std::min<qint64>(remaining, 2147483647),
+                         &networkTasks_,
+                         [this, account] { retireHeldPassword(account); });
+      return;
+    }
+    QSqlQuery q(db_);
+    q.prepare("SELECT a.base_url,a.login_name FROM accounts a JOIN "
+              "held_revocations h ON h.account_id=a.id WHERE a.id=? AND "
+              "a.state='creating'");
+    q.addBindValue(account);
+    execute(q);
+    if (!q.next())
+      return;
+    const auto base = canonicalServer(q.value(0).toString());
+    const auto login = q.value(1).toString();
+    q.finish();
+    auto secret = readCredential(credentialReference(account)).toUtf8();
+    QNetworkRequest request(
+        base.resolved(QUrl("ocs/v2.php/core/apppassword?format=json")));
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::ManualRedirectPolicy);
+    request.setTransferTimeout(30000);
+    request.setRawHeader("OCS-APIRequest", "true");
+    request.setRawHeader("Accept", "application/json");
+    request.setRawHeader("Authorization",
+                         "Basic " + (login.toUtf8() + ':' + secret).toBase64());
+    secret.fill(0);
+    // Once sent, the outcome is unknown until answered: forget "only delayed"
+    // first, so no later boot can send a second DELETE.
+    q.prepare("DELETE FROM held_revocations WHERE account_id=?");
+    q.addBindValue(account);
+    execute(q);
+    auto manager = new QNetworkAccessManager(&networkTasks_);
+    auto reply = manager->sendCustomRequest(request, "DELETE");
+    reply->setReadBufferSize(1048577);
+    auto body = std::make_shared<QByteArray>();
+    QObject::connect(reply, &QIODevice::readyRead, &networkTasks_,
+                     [reply, body] {
+                       body->append(reply->readAll());
+                       if (body->size() > 1048576)
+                         reply->abort();
+                     });
+    QObject::connect(
+        reply, &QNetworkReply::finished, &networkTasks_,
+        [this, manager, reply, body, account] {
+          body->append(reply->readAll());
+          manager->deleteLater();
+          const auto code =
+              reply->attribute(QNetworkRequest::HttpStatusCodeAttribute)
+                  .toInt();
+          if (code == 429 || code == 423) {
+            // Refused, so the password still exists and nothing is uncertain:
+            // record it as held again and wait out the new delay.
+            try {
+              checkMetadataReply(*reply, 200, QDateTime::currentDateTimeUtc());
+            } catch (const MetadataError &error) {
+              const QString reason = QString::fromUtf8(error.what());
+              try {
+                if ((reason == "SERVER_THROTTLED" ||
+                     reason == "REMOTE_LOCKED") &&
+                    error.retryAfterMs >= 0) {
+                  metadataFailed(account, error);
+                  QSqlQuery again(db_);
+                  again.prepare(
+                      "INSERT OR IGNORE INTO held_revocations VALUES(?)");
+                  again.addBindValue(account);
+                  execute(again);
+                  QTimer::singleShot(
+                      std::min<qint64>(
+                          std::max<qint64>(error.retryAfterMs, 60000),
+                          2147483647),
+                      &networkTasks_,
+                      [this, account] { retireHeldPassword(account); });
+                  return;
+                }
+              } catch (...) {
+              }
+            } catch (...) {
+            }
+            finishHeldPassword(account, false);
+            return;
+          }
+          finishHeldPassword(account,
+                             body->size() <= 1048576 &&
+                                 reply->error() == QNetworkReply::NoError &&
+                                 code == 200 &&
+                                 QJsonDocument::fromJson(*body)
+                                         .object()
+                                         .value("ocs")
+                                         .toObject()
+                                         .value("meta")
+                                         .toObject()
+                                         .value("status") == "ok");
+        });
+  } catch (...) {
+    finishHeldPassword(account, false);
+  }
+}
+
+void Control::finishHeldPassword(const QString &account, bool revoked) {
+  try {
+    QSqlQuery q(db_);
+    q.prepare(
+        "SELECT operation_id FROM accounts WHERE id=? AND state='creating'");
+    q.addBindValue(account);
+    execute(q);
+    if (!q.next())
+      return;
+    const auto operation = q.value(0).toString();
+    q.finish();
+    removeCredential(credentialReference(account));
+    accountChange([&] {
+      q.prepare("DELETE FROM accounts WHERE id=? AND state='creating'");
+      q.addBindValue(account);
+      execute(q);
+      // The session ended with the previous process either way; only an
+      // unconfirmed revocation needs the user's attention.
+      const QJsonObject receipt{
+          {"operationId", operation},
+          {"state", "failed"},
+          {"error", error(revoked ? "LOGIN_SESSION_EXPIRED"
+                                  : "APP_PASSWORD_REVOCATION_UNCONFIRMED")}};
+      q.prepare("UPDATE operations SET receipt=? WHERE id=?");
+      q.addBindValue(QJsonDocument(receipt).toJson(QJsonDocument::Compact));
+      q.addBindValue(operation);
+      execute(q);
+    });
+  } catch (...) {
+    stopForStorageFailure();
+  }
 }
 
 void Control::removeAccount(const QString &account, const QString &operation) {

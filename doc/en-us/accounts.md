@@ -31,6 +31,33 @@ starting a replacement session cannot destroy that in-use object or let its late
 session. A separate read-only lifetime fixture uses borrowed credentials and parent-owned native-key
 cleanup, including when a regression crashes the child; it never revokes those borrowed credentials.
 
+## Several accounts and removal
+
+Since protocol 1.9 a daemon holds several accounts, on one server or on several. Each keeps its own
+endpoints, policy, switch intent, binding and epoch (all keyed by account), so a switch of one
+account quiesces only that account's folders. One account is one user on one server: a new login
+whose verified UID and DAV root identity match a ready account is refused as `ACCOUNT_EXISTS`
+whichever address it used, and the password it acquired is retired like any refused login's (a
+borrowed acceptance credential is never revoked). The check runs after the namespace proof, so
+two concurrent logins of the same user cannot both become accounts.
+
+`accounts.remove` is accepted for any ready account. The account turns `removing` at once, which
+every later step and callback checks (`a.state='ready'`): its sign-ins and renewals are cancelled,
+an address check in flight finishes, admission closes (`accountRemoving`) and a running cycle or
+hydration is asked to stop and waited for. Then its runtimes go, each on-demand registration ends
+(a registration that cannot end within two minutes fails the removal with its reason and the
+account stays, engines attached again; a root that no longer exists holds no placeholder and is
+skipped), an unfinished switch's receipt fails as `CANCELLED`, the switch, renewal and mapping rows
+go with the reserved renewal vault slots, and the existing revocation runs. Local files and engine
+journals stay. A restart during removal finishes it in recovery the same way, without a server
+request; the removal then reports the revocation unconfirmed. A renewal's previous password that
+was not yet retired is not revoked by removal.
+
+The snapshot's `account.auth` is `revoked` when the server refused the stored app password (a
+folder or the active address reported `AUTH_REQUIRED`), `needsSignIn` when the credential cannot be
+used on this computer (`CREDENTIALS_LOCKED`) or a renewal waits for the browser, and `signedIn`
+otherwise.
+
 ## Login boundary
 
 Input defaults to HTTPS. URLs with user information, queries, fragments or ambiguous paths are
@@ -55,10 +82,25 @@ revocation back, the flow stays in `discarding`, the vault slot and the durable 
 and the DELETE is sent once the delay ends, even after the session expired. A DELETE the server
 refused with 429 or 423 is retried; one with an unknown outcome (transport failure, timeout) is
 never replayed and ends as `APP_PASSWORD_REVOCATION_UNCONFIRMED`, as do a 403 and a delay with no
-automatic retry. A daemon restart during a held revocation cannot retry it: the interrupted login or
-renewal is reported as `APP_PASSWORD_REVOCATION_UNCONFIRMED` rather than as a plain expiry.
-These rules are covered by synthetic transport regressions on a manual clock; real-server throttle
-acceptance remains unverified.
+automatic retry.
+
+A new login's held revocation survives a daemon restart. While the DELETE is only delayed by the
+server, Control schema 9 keeps a `held_revocations` row for the reserved account: the password is
+one this daemon acquired, and no DELETE is in flight. The row is removed before any DELETE leaves,
+and a DELETE is not sent if it cannot be removed. A restarted daemon that finds the row together
+with the password keeps the vault slot and the reservation, restores the account throttle, waits
+at least the shared 60-second floor and the rest of the stored delay, and then sends the DELETE
+once. The interrupted login is `LOGIN_SESSION_EXPIRED` from the restart on; only an unanswered or
+refused DELETE, or a delay with no automatic retry, changes it to
+`APP_PASSWORD_REVOCATION_UNCONFIRMED`. Without the row a DELETE may have been in flight when the
+process ended, so nothing is sent again and the login is reported unconfirmed. The reservation
+keeps occupying the single account slot until the outcome, as it does in the process that made it.
+A renewal's candidate password is not covered: a restart during its held revocation still reports
+`APP_PASSWORD_REVOCATION_UNCONFIRMED`, because rollback removes the candidate slot together with
+the restored credential. These rules are covered by scripted-transport regressions on a manual
+clock and Control restart regressions. On an isolated server 35.0.2 a restarted Control sent the
+held DELETE of a really issued app password once, the server confirmed it and then rejected the
+password, on native ARM64 and emulated x64; a real-server 429 remains unverified.
 
 ## IPC and capability
 

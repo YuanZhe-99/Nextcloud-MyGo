@@ -8,7 +8,7 @@
 
 QJsonObject Control::startupDiagnostics() const {
   QJsonObject result{{"version", SYNCD_VERSION},
-                     {"protocol", "1.7"},
+                     {"protocol", "1.8"},
                      {"stateAvailable", false},
                      {"startupState", startupState_},
                      {"reasonCode", "STATE_UNAVAILABLE"}};

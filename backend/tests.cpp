@@ -6,6 +6,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
+#include <QSqlDatabase>
 #include <QSqlQuery>
 #include <QTemporaryDir>
 #include <QUuid>
@@ -203,6 +204,181 @@ void testDecisionEnvelope() {
 #endif
 }
 
+/// testFolderMode checks the protocol 1.8 folders.add mode before any
+/// inspection lookup: only "full" and "onDemand" pass (PLAN §2.3).
+void testFolderMode() {
+#ifdef SYNCD_WITH_ENGINE
+  QTemporaryDir dir;
+  Control control(dir.filePath("control.sqlite"));
+  bool negotiated = false, subscribed = false;
+  const auto hello =
+      control
+          .dispatch(request("session.hello",
+                            {{"protocol", QJsonObject{{"major", 1}}}}),
+                    negotiated, subscribed)
+          .toObject();
+  require(hello.value("result")
+                  .toObject()
+                  .value("protocol")
+                  .toObject()
+                  .value("minor") == 9,
+          "protocol 1.9 not negotiated");
+  QFile file(
+      QFileInfo(PROTOCOL_FIXTURES).dir().filePath("folders.examples.json"));
+  require(file.open(QIODevice::ReadOnly), "folder examples missing");
+  const auto example = QJsonDocument::fromJson(file.readAll())
+                           .object()
+                           .value("addOnDemand")
+                           .toObject();
+  const auto reason = [&](const QJsonValue &mode, const QString &key) {
+    auto message = example;
+    auto params = message.value("params").toObject();
+    params.insert("operationKey", key);
+    if (mode.isUndefined())
+      params.remove("mode");
+    else
+      params.insert("mode", mode);
+    message.insert("params", params);
+    return control.dispatch(message, negotiated, subscribed)
+        .toObject()
+        .value("error")
+        .toObject()
+        .value("data")
+        .toObject()
+        .value("reasonCode")
+        .toString();
+  };
+  // A valid mode reaches the (unknown) inspection token.
+  require(reason(example.value("params").toObject().value("mode"),
+                 QUuid::createUuid().toString(QUuid::WithoutBraces)) ==
+              "REVISION_CONFLICT",
+          "on-demand add envelope rejected before inspection lookup");
+  require(reason(QJsonValue::Undefined,
+                 QUuid::createUuid().toString(QUuid::WithoutBraces)) ==
+              "REVISION_CONFLICT",
+          "add without a mode rejected");
+  require(reason("sideways", QUuid::createUuid().toString(
+                                 QUuid::WithoutBraces)) == "INVALID_PARAMS",
+          "unknown folder mode accepted");
+  require(reason(1, QUuid::createUuid().toString(QUuid::WithoutBraces)) ==
+              "INVALID_PARAMS",
+          "non-string folder mode accepted");
+#endif
+}
+
+/// testFolderModeMigration opens a schema-9 database with an existing mapping:
+/// schema 10 keeps the row and reads it as a full-file folder (PLAN §2.3).
+void testFolderModeMigration() {
+  QTemporaryDir dir;
+  const auto path = dir.filePath("control.sqlite");
+  {
+    Control control(path);
+  }
+  const auto connection = QUuid::createUuid().toString();
+  {
+    auto db = QSqlDatabase::addDatabase("QSQLITE", connection);
+    db.setDatabaseName(path);
+    require(db.open(), "schema-9 fixture open failed");
+    QSqlQuery q(db);
+    // Schema 9 had no mode column.
+    require(
+        q.exec("ALTER TABLE folders DROP COLUMN mode") &&
+            q.exec("INSERT INTO "
+                   "accounts(id,session_id,operation_id,endpoint_id,base_url,"
+                   "credential_ref,state) VALUES('account','session','"
+                   "operation','endpoint','https://cloud.example.invalid/','"
+                   "unused-test-reference','ready')") &&
+            q.exec("INSERT INTO "
+                   "folders(id,account_id,local_path,remote_path,local_"
+                   "identity,remote_identity,journal_path) VALUES('folder',"
+                   "'account','unused-local','/Example','local','remote','"
+                   "unused-journal')") &&
+            q.exec("PRAGMA user_version=9"),
+        "schema-9 fixture not written");
+  }
+  QSqlDatabase::removeDatabase(connection);
+  Control control(path);
+  bool negotiated = false, subscribed = false;
+  control.dispatch(
+      request("session.hello", {{"protocol", QJsonObject{{"major", 1}}}}),
+      negotiated, subscribed);
+  const auto folders =
+      control.dispatch(request("folders.list"), negotiated, subscribed)
+          .toObject()
+          .value("result")
+          .toArray();
+  require(folders.size() == 1 &&
+              folders.first().toObject().value("id") == "folder" &&
+              folders.first().toObject().value("mode") == "full",
+          "schema-9 mapping lost or not read as full-file");
+}
+
+/// testSchema11Migration opens a schema-10 database: addresses read as reached
+/// over the internet, and the start reports what it migrated from and which
+/// version ran before (protocol 1.9, PLAN §16.2).
+void testSchema11Migration() {
+  QTemporaryDir dir;
+  const auto path = dir.filePath("control.sqlite");
+  {
+    Control control(path);
+  }
+  const auto account = QUuid::createUuid().toString(QUuid::WithoutBraces);
+  const auto connection = QUuid::createUuid().toString();
+  {
+    auto db = QSqlDatabase::addDatabase("QSQLITE", connection);
+    db.setDatabaseName(path);
+    require(db.open(), "schema-10 fixture open failed");
+    QSqlQuery q(db);
+    q.prepare("INSERT INTO accounts(id,session_id,operation_id,endpoint_id,"
+              "base_url,credential_ref,state) VALUES(?,'session','operation',"
+              "'main','https://cloud.example.invalid/','unused','ready')");
+    q.addBindValue(account);
+    require(q.exec(), "schema-10 account fixture failed");
+    q.prepare("INSERT INTO endpoints(id,account_id,name,base_url,approved,"
+              "state,expires,operation_id) VALUES('alternate',?,'Alternate',"
+              "'https://alternate.example.invalid/',1,'verified','','probe')");
+    q.addBindValue(account);
+    // Schema 10 had none of schema 11's columns or the conflicts table.
+    require(q.exec() && q.exec("ALTER TABLE endpoints DROP COLUMN kind") &&
+                q.exec("ALTER TABLE decisions DROP COLUMN groups") &&
+                q.exec("ALTER TABLE settings DROP COLUMN daemon_version") &&
+                q.exec("DROP TABLE conflicts") &&
+                q.exec("PRAGMA user_version=10"),
+            "schema-10 fixture not written");
+  }
+  QSqlDatabase::removeDatabase(connection);
+  const auto report = [&](Control &control) {
+    return control.projection()
+        .value("snapshot")
+        .toObject()
+        .value("daemon")
+        .toObject()
+        .value("startupReport")
+        .toObject();
+  };
+  {
+    Control control(path);
+    const auto first = report(control);
+    require(first.value("previousSchema") == 10 &&
+                first.value("schema") == Control::schemaVersion &&
+                first.value("previousVersion").toString().isEmpty(),
+            "schema-11 start did not report what it migrated from");
+    bool found = false;
+    for (const auto &entry : control.projection()
+                                 .value("snapshot")
+                                 .toObject()
+                                 .value("endpoints")
+                                 .toArray())
+      found = found || (entry.toObject().value("id") == "alternate" &&
+                        entry.toObject().value("kind") == "internet");
+    require(found, "a schema-10 address was not read as an internet one");
+  }
+  Control again(path);
+  require(report(again).value("previousSchema") == Control::schemaVersion &&
+              report(again).value("previousVersion") ==
+                  QStringLiteral(SYNCD_VERSION),
+          "a second start did not name the version that ran before");
+}
 /// testCyclePersistence exercises null-success persistence and rollback on
 /// outbox write failure (INV-10/11).
 void testCyclePersistence() {
@@ -268,6 +444,63 @@ void testCyclePersistence() {
 #endif
 }
 
+/// testQuotaReconciles: a cycle refused only by the server's full quota
+/// completes the switch it reconciles (the address and credential work) and
+/// names the quota; any other failure keeps the switch open.
+/// Notes: regression for a credential reload that stayed "switching" for good
+/// on a full test account (renewal fixture, 2026-11-12).
+void testQuotaReconciles() {
+#ifdef SYNCD_WITH_ENGINE
+  for (const auto *reason : {"REMOTE_QUOTA_EXCEEDED", "SYNC_FAILED"}) {
+    QTemporaryDir dir;
+    const auto connection = QUuid::createUuid().toString();
+    {
+      Control control(dir.filePath("control.sqlite"));
+      auto observer = QSqlDatabase::addDatabase("QSQLITE", connection);
+      observer.setDatabaseName(dir.filePath("control.sqlite"));
+      require(observer.open(), "quota observer open failed");
+      QSqlQuery q(observer);
+      for (const auto *sql :
+           {"INSERT INTO accounts(id,session_id,operation_id,endpoint_id,"
+            "base_url,credential_ref,state) VALUES('account','session','op',"
+            "'endpoint','https://cloud.example.invalid/','unused','ready')",
+            "INSERT INTO folders(id,account_id,local_path,remote_path,"
+            "local_identity,remote_identity,journal_path,status) VALUES("
+            "'folder','account','unused-local','/fixture','local-id',"
+            "'remote-id','unused-journal','syncing')",
+            "INSERT INTO endpoint_bindings VALUES('account','endpoint',2,2)",
+            "INSERT INTO operations(key,id,digest,receipt,method) VALUES('k',"
+            "'switch','','{\"operationId\":\"switch\",\"state\":\"running\"}',"
+            "'endpoints.requestSwitch')",
+            "INSERT INTO switch_intents VALUES('account','switch','endpoint',"
+            "2,'reconciling','[]','[\"folder\"]')"})
+        require(q.exec(QString::fromLatin1(sql)), "quota fixture failed");
+      EngineAdapter::Result result;
+      result.reason = QString::fromLatin1(reason);
+      result.epoch = 2;
+      control.cycleFinished("folder", result);
+      require(!control.shutdownRequested(), "quota completion stopped daemon");
+      const bool quota = QLatin1String(reason) == "REMOTE_QUOTA_EXCEEDED";
+      require(q.exec("SELECT COUNT(*) FROM switch_intents") && q.next() &&
+                  (q.value(0).toInt() == 0) == quota,
+              quota ? "a full quota held the switch open"
+                    : "a failed cycle completed a switch");
+      q.finish();
+      require(q.exec("SELECT receipt FROM operations WHERE id='switch'") &&
+                  q.next() &&
+                  q.value(0).toByteArray().contains("succeeded") == quota,
+              "switch receipt does not match the reconciliation");
+      q.finish();
+      require(q.exec("SELECT status,reason FROM folders") && q.next() &&
+                  q.value(0) == "error" && q.value(1).toString() == reason,
+              "the cycle's reason was not kept on the folder");
+      q.finish();
+      observer.close();
+    }
+    QSqlDatabase::removeDatabase(connection);
+  }
+#endif
+}
 /// main runs real core contracts against a disposable database, without server
 /// or Shell side effects.
 int main(int argc, char **argv) {
@@ -277,7 +510,11 @@ int main(int argc, char **argv) {
     testPersistence();
     testSwitch();
     testDecisionEnvelope();
+    testFolderMode();
+    testFolderModeMigration();
+    testSchema11Migration();
     testCyclePersistence();
+    testQuotaReconciles();
     std::puts("PASS shared framing; persistence and cycle storage faults; "
               "switch guards; decision envelope");
     return 0;

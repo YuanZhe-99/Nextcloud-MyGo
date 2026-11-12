@@ -31,6 +31,12 @@ set `QT_PLUGIN_PATH` to its `plugins`; set `SYNCD_TEST_EXE` to the absolute buil
 then run `go test ./internal/syncd -count=1 -v` for the real Go-to-C++ pipe contract. Tests use
 a unique profile and remove it afterward. These commands neither install nor register the app.
 
+Package a built SyncD with `tools/package.ps1 -Arch ARM64` (or `x64`); `go run ./tools/pkg check -arch
+ARM64 <package dir>` re-runs the architecture check. `tools/package-smoke.ps1 -Setup <installer>`
+really installs, reinstalls and uninstalls the package for the current user under a throwaway
+profile and removes everything again; it refuses to run over an existing install. See
+[packaging](packaging.md).
+
 M0's upstream-only build entry point is `tools/build-upstream.ps1`. From PowerShell, pass
 `-Architecture ARM64` (or `x64`), `-Mode engine` (or `tests`), `-QtPrefix`, `-QtHostPrefix` and
 `-DependencyPrefix`. Prefix arguments are absolute SDK/dependency directories; DependencyPrefix
@@ -77,17 +83,17 @@ That child borrows credentials read-only, approves only the two supplied HTTPS o
 process-local Qt proxy fault to refuse selected connections. It changes no system proxy, DNS, route,
 firewall, registry or Explorer setting. It verifies automatic failure selection, all-bad waiting and
 fixed-target refusal using actual HTTPS checks; it does not substitute an HTTP mock for DAV acceptance.
-The paired-daemon fixture also creates 16 MiB random owned upload/download objects within the approved
+The paired-daemon fixture also creates 4 MiB random owned upload/download objects within the approved
 quota. It kills only its own child after diagnostics observe an unfinished content reply and positive
 content bytes, then checks recovered hashes and native journal-file identities after restart. A run
 that never observes an active transfer fails rather than claiming crash acceptance from UI status.
 All objects remain under the fixture's reserved collections and are removed by its existing cleanup.
-The extension also observes positive-byte unfinished 16 MiB transfers, explicitly pauses/cancels them,
+The extension also observes positive-byte unfinished 4 MiB transfers, explicitly pauses/cancels them,
 switches the whole paused account to the other approved origin and reconciles after resume. It checks
 recovered hashes and native journal identities in both directions. This is cancellation plus manual
 cross-origin recovery, not proof of automatic failure selection during a mapped active transfer.
-The separate `-Scenario network-active` acceptance mode uses an owned local CONNECT relay to bound
-encrypted throughput and break a real unfinished transfer. TLS still terminates at the approved real
+The separate `-Scenario network-active` acceptance mode uses an owned local CONNECT relay to hold
+a real transfer unfinished at a byte offset and then break it. TLS still terminates at the approved real
 server, not at the relay. Normal daemon probes and policy must cancel, drain, fail over and reconcile
 the mapped root using its original journal. Only one uniquely reserved remote collection is created;
 the parent cleanup validates its manifest and removes it even after a child crash. It does not change
@@ -114,6 +120,49 @@ through a proxy, which would bypass the fault relay: address a loopback server t
 `.test` names present in its certificate and its `trusted_domains`, and set
 `NEXTCLOUD_TEST_CLEANUP_URL` to the direct loopback origin for the cleanup step, which runs without
 the relay. On failure the script prints the `PASS` lines already reached and one sanitized reason.
+An isolated fixture server is recognised by `NEXTCLOUD_TEST_CLEANUP_URL` (the relay connects to that
+host) and `SYNCD_TEST_CA_CERT` (the acknowledged root); with both set, every transfer scenario
+below and `network-active` can run against it.
+
+`-Scenario network-uncertain` loses the reply of writes the real server has committed, and needs
+the same isolated server. The fixture sends the one request whose path it names through a relay
+that delivers the request and never its reply, waits until the other origin shows the effect while
+the daemon still waits, then breaks the primary. It covers a MOVE and a DELETE of existing entries
+whose path another client creates again before recovery, and the final MOVE of a 112 MiB chunk
+session. Recovery must leave the re-created object and the committed target untouched (same server
+file ID and ETag) and send no chunk again; the fixture never tells the daemon what the server did.
+
+`-Scenario switch-kill` ends its own child at a durable stage of a real switch and restarts it on
+the same profile: `prepared` (intent stored), `quiescing` (an upload still running on the old
+address), `verifying` (the target's credentialed check about to be sent), `committed` (binding
+published, no request of the new epoch sent) and `reconciling` (part of a file already sent to the
+new address). `-Stage` selects stages; each one uses a fresh profile. The restarted child gets no
+hint beyond its own storage and must end on the previous binding for the first three stages and on
+the committed one for the last two, with a fresh epoch, the same credential reference, folder
+binding and native journal file, matching hashes, and no reconciled file transferred again. Its
+content is 8 MiB, so it also runs against the shared test server.
+
+`-Scenario multi-account` runs two accounts with two folders each on one daemon against the
+disposable server (`PLAN.md` §2.1, R05). It signs in the fixture user again and requires
+`ACCOUNT_EXISTS`, creates a second server user with a random password (recorded first in the
+profile's `owned-user.json`, removed by the run and by the parent's `--cleanup`), adds both
+accounts through the production login path, maps two folders each (one of them a local folder that
+does not exist yet), moves content both ways in all four, switches the first account to the other
+address while the second account's folders keep uploading (none of them may show the
+`switchInProgress` blocker or a pause, and its binding and epoch must not change), and removes the
+second account while the first keeps syncing. It needs a server where the fixture user may create
+users, so it runs only in the server tier.
+
+`-Scenario file-safety` runs fault-free cases on the real server: renames and directory moves in
+both directions with server file IDs kept, deletion review for one directory with twelve
+descendants (direction and count), a stale approval after a later change, a leased local root and
+a remote root answering 404. `-Scenario network-large` cuts the chunk session of a file above
+4 GiB after its 4 GiB boundary and requires it to resume on the other origin; it writes, sends and
+verifies the content as a stream and needs an isolated server with about 9 GiB free.
+`-Scenario held-revocation` needs an isolated server too: it issues one app password with the
+fixture's own password, leaves it recorded as the held revocation of an interrupted login, restarts
+Control and requires one DELETE after the 60-second floor, the server's confirmation, and the
+password to be rejected afterwards. The fixture's own password is never revoked.
 
 `tools/build-syncd.ps1` puts only Qt's `bin` on PATH for CTest. The consuming tests also need the
 matching upstream build's `bin/Release` and the native dependency `bin` directories for the same
@@ -128,11 +177,71 @@ native ARM64 execution passed 20/20 processes.
 
 M0 CTest runs exclude `UtilityTest` because its startup test creates a real startup registration.
 Report this exclusion explicitly; this configuration does not verify startup integration.
+They also exclude `SyncCfApiTest`, which registers temporary sync roots and has one case that opens
+Explorer windows. Run it with `tools/test-cfapi-upstream.ps1 -Build <upstream tests tree>` (target Qt
+and dependency `bin` directories on PATH): it leaves that case out and fails if an `OC-TEST`
+registration or one of upstream's shell-extension class keys is left behind.
+
+`tools/test-ondemand.ps1 -Architecture ARM64|x64 [-Build <SyncD tree>]` is the real on-demand run
+([on-demand](on-demand.md)). It starts a disposable server with `tools/test-server.ps1`, runs
+`syncd_ondemand_acceptance` within 150 s (every step inside has its own deadline), removes the server,
+and fails if a `Nextcloud-MyGo!` sync root registered during the run is still present. `-State` reuses
+a server that is already running. The CTest target `SyncDOnDemandContracts` needs no server.
 
 Reused build sources are checked in a temporary Git index: reverse the recorded patches in reverse
 order, then compare the result to the recorded upstream commit. This handles overlapping patches
 without modifying the source working tree or its real index.
 
+## Test tiers
+
+`tools/test-all.ps1 -Tier fast|server -Architecture ARM64|x64` is the one entry point. It runs
+the built SyncD of `build/syncd-<arch>` with the Qt and upstream DLLs its CMake cache recorded,
+prints one `PASS`/`FAIL` line per scenario with its duration and a `TOTAL` line, stops at the first
+failure, and fails when the total exceeds the tier's budget. A failed scenario is never rerun, on
+the same or on the other architecture.
+
+| Tier | Budget | ARM64 (native) | x64 (emulated on ARM64 hosts) |
+|---|---|---|---|
+| `fast` | 2 min, no server | `gofmt`, `go vet`, `go test ./...` with the real Go↔C++ pipe tests, all SyncD CTest targets | `go test ./...` built for amd64, all SyncD CTest targets |
+| `server` | 10 min including the container | every real-server scenario below, in six parallel lanes | one smoke scenario (`switch-kill` at `committed`) |
+
+The server tier starts its own disposable Nextcloud with `tools/test-server.ps1 -Start` (`wslc` by
+default, `-Runtime docker` for hosted runners) and removes it with `-Stop` afterwards: one labelled
+container with an anonymous volume on a loopback port, the image only if this run pulled it, and a
+fixture-local root and admin password kept in ignored `build/test-server-<id>/` until then. The
+root is trusted only inside each acceptance process (`SYNCD_TEST_CA_*`); no trust store, hosts
+file or proxy setting changes, and TLS checks stay on. Clients address the server as
+`primary.syncd.test` and `alternate.syncd.test` through the fixture relay, the cleanup step and the
+`lifetime` case use the direct loopback origin. The tier needs no private server.
+
+Its cases each run in a process and profile of their own, so every case starts on healthy
+endpoints instead of waiting out the circuit history of the one before it: `network-active` runs
+`upload`, `download` and `unacknowledged-upload` as separate cases, `network-uncertain` runs `move`,
+`delete` and `final-move` (`-Case` selects them in `tools/test-reauth-lifetime.ps1`), and
+`switch-kill` runs each `-Stage`. Independent cases share the container and run in parallel lanes.
+The relay is no longer throttled: a transfer is held unfinished at a byte offset
+(`NetworkTunnel::setStallAfter`, primary or alternate relays only, requests below 1 MiB unaffected)
+and broken by the fault the case names. Most of a case's remaining time is the daemon's own
+failover, circuit and reconciliation timing, which the tests do not shorten.
+
+Every step has its own deadline and fails with its name: C++ waits default to 60 s and print a
+`STEP <ms> <name>` line that the wrapper reports when a child exceeds its 150 s budget (240 s for
+`network`, which waits out two circuit-open windows); `SYNCD_TEST_STEPS=1` prints all step times.
+The Go probe gives each wait 90 s and each command retry 30 s, names the step and the daemon's
+sanitized state on failure, and a watchdog prints its goroutine positions and exits shortly after
+the phase budget even if a step ignores its context. All wrappers relaunch themselves in one child
+`pwsh` that owns a kill-on-close Job Object (`tools/test-job.ps1`), and the probe puts itself in
+one too, so no daemon, probe or test executable outlives a failed, killed or interrupted run.
+Cleanup is direct: the probe's `abort` removes the owned account through the daemon (waiting out
+at most its 60 s crash backoff), then the owned collections and roots; it never replays the flow.
+When the daemon refuses to remove the account, the abort keeps the profile, roots and state file
+and says so, because only an existing root lets an interrupted switch finish.
+
+Outside the budget, by explicit switch: `-Large` adds `network-large` (a chunk session above 4 GiB
+cut after its 4 GiB boundary, about 30 min, about 9 GiB free on the server), and `-SharedServer`
+adds the paired-daemon fixture `tools/test-login.ps1` against the approved shared server in
+`NEXTCLOUD_TEST_*`: the paired daemon trusts only a publicly trusted chain, so it cannot use the
+disposable server. `wrong-instance` needs a second instance and is run on its own.
 ## Running the interface
 
 ```bash

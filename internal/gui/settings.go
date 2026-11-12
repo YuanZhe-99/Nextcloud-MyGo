@@ -1,13 +1,17 @@
 package gui
 
 import (
+	"context"
+	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"github.com/YuanZhe-99/Nextcloud-MyGo/internal/syncd"
 	"github.com/YuanZhe-99/Nextcloud-MyGo/internal/version"
 	L "github.com/YuanZhe-99/Nextcloud-MyGo/locales"
 )
@@ -53,7 +57,7 @@ var settingsIndex = []settingDef{
 	{spAbout, func() string {
 		return L.SectionUpdates() + " " + L.CheckDaily() + " " + L.AutoInstall() + " " + L.LicenseRow() + " " + L.ActionSourceCode()
 	}},
-	{spDiagnostics, func() string { return L.LogsRow() + " " + L.SupportBundle() }},
+	{spDiagnostics, func() string { return L.SyncServiceRow() + " " + L.SupportBundle() }},
 }
 
 // pageName is a Settings page's title.
@@ -155,6 +159,9 @@ func (a *App) settingsNav(c *ui.Context) {
 			})
 			if b.Clicked() {
 				a.settings.page = pg
+				if pg == spDiagnostics {
+					a.loadDiagnostics()
+				}
 			}
 		}
 		group := func(name string) {
@@ -396,7 +403,7 @@ func (a *App) aboutPage(c *ui.Context) {
 					a.checkUpdate()
 				}
 				on := a.prefs.CheckUpdates
-				if ui.Switch(c.Key("upd-daily-sw"), &on).Label(L.CheckDaily()).Changed() {
+				if ui.Switch(c.Key("upd-daily-sw"), &on).Label(L.CheckDaily()).Disabled(!mygo.Updater.Enabled()).Changed() {
 					pr := a.prefs
 					pr.CheckUpdates = on
 					a.setPrefs(pr)
@@ -411,7 +418,7 @@ func (a *App) aboutPage(c *ui.Context) {
 						cur = opts[i]
 					}
 				}
-				if ui.Select(c.Key("upd-auto-sel"), &cur, opts).Label(L.AutoInstall()).MinWidth(210).Disabled(!a.prefs.CheckUpdates).Changed() {
+				if ui.Select(c.Key("upd-auto-sel"), &cur, opts).Label(L.AutoInstall()).MinWidth(210).Disabled(!a.prefs.CheckUpdates || !mygo.Updater.Enabled()).Changed() {
 					for i, o := range opts {
 						if o == cur {
 							pr := a.prefs
@@ -424,9 +431,15 @@ func (a *App) aboutPage(c *ui.Context) {
 		})
 	})
 	section(c, "Nextcloud MyGo", func(r *rows) {
-		state := L.SyncdRunning()
-		if a.snap.Daemon.Demo {
+		d := a.snap.Daemon
+		state := L.SyncdNotConnected()
+		switch {
+		case d.Demo:
 			state = L.SyncdSample()
+		case d.Connected:
+			state = L.SyncdRunning(strconv.Itoa(d.Protocol) + "." + strconv.Itoa(d.ProtocolMinor))
+		case d.StartupState != "":
+			state = L.SyncdWithoutState()
 		}
 		r.row(c, "ab-version", icInfo, L.VersionRow(version.Version), L.VersionHint(platformName(), a.snap.Daemon.Version, state), func() {
 			if link(c, "ab-source", L.ActionSourceCode()).Clicked() {
@@ -451,17 +464,106 @@ func platformName() string {
 	return strings.TrimSpace(osName + " " + arch)
 }
 
+// diagState is the Diagnostics page's last reading of SyncD and the last
+// support bundle made.
+type diagState struct {
+	reading *syncd.RuntimeDiagnostics
+	failed  string
+	bundle  string
+}
+
+// loadDiagnostics reads SyncD's sanitized runtime counters
+// (diagnostics.snapshot) off the main thread.
+func (a *App) loadDiagnostics() {
+	a.do("diag", func() error {
+		ctx, cancel := context.WithTimeout(a.ctx, 10*time.Second)
+		defer cancel()
+		d, err := a.client.Diagnostics(ctx)
+		a.later(func() {
+			a.diag.reading, a.diag.failed = nil, ""
+			if err != nil {
+				a.diag.failed = errText(err)
+				return
+			}
+			a.diag.reading = &d
+		})
+		return nil
+	}, nil)
+}
+
+// diagnosticsPage is SyncD's own state as it reports it, and the support
+// bundle it makes. Diagnostics may show codes, IDs, epochs and paths; the
+// rest of the interface never does.
 func (a *App) diagnosticsPage(c *ui.Context) {
+	p := pal(c)
 	section(c, L.SectionDiagnostics(), func(r *rows) {
-		r.row(c, "dg-logs", icLog, L.LogsRow(), L.LogsHint(), func() {
-			if button(c, "dg-logs-open", L.ActionOpenFolder(), nil).Clicked() {
-				a.openPath(a.dir)
+		r.row(c, "dg-syncd", icPulse, L.SyncServiceRow(), L.SyncServiceHint(), func() {
+			if button(c, "dg-refresh", L.ActionRefresh(), icRefresh).Disabled(a.busy["diag"]).Clicked() {
+				a.loadDiagnostics()
 			}
 		})
 		r.row(c, "dg-bundle", icArchive, L.SupportBundle(), L.SupportBundleHint(), func() {
-			if button(c, "dg-export", L.ActionExport(), nil).Clicked() {
-				a.setToast(L.ExportSoon())
+			if button(c, "dg-export", L.ActionExport(), nil).Disabled(a.busy["export"] || a.snap.Daemon.Demo || a.snap.Daemon.StartupState == "").Clicked() {
+				a.do("export", a.exportBundle, nil)
 			}
 		})
 	})
+	if a.diag.bundle != "" {
+		ui.Row(c).MaxWidth(720).FillWidth().Gap(10).Padding(12, 16).Radius(radiusCard).Background(p.subtle).Children(func() {
+			ui.Column(c).Grow(1).MinWidth(0).Children(func() {
+				ui.Text(c, L.BundleSaved()).FontSize(13).FontWeight(600)
+				muted(c, a.diag.bundle, fontSmall).Wrap()
+			})
+			if button(c, "dg-bundle-open", L.ActionOpenFolder(), nil).Clicked() {
+				a.openPath(filepath.Dir(a.diag.bundle))
+			}
+			if button(c, "dg-bundle-copy", L.ActionCopyPath(), nil).Clicked() {
+				mygo.Clipboard.WriteText(a.diag.bundle)
+				a.setToast(L.ToastCopied())
+			}
+		})
+	}
+	if a.diag.failed != "" {
+		ui.Text(c, a.diag.failed).FontSize(13).TextColor(p.danger).Wrap().MaxWidth(720)
+	}
+	if d := a.diag.reading; d != nil {
+		grid := func(rows [][2]string) {
+			ui.Grid(c).ColumnTracks(ui.Fixed(170), ui.Fr(1)).GapY(6).GapX(12).MaxWidth(720).FillWidth().Padding(12, 16).Radius(radiusCard).Border(1, p.border).Children(func() {
+				for _, r := range rows {
+					muted(c, r[0], 13)
+					ui.Text(c, r[1]).FontSize(13).Selectable().Wrap()
+				}
+			})
+		}
+		grid([][2]string{
+			{L.DiagVersion(), d.Version + " · " + d.Protocol},
+			{L.DiagStartup(), string(d.StartupState) + " · " + strconv.FormatBool(d.StateAvailable) + " " + d.ReasonCode},
+			{L.DiagNetwork(), d.NetworkGeneration},
+			{L.DiagPaused(), strconv.FormatBool(d.AllPaused)},
+		})
+		for _, f := range d.Folders {
+			grid([][2]string{
+				{L.DiagFolder(), f.FolderID},
+				{L.DiagState(), f.State + " " + f.ReasonCode + " " + strings.Join(f.Blockers, ",")},
+				{L.DiagEpoch(), f.Epoch},
+				{L.DiagTransfers(), L.DiagTransfersValue(u(f.ActiveUploads), u(f.ActiveDownloads), u(f.ActiveRequests))},
+				{L.DiagUncertain(), u(f.UncertainWrites) + " · " + u(f.RetainedReplies)},
+				{L.DiagTotals(), L.DiagTotalsValue(u(f.Requests), u(f.TransportFailures), size(int64(f.UploadBytes)), size(int64(f.DownloadBytes)))},
+			})
+		}
+	}
+}
+
+// u is a counter as text.
+func u(n uint64) string { return strconv.FormatUint(n, 10) }
+
+// exportBundle asks SyncD for a sanitized support bundle and keeps its
+// path for the page; nothing is uploaded.
+func (a *App) exportBundle() error {
+	path, err := a.client.ExportDiagnostics()
+	if err != nil {
+		return err
+	}
+	a.later(func() { a.diag.bundle = path })
+	return nil
 }

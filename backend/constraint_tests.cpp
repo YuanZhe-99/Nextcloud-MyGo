@@ -2,11 +2,16 @@
 #include "control.h"
 #include "namespace.h"
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDir>
+#include <QEventLoop>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QSqlQuery>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <QUuid>
 #include <cstdio>
 #include <limits>
@@ -51,6 +56,11 @@ struct ConstraintTestAccess {
   static void cleanup(Control &c, const QString &account,
                       const QString &session) {
     c.cleanupReauthentication(account, session);
+  }
+  /// retire runs the restart retry of a held revocation without its 60-second
+  /// floor timer.
+  static void retire(Control &c, const QString &account) {
+    c.retireHeldPassword(account);
   }
 };
 
@@ -118,7 +128,7 @@ struct Fixture {
       q.addBindValue(value);
     require(q.exec(), "constraint account reservation failed");
     q.finish();
-    q.prepare("INSERT INTO endpoints VALUES(?,?,'Alternate',"
+    q.prepare("INSERT INTO endpoints(id,account_id,name,base_url,approved,state,expires,operation_id) VALUES(?,?,'Alternate',"
               "'https://alternate.example.invalid/',1,'verified','',?)");
     q.addBindValue(alternate);
     q.addBindValue(account);
@@ -333,11 +343,147 @@ void writeFailure(bool existing) {
           "failed durable throttle write acknowledged busy or lost evidence");
 }
 
+/// HeldLogin turns the fixture account into a login the previous process left
+/// interrupted with an acquired password in its vault slot.
+struct HeldLogin {
+  Fixture f;
+  QString reference, operation = uuid();
+  /// HeldLogin writes only this fixture's own vault slot and rows.
+  explicit HeldLogin(bool recorded, bool credential = true) {
+    reference =
+        "Nextcloud-MyGo/" +
+        QString::fromLatin1(QCryptographicHash::hash(
+                                QFileInfo(f.path()).absolutePath().toUtf8(),
+                                QCryptographicHash::Sha256)
+                                .toHex()
+                                .left(24)) +
+        '/' + f.account + "/app-password";
+    // A login that never became ready has no approved alternate address.
+    sql(f.db, "DELETE FROM endpoints");
+    QSqlQuery q(f.db);
+    q.prepare("UPDATE accounts SET state='creating',credential_ref=?,"
+              "operation_id=? WHERE id=?");
+    q.addBindValue(reference);
+    q.addBindValue(operation);
+    q.addBindValue(f.account);
+    require(q.exec(), "held login reservation failed");
+    q.prepare("INSERT INTO operations(key,id,digest,receipt,method) "
+              "VALUES(?,?,x'00',?,'accounts.login.start')");
+    q.addBindValue(uuid());
+    q.addBindValue(operation);
+    q.addBindValue(QJsonDocument(QJsonObject{{"operationId", operation},
+                                             {"state", "succeeded"},
+                                             {"result", QJsonObject{}}})
+                       .toJson(QJsonDocument::Compact));
+    require(q.exec(), "held login receipt failed");
+    if (recorded)
+      sql(f.db, "INSERT INTO held_revocations VALUES('" + f.account + "')");
+    if (credential)
+      writeCredential(reference, "owned-user", "owned-held-secret");
+  }
+  /// ~HeldLogin never leaves the fixture secret in the native vault.
+  ~HeldLogin() {
+    try {
+      removeCredential(reference);
+    } catch (...) {
+      std::fputs("Owned held credential cleanup failed\n", stderr);
+      std::abort();
+    }
+  }
+  /// rows counts the interrupted account and its held record.
+  int rows(const char *table) const {
+    QSqlQuery q(f.db);
+    require(q.exec(QString("SELECT COUNT(*) FROM %1").arg(table)) && q.next(),
+            "held login count unavailable");
+    return q.value(0).toInt();
+  }
+  /// outcome reads the login receipt's stable reason.
+  QString outcome(Control &c) const {
+    return reason(command(c, "operations.get", {{"operationId", operation}})
+                      .value("result")
+                      .toObject());
+  }
+};
+
+/// heldRevocation: a login interrupted while the server delayed the DELETE of
+/// its acquired password keeps its slot and reservation across a restart,
+/// sends nothing while the restored delay runs, sends at most one DELETE, and
+/// calls only an unconfirmed outcome unconfirmed (N18, INV-13).
+void heldRevocation() {
+  {
+    // Recorded as held, bounded throttle still running after the restart.
+    HeldLogin h(true);
+    {
+      Control seed(h.f.path(), Control::StartupMode::Deferred);
+      ConstraintTestAccess::throttle(seed, h.f.account, 120000);
+    }
+    Control c(h.f.path());
+    require(findCredential(h.reference) && h.rows("accounts") == 1 &&
+                h.rows("held_revocations") == 1 &&
+                h.outcome(c) == "LOGIN_SESSION_EXPIRED",
+            "restart released a held revocation or misreported its login");
+    ConstraintTestAccess::retire(c, h.f.account);
+    require(findCredential(h.reference) && h.rows("held_revocations") == 1,
+            "held revocation was sent inside the restored server delay");
+  }
+  {
+    // A deadline with no automatic retry ends as unconfirmed, without sending.
+    HeldLogin h(true);
+    {
+      Control seed(h.f.path(), Control::StartupMode::Deferred);
+      ConstraintTestAccess::throttle(seed, h.f.account, -1);
+    }
+    Control c(h.f.path());
+    ConstraintTestAccess::retire(c, h.f.account);
+    require(!findCredential(h.reference) && h.rows("accounts") == 0 &&
+                h.outcome(c) == "APP_PASSWORD_REVOCATION_UNCONFIRMED",
+            "indefinite server delay was retried or reported as revoked");
+  }
+  {
+    // Delay over: the record is cleared before the one DELETE leaves, and an
+    // unanswered DELETE (unresolvable host) is unconfirmed, never repeated.
+    HeldLogin h(true);
+    Control c(h.f.path());
+    ConstraintTestAccess::retire(c, h.f.account);
+    require(h.rows("held_revocations") == 0 && h.rows("accounts") == 1,
+            "held record outlived the sent DELETE or its outcome was assumed");
+    ConstraintTestAccess::retire(c, h.f.account); // no record: sends nothing
+    QEventLoop loop;
+    QTimer poll, deadline;
+    QObject::connect(&poll, &QTimer::timeout, &loop, [&] {
+      if (h.rows("accounts") == 0)
+        loop.quit();
+    });
+    QObject::connect(&deadline, &QTimer::timeout, &loop, &QEventLoop::quit);
+    poll.start(20);
+    deadline.start(45000);
+    loop.exec();
+    require(!findCredential(h.reference) && h.rows("accounts") == 0 &&
+                h.outcome(c) == "APP_PASSWORD_REVOCATION_UNCONFIRMED",
+            "unanswered restart revocation was hidden");
+  }
+  {
+    // Not recorded as held (a DELETE may have been in flight): never sent
+    // again, exactly as before.
+    HeldLogin h(false);
+    Control c(h.f.path());
+    require(!findCredential(h.reference) && h.rows("accounts") == 0 &&
+                h.outcome(c) == "APP_PASSWORD_REVOCATION_UNCONFIRMED",
+            "unrecorded interrupted login was treated as held");
+  }
+  // A record without a password has nothing to revoke.
+  HeldLogin h(true, false);
+  Control c(h.f.path());
+  require(h.rows("accounts") == 0 && h.outcome(c) == "LOGIN_SESSION_EXPIRED",
+          "empty held record kept an interrupted login alive");
+}
+
 /// migrateSeven preserves schema-7 committed state and a read-only prior-schema
-/// backup while adding only the account-throttle table (INV-08/10).
+/// backup while adding only the tables later schemas introduced (INV-08/10).
 void migrateSeven() {
   Fixture f;
   sql(f.db, "DROP TABLE account_constraints");
+  sql(f.db, "DROP TABLE held_revocations");
   sql(f.db, "PRAGMA user_version=7");
   sql(f.db, "UPDATE settings SET paused=1");
   {
@@ -346,8 +492,18 @@ void migrateSeven() {
             "migration started runtime owners");
   }
   QSqlQuery q(f.db);
-  require(q.exec("PRAGMA user_version") && q.next() && q.value(0).toInt() == 8,
-          "schema-7 migration did not reach schema 8");
+  require(q.exec("PRAGMA user_version") && q.next() && q.value(0).toInt() == 11,
+          "schema-7 migration did not reach schema 11");
+  q.finish();
+  // Schema 10: existing mappings keep full-file mode (§2.3).
+  require(q.exec("SELECT COUNT(*) FROM pragma_table_info('folders') WHERE "
+                 "name='mode' AND dflt_value='''full'''") &&
+              q.next() && q.value(0).toInt() == 1,
+          "schema migration did not give folders a full-file mode");
+  q.finish();
+  require(q.exec("SELECT COUNT(*) FROM held_revocations") && q.next() &&
+              q.value(0).toInt() == 0,
+          "schema migration omitted or filled the held-revocation table");
   q.finish();
   require(q.exec("SELECT paused FROM settings") && q.next() &&
               q.value(0).toBool(),
@@ -355,7 +511,7 @@ void migrateSeven() {
   q.finish();
   require(f.count() == 0 &&
               QDir(f.root.path())
-                      .entryList({"*.pre-schema-8.*"}, QDir::Files)
+                      .entryList({"*.pre-schema-11.*"}, QDir::Files)
                       .size() == 1,
           "schema-7 migration omitted its validated backup or invented "
           "constraints");
@@ -373,9 +529,11 @@ int main(int argc, char **argv) {
     expiredRestart(true);
     writeFailure(false);
     writeFailure(true);
+    heldRevocation();
     migrateSeven();
     std::puts("PASS durable account throttle, restart/rollback, origin gates, "
-              "cleanup ownership, write failures and schema-7 migration");
+              "cleanup ownership, held revocation across restart, write "
+              "failures and schema-7 migration");
     return 0;
   } catch (const std::exception &error) {
     std::fprintf(stderr, "%s\n", error.what());

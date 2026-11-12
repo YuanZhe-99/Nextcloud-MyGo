@@ -34,6 +34,13 @@ struct LoginTestAccess {
   /// tick runs the same step the 1.5-second timer runs.
   static void tick(LoginFlow &flow) { flow.tick(); }
 };
+/// ReauthTestAccess reaches a Control-owned login session so the scripted
+/// transport can drive it; production has no such switch.
+struct ReauthTestAccess {
+  static LoginFlow &flow(Control &control, const QString &session) {
+    return *control.logins_.at(session);
+  }
+};
 
 namespace {
 /// require keeps boundary assertions enabled in optimized acceptance builds.
@@ -189,8 +196,9 @@ struct Harness {
   qint64 now = 1000;
   QList<QPointer<Reply>> sent;
   QList<qint64> throttles;
+  QList<bool> holds;
   QStringList published;
-  bool persist = true;
+  bool persist = true, persistHold = true;
   std::unique_ptr<LoginFlow> flow = std::make_unique<LoginFlow>(
       canonicalServer("https://example.invalid/"), uuid(), uuid());
   /// Harness records every request, throttle persistence and publication.
@@ -213,6 +221,10 @@ struct Harness {
     flow->changed = [this](LoginFlow &value) {
       published.append(value.status());
       return true;
+    };
+    flow->held = [this](bool value) {
+      holds.append(value);
+      return persistHold;
     };
   }
   /// last returns the newest request, which must still be unanswered.
@@ -395,8 +407,14 @@ void testFlowRevocation() {
                 !h.published.contains("failed") &&
                 !h.published.contains("cancelled"),
             "throttled revocation released or replayed the candidate");
+    // Only delayed, nothing in flight: recorded for a restart, and cleared
+    // again before the DELETE leaves.
+    require(h.holds == QList<bool>{true},
+            "server-delayed revocation was not recorded as held");
     h.tick(1);
     require(h.last().verb == "DELETE", "refused revocation was never retried");
+    require(h.holds == (QList<bool>{true, false}),
+            "held record survived into an unanswered DELETE");
     h.last().finish(200, revoked);
     h.terminal("cancelled", "LOGIN_CANCELLED",
                "confirmed revocation lost the cancellation");
@@ -420,6 +438,29 @@ void testFlowRevocation() {
     h.terminal("failed", "APP_PASSWORD_REVOCATION_UNCONFIRMED",
                "uncertain or refused revocation was hidden or replayed");
   }
+  {
+    // A held record that cannot be cleared must not be followed by a DELETE:
+    // a later boot would otherwise send a second one.
+    Harness h;
+    h.reach("root");
+    h.flow->cancel();
+    h.last().finish(429, {}, "120");
+    h.persistHold = false;
+    const auto count = h.sent.size();
+    h.tick(120000);
+    require(h.sent.size() == count &&
+                h.flow->reason() == "APP_PASSWORD_REVOCATION_UNCONFIRMED",
+            "DELETE sent although its held record could not be cleared");
+  }
+  {
+    // An immediate revocation was never only delayed: nothing is recorded.
+    Harness h;
+    h.reach("user");
+    h.flow->cancel();
+    require(h.last().verb == "DELETE" && h.holds.isEmpty(),
+            "in-flight revocation was recorded as held");
+    h.last().finish(200, revoked);
+  }
   Harness h;
   h.persist = false;
   h.reach("user");
@@ -442,8 +483,9 @@ void testFlowOwnership() {
     Harness h;
     h.flow->verifyCredentials("u", "p"); // borrowed: never revoked here
     h.last().finish(429, {}, "120");
-    require(h.sent.size() == 1 && h.sent[0]->verb == "GET",
-            "borrowed credential was revoked");
+    require(h.sent.size() == 1 && h.sent[0]->verb == "GET" &&
+                h.holds.isEmpty(),
+            "borrowed credential was revoked or recorded as held");
     h.terminal("failed", "SERVER_THROTTLED", "borrowed refusal misclassified");
   }
   Harness h;
@@ -491,11 +533,95 @@ void testLiveNamespace() {
     browser.cancel(); require(browser.status() == "cancelled", "login cancellation failed");
     std::puts("PASS real credential vault; approved endpoint UID/root match; Login Flow v2 start/cancel (browser consent not exercised)");
 }
+/// testSecondAccount admits a second account and refuses the same user on the
+/// same server a second time, retiring the password it acquired (PLAN §2.1).
+void testSecondAccount() {
+  QTemporaryDir dir;
+  require(dir.isValid(), "test directory missing");
+  Control c(dir.filePath("control.sqlite"));
+  const auto existing = uuid();
+  const auto connection = uuid();
+  auto db = QSqlDatabase::addDatabase("QSQLITE", connection);
+  db.setDatabaseName(dir.filePath("control.sqlite"));
+  require(db.open(), "fixture database unavailable");
+  {
+    QSqlQuery q(db);
+    q.prepare("INSERT INTO accounts(id,session_id,operation_id,endpoint_id,"
+              "base_url,login_name,uid,root_id,credential_ref,state) VALUES(?,?,"
+              "?,?,'https://other.example.invalid/','u','u','00000001oc','"
+              "unused','ready')");
+    for (const auto &value : {existing, uuid(), uuid(), uuid()})
+      q.addBindValue(value);
+    require(q.exec(), "existing account fixture failed");
+  }
+  // Both scripted logins share one transport and clock that outlive them.
+  QObject transport;
+  QList<QPointer<Reply>> sent;
+  qint64 now = 1000;
+  // user names the server-side user the scripted login proves.
+  const auto login = [&](const QByteArray &user, const QByteArray &rootBody) {
+    const auto accepted = call(c, "accounts.login.start",
+                              {{"operationKey", uuid()},
+                               {"canonicalBaseUrl", "https://example.invalid/"}});
+    const auto operation =
+        accepted.value("result").toObject().value("operationId").toString();
+    require(!operation.isEmpty(), "a second account's login was refused");
+    QSqlQuery q(db);
+    q.prepare("SELECT session_id,credential_ref FROM accounts WHERE "
+              "operation_id=?");
+    q.addBindValue(operation);
+    require(q.exec() && q.next(), "second login reservation missing");
+    const auto session = q.value(0).toString(), reference = q.value(1).toString();
+    q.finish();
+    auto &flow = ReauthTestAccess::flow(c, session);
+    LoginTestAccess::attach(
+        flow, [&] { return now; },
+        [&](const QNetworkRequest &request, const QByteArray &verb,
+            const QByteArray &) {
+          auto *reply = new Reply(request, verb, &transport);
+          sent.append(reply);
+          return reply;
+        });
+    flow.start();
+    sent.last()->finish(200, started);
+    LoginTestAccess::tick(flow);
+    sent.last()->finish(200, granted);
+    sent.last()->finish(200, user);
+    sent.last()->finish(207, rootBody);
+    if (flow.status() == "discarding") {
+      require(sent.last()->verb == "DELETE",
+              "a refused duplicate kept its acquired password");
+      sent.last()->finish(200, revoked);
+    }
+    const auto receipt = call(c, "operations.get", {{"operationId", operation}})
+                             .value("result")
+                             .toObject();
+    return std::make_pair(receipt, reference);
+  };
+  const auto [duplicate, reference] = login(user, root);
+  require(duplicate.value("state") == "failed" &&
+              duplicate.value("error").toObject().value("data").toObject().value(
+                  "reasonCode") == "ACCOUNT_EXISTS",
+          "the same user on the same server was added twice");
+  require(!findCredential(reference), "a refused duplicate kept its vault slot");
+  const QByteArray other = R"({"ocs":{"meta":{"status":"ok"},"data":{"id":"v"}}})";
+  QByteArray otherRoot = root;
+  otherRoot.replace("files/u/", "files/v/").replace("00000001oc", "00000002oc");
+  const auto [second, secondReference] = login(other, otherRoot);
+  require(second.value("state") == "succeeded",
+          "a second account on the same server was refused");
+  require(call(c, "accounts.list").value("result").toArray().size() == 2,
+          "two ready accounts were not both listed");
+  removeCredential(secondReference);
+  db.close();
+  db = {};
+  QSqlDatabase::removeDatabase(connection);
+}
 }
 
 /// main runs login/credential contracts and opt-in read-only real-server checks, with owned-resource cleanup.
 int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
-    try { testURLBoundary(); testFlowSuccess(); testFlowConstraints(); testFlowRetryAfter(); testFlowExpiry(); testFlowRevocation(); testFlowOwnership(); testVaultAndRecovery(); testCancelReplay(); testLiveNamespace(); std::puts("PASS login boundary and crash recovery"); return 0; }
+    try { testURLBoundary(); testFlowSuccess(); testFlowConstraints(); testFlowRetryAfter(); testFlowExpiry(); testFlowRevocation(); testFlowOwnership(); testVaultAndRecovery(); testCancelReplay(); testSecondAccount(); testLiveNamespace(); std::puts("PASS login boundary and crash recovery"); return 0; }
     catch (const std::exception &e) { std::fprintf(stderr, "%s\n", e.what()); return 1; }
 }

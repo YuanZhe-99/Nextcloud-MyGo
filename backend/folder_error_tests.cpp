@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "control.h"
+#include "root.h"
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QEvent>
+#include <QEventLoop>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QSqlQuery>
 #include <QTemporaryDir>
@@ -64,6 +68,47 @@ struct NetworkTestAccess {
   /// stopped observes the fail-closed Control gate and completed idle shutdown.
   static bool stopped(const Control &control) {
     return control.storageFailed_ && control.shutdownRequested();
+  }
+  /// db exposes the fixture's Control connection for setup and checks.
+  static QSqlDatabase db(Control &control) { return control.db_; }
+  /// addFolder maps one more existing local root of the same account.
+  static QString addFolder(Control &control, const QString &account,
+                           const QString &local) {
+    const auto folder = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    QSqlQuery q(control.db_);
+    q.prepare("INSERT INTO folders(id,account_id,local_path,remote_path,"
+              "local_identity,remote_identity,journal_path) "
+              "VALUES(?,?,?,'/present',?,'fixture-present',?)");
+    for (const auto &value :
+         {folder, account, QDir::cleanPath(local),
+          RootLease(QDir::cleanPath(local)).identity(),
+          control.directory_ + "/journals/" + folder + ".sqlite"})
+      q.addBindValue(value);
+    if (!q.exec())
+      throw std::runtime_error("second mapping fixture failed");
+    return folder;
+  }
+  /// interruptSwitch records a switch a previous process left at 'blocked'
+  /// with an interrupted receipt, as startup records it.
+  static void interruptSwitch(Control &control, const QString &account) {
+    const auto operation = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    QSqlQuery q(control.db_);
+    q.prepare("INSERT INTO operations(key,id,digest,receipt,method) "
+              "VALUES(?,?,'',?,'endpoints.requestSwitch')");
+    q.addBindValue(operation);
+    q.addBindValue(operation);
+    q.addBindValue(QByteArray(
+        "{\"operationId\":\"" + operation.toUtf8() +
+        "\",\"state\":\"failed\",\"error\":{\"code\":-32000,\"data\":"
+        "{\"reasonCode\":\"OPERATION_INTERRUPTED\"}}}"));
+    if (!q.exec())
+      throw std::runtime_error("interrupted receipt fixture failed");
+    q.prepare("INSERT INTO switch_intents VALUES(?,?,?,1,'blocked','[]','[]')");
+    q.addBindValue(account);
+    q.addBindValue(operation);
+    q.addBindValue(account);
+    if (!q.exec())
+      throw std::runtime_error("interrupted switch fixture failed");
   }
   /// failPersistence rejects only durable error publication after the real
   /// unavailable-root exception, not attachment itself.
@@ -147,6 +192,124 @@ void failClosed(bool persistence) {
   require(NetworkTestAccess::stopped(control),
           "internal attachment/persistence failure did not close admission");
 }
+/// inspectMissing accepts a folder that does not exist yet when its parent
+/// does, and refuses one whose parent is missing (protocol 1.9).
+void inspectMissing() {
+  QTemporaryDir profile, local;
+  require(profile.isValid() && local.isValid(), "inspect fixture unavailable");
+  Control control(profile.filePath("control.sqlite"));
+  NetworkTestAccess::seed(control, local.filePath("mapped"), "unused", false);
+  QString account;
+  {
+    QSqlQuery q(NetworkTestAccess::db(control));
+    require(q.exec("SELECT id FROM accounts") && q.next(),
+            "inspect fixture account missing");
+    account = q.value(0).toString();
+  }
+  bool negotiated = true, subscribed = false;
+  const auto reason = [&](const QString &path) {
+    return control
+        .dispatch(QJsonObject{{"jsonrpc", "2.0"},
+                              {"id", 1},
+                              {"method", "folders.inspect"},
+                              {"params", QJsonObject{{"accountId", account},
+                                                     {"remotePath", "/New"},
+                                                     {"localPath", path}}}},
+                  negotiated, subscribed)
+        .toObject()
+        .value("error")
+        .toObject()
+        .value("data")
+        .toObject()
+        .value("reasonCode")
+        .toString();
+  };
+  require(reason(local.filePath("absent/new")) == "LOCAL_ROOT_UNAVAILABLE",
+          "a folder whose parent is missing passed inspection");
+  require(reason(local.filePath("new")) != "LOCAL_ROOT_UNAVAILABLE" &&
+              !QFileInfo::exists(local.filePath("new")),
+          "a not-yet-existing folder was refused or created by inspection");
+}
+/// removalWhileStuck removes an account whose interrupted switch cannot finish
+/// because one mapped root is missing: engines stop, mappings and the switch
+/// go, local files and engine journals stay (INV-01/05, PLAN §12.1).
+/// Notes: regression for removal refused with QUIESCE_STALLED for good.
+void removalWhileStuck() {
+  QTemporaryDir profile, local;
+  require(profile.isValid() && local.isValid(), "removal fixture unavailable");
+  Control control(profile.filePath("control.sqlite"));
+  const auto missing =
+      NetworkTestAccess::seed(control, local.filePath("missing"),
+                              "not-the-native-root-identity", false);
+  QFile kept(local.filePath("present/kept.txt"));
+  require(QDir().mkpath(local.filePath("present")) &&
+              kept.open(QIODevice::WriteOnly) && kept.write("owned") == 5,
+          "removal fixture file unavailable");
+  kept.close();
+  QString account;
+  {
+    QSqlQuery q(NetworkTestAccess::db(control));
+    require(q.exec("SELECT account_id FROM folders") && q.next(),
+            "removal fixture account missing");
+    account = q.value(0).toString();
+  }
+  const auto present =
+      NetworkTestAccess::addFolder(control, account, local.filePath("present"));
+  NetworkTestAccess::interruptSwitch(control, account);
+  NetworkTestAccess::pump(control);
+  require(NetworkTestAccess::reason(control, missing) ==
+              "LOCAL_ROOT_UNAVAILABLE",
+          "missing root fixture did not stay blocked");
+  QFile journal(profile.filePath("journals/" + present + ".sqlite"));
+  require(QDir().mkpath(profile.filePath("journals")) &&
+              (journal.exists() || journal.open(QIODevice::WriteOnly)),
+          "removal journal fixture unavailable");
+  journal.close();
+  bool negotiated = true, subscribed = false;
+  const auto call = [&](const QString &method, const QJsonObject &params) {
+    auto withKey = params;
+    withKey.insert("operationKey",
+                   QUuid::createUuid().toString(QUuid::WithoutBraces));
+    withKey.insert("expectedRevision", control.projection().value("revision"));
+    return control
+        .dispatch(QJsonObject{{"jsonrpc", "2.0"},
+                              {"id", 1},
+                              {"method", method},
+                              {"params", withKey}},
+                  negotiated, subscribed)
+        .toObject();
+  };
+  const auto accepted = call("accounts.remove", {{"accountId", account}});
+  const auto operation =
+      accepted.value("result").toObject().value("operationId").toString();
+  require(!operation.isEmpty(), "removal of a stuck account was refused");
+  QJsonObject receipt;
+  QElapsedTimer clock;
+  clock.start();
+  while (clock.elapsed() < 30000) {
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    receipt = call("operations.get", {{"operationId", operation}})
+                  .value("result")
+                  .toObject();
+    if (receipt.value("state") != "running")
+      break;
+  }
+  require(receipt.value("state") == "succeeded",
+          "removal of a stuck account did not finish");
+  require(!NetworkTestAccess::stopped(control), "removal stopped the daemon");
+  QSqlQuery q(NetworkTestAccess::db(control));
+  for (const auto &table : {"accounts", "folders", "switch_intents"})
+    require(q.exec(QStringLiteral("SELECT COUNT(*) FROM %1").arg(table)) &&
+                q.next() && q.value(0).toInt() == 0,
+            "removal left account, mapping or switch state behind");
+  q.finish();
+  require(q.exec("SELECT receipt FROM operations WHERE method="
+                 "'endpoints.requestSwitch'") &&
+              q.next() && q.value(0).toByteArray().contains("\"failed\""),
+          "the interrupted switch receipt changed");
+  require(QFile::exists(local.filePath("present/kept.txt")) && journal.exists(),
+          "removal touched local files or an engine journal");
+}
 #endif
 } // namespace
 
@@ -177,6 +340,8 @@ int main(int argc, char **argv) {
   run("changed", [] { startupReasons("changed", "FOLDER_ROOT_CHANGED"); });
   run("internal", [] { failClosed(false); });
   run("persistence", [] { failClosed(true); });
+  run("removal while stuck", [] { removalWhileStuck(); });
+  run("inspect a folder that does not exist yet", [] { inspectMissing(); });
   return failures ? 1 : 0;
 #endif
 }

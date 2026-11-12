@@ -5,9 +5,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -22,23 +24,34 @@ type state struct {
 	Folders          bool
 }
 
-// connect waits for the paired daemon's negotiated snapshot within the fixture deadline.
+// connect waits for the paired daemon's negotiated normal snapshot within one step budget.
+// Notes: a daemon that answers but stays in backoff or diagnostic state fails here with that state.
 func connect(ctx context.Context, s state, executable string) *syncd.Remote {
 	r := syncd.NewRemote(ctx, s.Profile, executable)
-	for !r.Snapshot().Daemon.Connected {
-		select {
-		case <-ctx.Done():
-			panic("daemon connection deadline")
-		case <-time.After(20 * time.Millisecond):
-		}
-	}
+	observed = r
+	await(ctx, func() bool { return r.Snapshot().Daemon.Connected }, "daemon connection")
 	return r
 }
 
 // main starts, completes or cleans one owned consent fixture without touching user sync roots.
 func main() {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	// The whole flow takes a few minutes; each step also has its own shorter budget.
+	budget := 12 * time.Minute
+	if len(os.Args) == 2 && os.Args[1] == "abort" {
+		budget = 2 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
+	// A step that ignores its context still cannot hang the fixture: past the phase budget the
+	// watchdog prints where every goroutine stands (code positions only) and exits.
+	time.AfterFunc(budget+15*time.Second, func() {
+		stacks := make([]byte, 1<<20)
+		stacks = stacks[:runtime.Stack(stacks, true)]
+		fmt.Fprintf(os.Stderr, "panic: watchdog: phase exceeded its budget\n%s", stacks)
+		go func() { fmt.Fprintln(os.Stderr, "watchdog last state:", daemonState()) }()
+		time.Sleep(time.Second)
+		os.Exit(3)
+	})
 	executable, err := filepath.Abs(os.Getenv("SYNCD_TEST_EXE"))
 	if err != nil {
 		panic(err)
@@ -55,6 +68,10 @@ func main() {
 	}
 	if os.Getenv("LOCALAPPDATA") == "" {
 		panic("Windows profile location missing")
+	}
+	// The start phase's daemon must outlive it until finish; the wrapper's job owns that one.
+	if os.Args[1] != "start" {
+		ownChildren()
 	}
 	var s state
 	if os.Args[1] == "start" {
@@ -90,43 +107,12 @@ func main() {
 	if !strings.HasPrefix(s.Profile, "login-probe-") || err != nil || stamp <= 0 {
 		panic("invalid owned fixture profile")
 	}
-	r := connect(ctx, s, executable)
 	if os.Args[1] == "abort" {
-		if s.Renewal != "" {
-			_ = r.CancelLogin(s.Renewal)
-		}
-		if s.Folders {
-			cleanupSync(ctx, r, s, file)
-		}
-		for _, account := range r.Snapshot().Accounts {
-			if err := r.RemoveAccount(account.ID); err != nil {
-				panic("owned account cleanup needs attention")
-			}
-		}
-		_ = r.CancelLogin(s.Session)
-		if err := r.Shutdown(); err != nil {
-			panic("owned daemon shutdown failed")
-		}
-		r.Close()
-		hash := sha256.Sum256([]byte(s.Profile))
-		dir := filepath.Join(os.Getenv("LOCALAPPDATA"), "Nextcloud-MyGo", "syncd", fmt.Sprintf("%x", hash[:12]))
-		for i := 0; i < 100; i++ {
-			err = os.RemoveAll(dir)
-			if err == nil {
-				break
-			}
-			time.Sleep(20 * time.Millisecond)
-		}
-		if err != nil {
-			panic("owned profile cleanup failed")
-		}
-		if err := os.Remove(file); err != nil {
-			panic(err)
-		}
-		fmt.Println("Cancelled owned incomplete login and cleaned local profile")
+		abort(ctx, s, executable, file)
 		return
 	}
-	id, err := r.WaitLogin(ctx, s.Session)
+	r := connect(ctx, s, executable)
+	id, err := waitLogin(ctx, r, s.Session)
 	if err != nil {
 		panic(err)
 	}
@@ -137,7 +123,9 @@ func main() {
 		panic(err)
 	}
 	r.Close()
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(1500 * time.Millisecond)
+	// Started here, not by the client, so its own fatal messages are reported.
+	ownDaemon(s.Profile)
 	r = connect(ctx, s, executable)
 	defer r.Close()
 	defer func() {
@@ -188,7 +176,7 @@ func main() {
 	for len(r.Snapshot().Accounts) != 0 {
 		select {
 		case <-ctx.Done():
-			panic("account removal deadline")
+			fail("account removal (phase deadline)")
 		case <-time.After(20 * time.Millisecond):
 		}
 	}
@@ -212,4 +200,106 @@ func main() {
 		panic(err)
 	}
 	fmt.Println("PASS real Login Flow v2 consent, native credential storage, account persistence/restart, confirmed remote app-password revocation, local account/vault/profile cleanup")
+}
+
+// abort removes only this fixture's owned objects, directly and within the abort budget; it never
+// replays the flow that failed. Remote collections and local roots go even when the daemon cannot be
+// reached; the account (and with it the issued app password) is removed only through the daemon, so a
+// profile whose account could not be removed is kept and reported rather than deleted.
+func abort(ctx context.Context, s state, executable, file string) {
+	removed := func() (ok bool) {
+		defer func() {
+			if failure := recover(); failure != nil {
+				fmt.Fprintln(os.Stderr, failure)
+				ok = false
+			}
+		}()
+		// A daemon restarted after the fixture's own kills waits out its crash backoff (at most 60 s).
+		// Started here so its own fatal messages are reported; a daemon that is
+		// already running keeps the profile and this one exits.
+		launchDaemon(s.Profile) // exits at once if a daemon still holds the profile
+		connectCtx, cancel := context.WithTimeout(ctx, 75*time.Second)
+		defer cancel()
+		r := connect(connectCtx, s, executable)
+		defer r.Close()
+		if s.Renewal != "" {
+			_ = r.CancelLogin(s.Renewal)
+		}
+		_ = r.CancelLogin(s.Session)
+		// Stop the daemon before local roots are removed, whatever happens below.
+		defer func() {
+			if r.Shutdown() == nil {
+				await(ctx, func() bool { return !r.Snapshot().Daemon.Connected }, "owned daemon stop")
+			}
+		}()
+		// Folder removal is best effort: an interrupted switch can refuse it, and account removal
+		// below removes the account's folders anyway.
+		_ = r.PauseAll()
+		for _, f := range r.Snapshot().Folders {
+			if err := r.RemoveFolder(f.ID); err != nil {
+				fmt.Fprintln(os.Stderr, "owned folder removal deferred to account removal:", err)
+			}
+		}
+		for _, account := range r.Snapshot().Accounts {
+			waited := false
+			for {
+				err := r.RemoveAccount(account.ID)
+				if err == nil {
+					break
+				}
+				if errors.Is(err, syncd.ErrStale) && ctx.Err() == nil {
+					time.Sleep(100 * time.Millisecond)
+					continue
+				}
+				if !errors.Is(err, syncd.ErrBusy) || waited {
+					fmt.Fprintln(os.Stderr, "owned account removal refused:", err)
+					return false
+				}
+				// An interrupted switch must finish before its account can go: let the daemon
+				// reconcile once (owned folders only), then remove the account.
+				fmt.Fprintln(os.Stderr, "owned account removal waits for the interrupted switch:", err)
+				waited = true
+				retryCommand(ctx, r.ResumeAll)
+				await(ctx, func() bool {
+					for _, n := range r.Snapshot().Networks {
+						if n.Switching {
+							return false
+						}
+					}
+					return true
+				}, "interrupted switch completion before account removal")
+			}
+		}
+		await(ctx, func() bool { return len(r.Snapshot().Accounts) == 0 }, "owned account removal")
+		return true
+	}()
+	if !removed {
+		// Keep the roots: an interrupted switch can only finish (and the account go) while they exist.
+		panic("owned account could not be removed through the daemon; profile, roots and state kept")
+	}
+	if s.Folders {
+		home := fixtureHome()
+		for _, suffix := range []string{"a", "b"} {
+			fixtureDAV("DELETE", home+"nextcloud-mygo-"+s.Profile+"-"+suffix, nil, 204, 404)
+		}
+		if os.RemoveAll(filepath.Join(filepath.Dir(file), s.Profile)) != nil {
+			panic("owned local sync cleanup failed")
+		}
+	}
+	hash := sha256.Sum256([]byte(s.Profile))
+	dir := filepath.Join(os.Getenv("LOCALAPPDATA"), "Nextcloud-MyGo", "syncd", fmt.Sprintf("%x", hash[:12]))
+	var err error
+	for i := 0; i < 100; i++ {
+		if err = os.RemoveAll(dir); err == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err != nil {
+		panic("owned profile cleanup failed")
+	}
+	if err := os.Remove(file); err != nil {
+		panic(err)
+	}
+	fmt.Println("Cancelled owned incomplete login and cleaned local profile")
 }

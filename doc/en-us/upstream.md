@@ -61,9 +61,29 @@ master-branch observations above; none is a runtime acceptance claim.
 
 Windows code lives in `src/libsync/vfs/cfapi` (`vfs_cfapi`, `hydrationjob`, `cfapiwrapper`) and its
 `shellext` subtree. `CfApiWrapper` has register/unregister operations; `VfsCfApi` invokes them during
-its lifecycle. These are real system side effects, so M0 must leave the plugin inactive.
-Product-specific registration identities, hydration quiescence and complete teardown remain M6
-work; the upstream implementation has not been run here.
+its lifecycle. SyncD reuses the plugin for on-demand folders ([on-demand](on-demand.md)); these
+points of Desktop v35.0.3 shaped that integration (read, and exercised by the on-demand runs):
+
+- The sync root ID is `provider!SID!account display name!alias`, and the display name is
+  `user@host[:port]`: an endpoint switch would register the same folder under a second key and
+  leave the first. Patch 0017 adds `VfsSetupParams::syncRootAccountId`.
+- `createSyncRootRegistryKeys` always names the shell extension's handler classes and a
+  navigation-pane class. Built without the extension, those IDs are unregistered here or belong to
+  an installed official client. Patch 0017 writes them only for a registered extension.
+- `unregisterFolder` deletes the shell-extension class keys under HKCU when no root of the provider
+  remains; the class IDs are upstream's own, so it can remove another installation's. SyncD calls only
+  `CfApiWrapper::unregisterSyncRoot`.
+- Hydration and population callbacks run on Cloud Files threads, wait in a local event loop for
+  queued work on the VFS thread, and read `params().account`. Disconnecting or destroying the VFS while
+  one runs can strand that thread. Patch 0017 adds `Vfs::refuseNewRequests` and
+  `Vfs::hasRequestsInFlight`, counted by the callbacks themselves.
+- New remote directories become on-demand directories (`postProcessServerNew`); listing one asks the
+  provider to populate it through `Account::listRemoteFolder`, outside a sync cycle, and writes the
+  journal on the VFS thread. A request from the provider's own process is refused.
+- The plugin and its shell extension are gated on `BUILD_SHELL_INTEGRATION` (patch 0001); patch 0017
+  adds `BUILD_CFAPI_VFS` for the plugin alone.
+- `Folder::setVirtualFilesEnabled` deletes and recreates the journal; switching a folder's mode is
+  therefore not offered.
 
 The macOS extension target is under `shell_integration/MacOSX/NextcloudIntegration/FileProviderExt`.
 Its stub names `NextcloudFileProviderKit.FileProviderExtension` as the actual implementation in
@@ -78,6 +98,7 @@ remain unverified. These sources retain their own SPDX headers and bundled licen
 |---|---|---|
 | Login Flow v2 opens the system browser and polls for an app password | SyncD runs the login; the UI never receives the app password | read |
 | WebDAV `oc:id` carries the instance namespace; `oc:fileid` is unique only within an instance | identity checks compare the full `oc:id`, never a bare `fileid` | read |
+| A MOVE keeps the entry's `oc:fileid`; a chunk session's final MOVE answers only after the file is assembled; a committed write stays committed when its reply is lost | upstream discovery recognizes the renamed entry by file ID and the assembled file by checksum, so a lost reply is recovered by rediscovery, never by a second request | real runs against server 35.0.2 |
 
 ## Qt
 

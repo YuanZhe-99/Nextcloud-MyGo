@@ -2,7 +2,7 @@
 
 ## Contract
 
-Protocol 1.7 uses JSON-RPC 2.0 over a local Named Pipe: a four-byte little-endian length followed
+Protocol 1.9 uses JSON-RPC 2.0 over a local Named Pipe: a four-byte little-endian length followed
 by UTF-8 JSON, at most 1 MiB and 64 nested containers. Duplicate object keys are invalid.
 `protocol/contract.json` records methods and capability gates. `protocol/fixtures.json` is shared
 by Go and C++ contract tests. The wire projection uses lower-camel-case field names.
@@ -26,9 +26,66 @@ Unsupported capabilities return `UNSUPPORTED_CAPABILITY`, never simulated succes
 
 ## Implementation scope
 
+Protocol 1.9, with Control schema 11, adds what the interface needs and what the installer needs
+(examples in `protocol/state.examples.json`, schema in `protocol/message.schema.json`):
+
+- Several accounts. A second account on the same or another server is accepted; the same user on
+  the same server (same UID and DAV root identity, whatever address was used) is refused as
+  `ACCOUNT_EXISTS` once its login proved who it is, and the password that login acquired is
+  retired. The `multiAccount` capability reports this ([accounts](accounts.md)).
+- Account removal is never refused for a busy account: `accounts.remove` stops the account's
+  sign-ins, engines and checks, removes its mappings (files and journals stay) and then revokes as
+  before.
+- `account.auth` is `signedIn`, `needsSignIn` (the credential cannot be used on this computer, or a
+  renewal waits for the browser) or `revoked` (the server refused the app password); `signedIn`
+  stays as `auth == signedIn`.
+- `folder.phase` is `checking`, `uploading` or `downloading` while a cycle runs and empty
+  otherwise; `folder.filesDone` counts the cycle's completed files. A running cycle publishes a
+  snapshot event at most once a second when either changes.
+- `endpoint.latencyMs` (smoothed probe round trip, 0 before a probe succeeded), `endpoint.kind`
+  (`internet`, `home`, `vpn`, chosen at `endpoints.stage` with the optional `kind`; it never
+  affects trust) and `endpoint.blockedReason`, the one reason `blocked` is true, strongest first:
+  a security quarantine, `AUTH_REQUIRED`, `VERIFICATION_PENDING` or `NETWORK_UNAVAILABLE`.
+- `network.why` (why the address in use was chosen), `network.switchReason` and
+  `network.switched` (the last committed switch).
+- Bulk deletions carry `groups` (at most eight top-level entries with file counts, loose files
+  as one group). Conflict copies upstream kept are decisions of
+  kind `conflict` with `file` and `copy`; `resolved` closes one and both copies stay.
+- `daemon.prepareUpdate(targetVersion)` is dispatched. It refuses `DECISION_PENDING` while a
+  deletion waits for the user and `QUIESCE_STALLED` while a switch, renewal, address check,
+  sign-in or removal runs; otherwise no new cycle starts, the running one finishes on its own, a
+  consistent Control copy `control.pre-update.<id>.sqlite` is written (the newest only) and the
+  receipt succeeds with `{"ready": true}`. The hold lasts ten minutes or until shutdown.
+  `daemon.startupReport` then says what a start migrated from (`previousVersion`,
+  `previousSchema`, `schema`) and whether its self-check passed (`selfCheck`: pending, passed or
+  failed, with `reasonCodes`).
+- The `engine` capability separates a build linked to the upstream engine from a foundation build.
+- `folders.inspect` accepts a local folder that does not exist yet when its parent does
+  (`localExists` false); `folders.add` then creates it empty.
+
+The Go client sends `minor: 9`, maps `ACCOUNT_EXISTS` to `ErrAccountExists` and `DECISION_PENDING`
+to `ErrBusy`, and offers `ConnectRemote`, which never starts SyncD, and `Remote.Disconnect`, a
+stable phrase for Diagnostics saying why the last connection ended. `nextcloud-mygo-syncd.exe
+--version` prints one JSON line with the version, protocol and Control schema and starts nothing
+([packaging](packaging.md)).
+
+Protocol 1.8 adds the folder file mode ([on-demand](on-demand.md)). `folders.add` takes an optional
+`mode`, `full` (the default) or `onDemand`; any other value, or a non-string, is `INVALID_PARAMS`, and
+`onDemand` without the CFAPI plugin is `UNSUPPORTED_CAPABILITY`. The mode is fixed for the folder's
+lifetime, stored by Control schema 10 (`folders.mode`, existing rows `full`), and every folder
+projection carries it. Removing an on-demand folder first ends its Cloud Files registration and refuses
+`QUIESCE_STALLED` while one of its hydrations runs. The `virtualFiles` capability stays false: the
+on-demand path has run on native ARM64 against a real server through SyncD's engine runtime, not yet
+through the paired daemon and interface. See `protocol/folders.schema.json` (`addParams`) and
+`protocol/folders.examples.json` (`addOnDemand`). The Go client decodes `Folder.Mode` and `AddFolder`
+takes an optional mode; a schema-9 mapping migrates as `full` (`testFolderModeMigration`). Choosing a mode
+in the interface is still to be added.
+
 Protocol 1.7 adds explicit startup availability and stable folder `reasonCode` projections. Control
 schema 8 is being integrated for durable account-level server throttles (the preceding startup
-acceptance used schema 7). `snapshot.daemon.stateAvailable=false` means the account/file state is unknown:
+acceptance used schema 7). Control schema 9 adds only the `held_revocations` table
+([accounts](accounts.md)); no method, field, event or error of protocol 1.7 changed with it.
+`snapshot.daemon.stateAvailable=false` means the account/file state is unknown:
 the snapshot omits all account/folder/endpoint/network/switch/decision/activity arrays instead of
 reporting empty success. `startupState` is `normal`, `backoff`, `diagnostic`, `stopped` or
 `databaseUnavailable`. Authenticated diagnostic bootstrap and `diagnostics.snapshot` remain readable;
@@ -121,14 +178,15 @@ Failed or expired unapproved staging records are discarded when staging again; a
 never discarded this way. Reusing the old operation key still returns its original outcome.
 
 Engine-linked builds implement `folders.inspect`, `folders.add`, `folders.pause`, `folders.resume`,
-`folders.syncNow` and `folders.remove`. Inspection currently requires an existing local directory;
-the returned five-minute token binds both root identities and is rechecked when adding. Removing a
-mapping preserves files and its journal; a running mapping must first quiesce. Account removal requires
-removing its mappings first. Foundation-only builds reject these engine operations.
+`folders.syncNow` and `folders.remove`. Inspection accepts an existing local directory or, since 1.9,
+one that does not exist yet under an existing parent; the returned five-minute token binds both root
+identities and is rechecked when adding. Removing a mapping preserves files and its journal; a running
+mapping must first quiesce. Since 1.9 account removal removes the account's mappings itself.
+Foundation-only builds reject these engine operations.
 
 `decisions.list` and snapshots expose `bulkDeletions` with `localDeletes`, `remoteDeletes`, `digest`
-and `expires`. `decisions.resolve` takes `decisionId`, `proposalDigest` and an `action` of
-`approveDeletion` or `later`; approval consumes the pending
+and `expires` (and `groups` since 1.9). `decisions.resolve` takes `decisionId`, `proposalDigest` and an
+`action` of `approveDeletion` or `later`; approval consumes the pending
 decision and authorizes one matching rediscovery within ten minutes of proposal creation. Restart
 invalidates old proposals. Approval is not a promise that propagation succeeded: observe folder state
 and any replacement decision. The current UI still needs controls for this decision kind.
@@ -139,7 +197,7 @@ coordinator checks trust, identity, epoch and quiescence as a separate control-t
 the engine adapter must supply the actual quiescence proof before it can activate an endpoint.
 Login now uses an in-memory Login Flow v2 session and Windows Credential Manager; see
 [accounts](accounts.md). `accounts.login.status` polls the session ID independently of its start
-operation. Update preparation, full sync and automatic switching remain capability-disabled until
+operation. Full sync and automatic switching remain capability-disabled until
 their complete paths are implemented. Mock remains an explicit development mode.
 
 The Windows daemon owns a profile-hashed Control DB under the current user's application-data

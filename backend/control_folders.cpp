@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "control.h"
 #include "namespace.h"
+#include "platform/windows/ondemand.h"
 #include "root.h"
 #include "switch_state.h"
 #include <QCoreApplication>
@@ -11,6 +12,7 @@
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QUuid>
+#include <array>
 #include <stdexcept>
 
 namespace {
@@ -61,8 +63,9 @@ QJsonArray Control::folderProjection() const {
   QSqlQuery q(db_);
   q.prepare("SELECT f.id,f.account_id,f.local_path,f.remote_path,f.paused,CASE "
             "WHEN r.phase IN ('waiting','prepared','discarding') THEN "
-            "'waitingSignIn' ELSE f.status END,f.reason FROM "
-            "folders f LEFT JOIN reauthentication r ON "
+            "'waitingSignIn' ELSE f.status END,f.reason,f.mode FROM "
+            "folders f JOIN accounts a ON a.id=f.account_id AND "
+            "a.state='ready' LEFT JOIN reauthentication r ON "
             "r.account_id=f.account_id ORDER BY f.id");
   execute(q);
   while (q.next()) {
@@ -70,6 +73,18 @@ QJsonArray Control::folderProjection() const {
     auto status = q.value(5).toString();
     if (status != "syncing" && (paused_ || q.value(4).toBool()))
       status = "paused";
+    // Protocol 1.9: what a running cycle does now; nothing while idle.
+    QString phase;
+    quint64 filesDone = 0;
+#ifdef SYNCD_WITH_ENGINE
+    if (status == "syncing" && runtime_) {
+      if (const auto progress = runtime_->progress(id)) {
+        phase = progress->phase;
+        filesDone = progress->filesDone;
+      } else
+        phase = QStringLiteral("checking");
+    }
+#endif
     result.append(
         QJsonObject{{"id", id},
                     {"accountId", q.value(1).toString()},
@@ -79,7 +94,9 @@ QJsonArray Control::folderProjection() const {
                     {"userPaused", q.value(4).toBool()},
                     {"state", status},
                     {"reasonCode", q.value(6).toString()},
-                    {"phase", "checking"}});
+                    {"mode", q.value(7).toString()},
+                    {"phase", phase},
+                    {"filesDone", qint64(filesDone)}});
   }
   return result;
 }
@@ -128,13 +145,15 @@ QJsonValue Control::folderRead(const QString &method,
     throw std::runtime_error("INVALID_PARAMS");
   const auto path =
       QDir::cleanPath(QDir::fromNativeSeparators(local.absoluteFilePath()));
+  // A folder that does not exist yet is created empty by folders.add; its
+  // parent must exist. Its empty identity binds the token to that absence.
   QString identity;
-  if (!local.exists())
-    throw std::runtime_error("LOCAL_ROOT_UNAVAILABLE");
-  {
+  if (local.exists()) {
     RootLease lease(path);
     identity = lease.identity();
-  }
+  } else if (!QFileInfo(QFileInfo(path).absolutePath()).isDir() ||
+             QFileInfo(path).absolutePath() == path)
+    throw std::runtime_error("LOCAL_ROOT_UNAVAILABLE");
   const auto remote = remotePath(params.value("remotePath").toString());
   q.prepare("SELECT account_id,local_path,remote_path FROM folders");
   execute(q);
@@ -187,7 +206,7 @@ void Control::attachFolder(const QString &id) {
   q.prepare("SELECT "
             "f.account_id,a.base_url,a.login_name,a.uid,a.credential_ref,f."
             "local_path,f.remote_path,f.journal_path,f.local_identity,f.remote_"
-            "identity,f.paused FROM folders f JOIN accounts a ON "
+            "identity,f.paused,f.mode FROM folders f JOIN accounts a ON "
             "a.id=f.account_id WHERE f.id=? AND a.state='ready'");
   q.addBindValue(id);
   execute(q);
@@ -206,6 +225,7 @@ void Control::attachFolder(const QString &id) {
                                  q.value(8).toString(),
                                  q.value(9).toString()};
   const bool paused = q.value(10).toBool();
+  binding.onDemand = q.value(11).toString() == "onDemand";
   q.finish();
   if (binding.credentialReference != credentialReference(account) ||
       binding.journalPath != directory_ + "/journals/" + id + ".sqlite")
@@ -270,6 +290,13 @@ void Control::restoreFolders() {
       execute(q);
     });
   };
+  runtime_->progressed = [this] {
+    try {
+      publishState();
+    } catch (...) {
+      stopForStorageFailure();
+    }
+  };
   runtime_->cycle = [this](const QString &id,
                            const EngineAdapter::Result &result) {
     cycleFinished(id, result);
@@ -309,6 +336,7 @@ void Control::restoreFolders() {
       }
       recoverSwitches();
       resumeReauthentication();
+      selfCheck();
     } catch (...) {
       qCritical("SyncD stopped because folder restoration could not complete");
       stopForStorageFailure();
@@ -371,7 +399,7 @@ void Control::cycleFinished(const QString &id,
       if (!result.proposalDigest.isEmpty()) {
         q.prepare("INSERT OR REPLACE INTO "
                   "decisions(id,folder_id,digest,boot,expires,local_count,"
-                  "remote_count,baseline) VALUES(?,?,?,?,?,?,?,?)");
+                  "remote_count,baseline,groups) VALUES(?,?,?,?,?,?,?,?,?)");
         q.addBindValue(QUuid::createUuid().toString(QUuid::WithoutBraces));
         q.addBindValue(id);
         q.addBindValue(result.proposalDigest);
@@ -381,9 +409,46 @@ void Control::cycleFinished(const QString &id,
         q.addBindValue(qint64(result.localDeletes));
         q.addBindValue(qint64(result.remoteDeletes));
         q.addBindValue(qint64(result.baseline));
+        q.addBindValue(result.groups.isEmpty()
+                           ? QStringLiteral("[]")
+                           : QString::fromUtf8(result.groups));
         execute(q);
       }
-      if (result.success) {
+      // Conflict copies: new ones become notices; gone ones are forgotten,
+      // and a closed notice stays closed while its copy exists (1.9).
+      if (!result.conflicts.isEmpty()) {
+        QStringList copies;
+        for (const auto &entry :
+             QJsonDocument::fromJson(result.conflicts).array()) {
+          const auto pair = entry.toArray();
+          copies.append(pair.at(0).toString());
+          q.prepare("INSERT OR IGNORE INTO conflicts(id,folder_id,file,copy) "
+                    "VALUES(?,?,?,?)");
+          q.addBindValue(QUuid::createUuid().toString(QUuid::WithoutBraces));
+          q.addBindValue(id);
+          q.addBindValue(pair.at(1).toString());
+          q.addBindValue(pair.at(0).toString());
+          execute(q);
+        }
+        q.prepare("SELECT copy FROM conflicts WHERE folder_id=?");
+        q.addBindValue(id);
+        execute(q);
+        QStringList gone;
+        while (q.next())
+          if (!copies.contains(q.value(0).toString()))
+            gone.append(q.value(0).toString());
+        q.finish();
+        for (const auto &copy : gone) {
+          q.prepare("DELETE FROM conflicts WHERE folder_id=? AND copy=?");
+          q.addBindValue(id);
+          q.addBindValue(copy);
+          execute(q);
+        }
+      }
+      // A cycle that reached the server at the new epoch and was refused only
+      // by its full quota reconciled the root: the address and credential
+      // work, and waiting for free space must not hold the switch open.
+      if (result.success || result.reason == "REMOTE_QUOTA_EXCEEDED") {
         q.prepare("SELECT operation_id FROM switch_intents WHERE account_id=? "
                   "AND target_epoch=? AND phase='reconciling'");
         q.addBindValue(account);
@@ -423,7 +488,7 @@ QJsonArray Control::decisionProjection() const {
   QSqlQuery q(db_);
   q.prepare("SELECT "
             "d.id,f.account_id,d.folder_id,d.digest,d.local_count,d.remote_"
-            "count,d.expires FROM decisions d JOIN folders f ON "
+            "count,d.expires,d.groups FROM decisions d JOIN folders f ON "
             "f.id=d.folder_id ORDER BY d.id");
   execute(q);
   while (q.next())
@@ -436,7 +501,21 @@ QJsonArray Control::decisionProjection() const {
         {"count", q.value(4).toLongLong() + q.value(5).toLongLong()},
         {"localDeletes", q.value(4).toLongLong()},
         {"remoteDeletes", q.value(5).toLongLong()},
-        {"expires", q.value(6).toString()}});
+        {"expires", q.value(6).toString()},
+        {"groups", QJsonDocument::fromJson(q.value(7).toByteArray()).array()}});
+  q.finish();
+  // Protocol 1.9: a conflict copy upstream kept, until the user closes it.
+  q.prepare("SELECT c.id,f.account_id,c.folder_id,c.file,c.copy FROM "
+            "conflicts c JOIN folders f ON f.id=c.folder_id WHERE "
+            "c.dismissed=0 ORDER BY c.id");
+  execute(q);
+  while (q.next())
+    result.append(QJsonObject{{"id", q.value(0).toString()},
+                              {"kind", "conflict"},
+                              {"accountId", q.value(1).toString()},
+                              {"folderId", q.value(2).toString()},
+                              {"file", q.value(3).toString()},
+                              {"copy", q.value(4).toString()}});
   return result;
 }
 
@@ -454,9 +533,42 @@ QJsonObject Control::decisionMutation(const QJsonObject &params,
       throw std::runtime_error("INVALID_PARAMS");
   const auto id = params.value("decisionId").toString(),
              action = params.value("action").toString();
-  if (action != "approveDeletion" && action != "later")
-    throw std::runtime_error("UNSUPPORTED_CAPABILITY");
+  const auto operation = QUuid::createUuid().toString(QUuid::WithoutBraces);
+  const QJsonObject receipt{{"operationId", operation},
+                            {"state", "succeeded"},
+                            {"result", QJsonObject{}}};
+  const auto record = [&](const std::function<void(QSqlQuery &)> &change) {
+    accountChange([&] {
+      QSqlQuery q(db_);
+      change(q);
+      q.prepare("INSERT INTO operations(key,id,digest,receipt,method) "
+                "VALUES(?,?,?,?,'decisions.resolve')");
+      q.addBindValue(params.value("operationKey").toString());
+      q.addBindValue(operation);
+      q.addBindValue(digest);
+      q.addBindValue(QJsonDocument(receipt).toJson(QJsonDocument::Compact));
+      execute(q);
+    });
+  };
   QSqlQuery q(db_);
+  // Protocol 1.9: a conflict notice is closed once; both copies stay.
+  q.prepare("SELECT 1 FROM conflicts WHERE id=? AND dismissed=0");
+  q.addBindValue(id);
+  execute(q);
+  if (q.next()) {
+    q.finish();
+    if (action != "resolved")
+      throw std::runtime_error("INVALID_PARAMS");
+    record([&](QSqlQuery &u) {
+      u.prepare("UPDATE conflicts SET dismissed=1 WHERE id=?");
+      u.addBindValue(id);
+      execute(u);
+    });
+    return receipt;
+  }
+  q.finish();
+  if (action != "approveDeletion" && action != "later")
+    throw std::runtime_error("INVALID_PARAMS");
   q.prepare("SELECT folder_id,digest,boot,expires FROM decisions WHERE id=?");
   q.addBindValue(id);
   execute(q);
@@ -471,23 +583,12 @@ QJsonObject Control::decisionMutation(const QJsonObject &params,
   q.finish();
   if (!runtime_->contains(folder))
     throw std::runtime_error("LOCAL_ROOT_UNAVAILABLE");
-  const auto operation = QUuid::createUuid().toString(QUuid::WithoutBraces);
-  const QJsonObject receipt{{"operationId", operation},
-                            {"state", "succeeded"},
-                            {"result", QJsonObject{}}};
-  accountChange([&] {
-    if (action == "approveDeletion") {
-      q.prepare("DELETE FROM decisions WHERE id=?");
-      q.addBindValue(id);
-      execute(q);
+  record([&](QSqlQuery &u) {
+    if (action != "later") {
+      u.prepare("DELETE FROM decisions WHERE id=?");
+      u.addBindValue(id);
+      execute(u);
     }
-    q.prepare("INSERT INTO operations(key,id,digest,receipt,method) "
-              "VALUES(?,?,?,?,'decisions.resolve')");
-    q.addBindValue(params.value("operationKey").toString());
-    q.addBindValue(operation);
-    q.addBindValue(digest);
-    q.addBindValue(QJsonDocument(receipt).toJson(QJsonDocument::Compact));
-    execute(q);
   });
   if (action == "approveDeletion")
     runtime_->authorize(folder, proposal, remaining);
@@ -509,8 +610,15 @@ QJsonObject Control::folderMutation(const QString &method,
   const auto field = method == "folders.add" ? "inspectToken" : "folderId";
   for (auto it = params.begin(); it != params.end(); ++it)
     if (it.key() != "operationKey" && it.key() != "expectedRevision" &&
-        it.key() != field)
+        it.key() != field && !(method == "folders.add" && it.key() == "mode"))
       throw std::runtime_error("INVALID_PARAMS");
+  // The file mode is chosen once, at add; on-demand needs the CFAPI plugin.
+  const auto mode = params.value("mode").toString("full");
+  if ((params.contains("mode") && !params.value("mode").isString()) ||
+      (mode != "full" && mode != "onDemand"))
+    throw std::runtime_error("INVALID_PARAMS");
+  if (mode == "onDemand" && !OnDemandRoot::available())
+    throw std::runtime_error("UNSUPPORTED_CAPABILITY");
   const auto operation = QUuid::createUuid().toString(QUuid::WithoutBraces);
   QString id = params.value("folderId").toString();
   Inspection inspection;
@@ -534,6 +642,8 @@ QJsonObject Control::folderMutation(const QString &method,
     if (fresh.localIdentity != inspection.localIdentity ||
         fresh.remoteIdentity != inspection.remoteIdentity)
       throw std::runtime_error("FOLDER_ROOT_CHANGED");
+    if (inspection.localIdentity.isEmpty() && !QDir().mkdir(inspection.local))
+      throw std::runtime_error("LOCAL_ROOT_UNAVAILABLE");
     {
       RootLease lease(inspection.local);
       inspection.localIdentity = lease.identity();
@@ -557,8 +667,29 @@ QJsonObject Control::folderMutation(const QString &method,
     if (method == "folders.syncNow" &&
         throttleRemaining(q.value(1).toString()) > 0)
       throw std::runtime_error("SERVER_THROTTLED");
-    if (method == "folders.remove" && runtime_->running(id))
+    if (method == "folders.remove" &&
+        (runtime_->running(id) ||
+         (runtime_->contains(id) && !runtime_->quiescent(id))))
       throw std::runtime_error("QUIESCE_STALLED");
+    q.finish();
+    if (method == "folders.remove") {
+      // An on-demand root is released before its row goes: online-only
+      // placeholders cannot outlive their provider (on-demand.md).
+      q.prepare("SELECT mode,local_path,account_id FROM folders WHERE id=?");
+      q.addBindValue(id);
+      execute(q);
+      if (q.next() && q.value(0).toString() == "onDemand") {
+        const auto local = q.value(1).toString();
+        const OnDemandRoot::Identity identity{q.value(2).toString(), id, {}};
+        q.finish();
+        runtime_->remove(id);
+        const auto reason = OnDemandRoot::unregister(local, identity);
+        if (!reason.isEmpty()) {
+          attachFolder(id);
+          throw std::runtime_error(reason.toStdString());
+        }
+      }
+    }
   }
   const QJsonObject receipt{{"operationId", operation},
                             {"state", "succeeded"},
@@ -568,7 +699,7 @@ QJsonObject Control::folderMutation(const QString &method,
     if (method == "folders.add") {
       q.prepare("INSERT INTO "
                 "folders(id,account_id,local_path,remote_path,local_identity,"
-                "remote_identity,journal_path) VALUES(?,?,?,?,?,?,?)");
+                "remote_identity,journal_path,mode) VALUES(?,?,?,?,?,?,?,?)");
       q.addBindValue(id);
       q.addBindValue(inspection.account);
       q.addBindValue(inspection.local);
@@ -576,6 +707,7 @@ QJsonObject Control::folderMutation(const QString &method,
       q.addBindValue(inspection.localIdentity);
       q.addBindValue(inspection.remoteIdentity);
       q.addBindValue(directory_ + "/journals/" + id + ".sqlite");
+      q.addBindValue(mode);
       execute(q);
       q.prepare("UPDATE endpoints SET state='approved' WHERE account_id=? AND "
                 "state='verified'");
@@ -637,4 +769,187 @@ QJsonObject Control::folderMutation(const QString &method,
   }
   return receipt;
 #endif
+}
+
+void Control::releaseAccount(const QString &account, const QString &operation,
+                             QDeadlineTimer deadline) {
+  try {
+    if (storageFailed_ || shutdown_ || !shutdownOperation_.isEmpty())
+      return; // A restarted daemon finishes a 'removing' account in recovery.
+    QSqlQuery q(db_);
+    q.prepare("SELECT 1 FROM accounts WHERE id=? AND state='removing' AND "
+              "operation_id=?");
+    q.addBindValue(account);
+    q.addBindValue(operation);
+    execute(q);
+    if (!q.next())
+      return;
+    q.finish();
+    // A sign-in or renewal of this account ends first; a flow retiring a
+    // password it acquired keeps running until that DELETE is answered.
+    // An address check in flight finishes first (it is bounded by its
+    // transfer timeout); restart recovery fails an interrupted one.
+    bool busy = endpointChecks_.contains(account);
+    q.prepare("SELECT 1 FROM endpoints WHERE account_id=? AND state IN "
+              "('probing','verifying')");
+    q.addBindValue(account);
+    execute(q);
+    busy = q.next() || busy;
+    q.finish();
+    for (const auto &[id, flow] : logins_) {
+      if (flow->accountId != account)
+        continue;
+      const auto status = flow->status();
+      if (status == "starting" || status == "waiting" ||
+          status == "verifying") {
+        flow->cancel();
+        busy = true;
+      } else if (status == "discarding")
+        busy = true;
+    }
+#ifdef SYNCD_WITH_ENGINE
+    // Admission closes for good; a running cycle or hydration is asked to
+    // stop and is waited for. Nothing is removed while an engine runs.
+    runtime_->blockAccount(account, "accountRemoving", true);
+    busy = !runtime_->quiesceAccount(account, true) || busy;
+#endif
+    if (busy) {
+      QTimer::singleShot(50, &networkTasks_,
+                         [this, account, operation, deadline] {
+                           releaseAccount(account, operation, deadline);
+                         });
+      return;
+    }
+    q.prepare("SELECT id,mode,local_path FROM folders WHERE account_id=?");
+    q.addBindValue(account);
+    execute(q);
+    QList<std::array<QString, 3>> folders;
+    while (q.next())
+      folders.append({q.value(0).toString(), q.value(1).toString(),
+                      q.value(2).toString()});
+    q.finish();
+#ifdef SYNCD_WITH_ENGINE
+    for (const auto &folder : folders)
+      runtime_->remove(folder[0]);
+    // Online-only placeholders must not outlive their provider: every
+    // on-demand registration ends before its mapping goes (on-demand.md).
+    for (const auto &folder : folders) {
+      if (folder[1] != "onDemand")
+        continue;
+      const auto reason = OnDemandRoot::unregister(
+          folder[2], OnDemandRoot::Identity{account, folder[0], {}});
+      // A root that no longer exists holds no placeholder to orphan.
+      if (reason.isEmpty() || !QFileInfo::exists(folder[2]))
+        continue;
+      if (!deadline.hasExpired()) {
+        QTimer::singleShot(1000, &networkTasks_,
+                           [this, account, operation, deadline] {
+                             releaseAccount(account, operation, deadline);
+                           });
+        return;
+      }
+      // The registration could not end: the account stays, its engines are
+      // attached again and the removal fails with the reason.
+      accountChange([&] {
+        QSqlQuery u(db_);
+        u.prepare("UPDATE accounts SET state='ready' WHERE id=?");
+        u.addBindValue(account);
+        execute(u);
+        u.prepare("UPDATE operations SET receipt=? WHERE id=?");
+        u.addBindValue(QJsonDocument(QJsonObject{{"operationId", operation},
+                                                 {"state", "failed"},
+                                                 {"error", failure(reason)}})
+                           .toJson(QJsonDocument::Compact));
+        u.addBindValue(operation);
+        execute(u);
+      });
+      for (const auto &other : folders) {
+        try {
+          if (!runtime_->contains(other[0]))
+            attachFolder(other[0]);
+        } catch (const std::exception &error) {
+          if (attachmentReason(error).isEmpty())
+            throw;
+        }
+      }
+      return;
+    }
+#endif
+    // Reserved renewal slots go with the account; files and journals stay.
+    q.prepare("SELECT session_id FROM reauthentication WHERE account_id=? AND "
+              "phase IN ('waiting','prepared','installed','discarding')");
+    q.addBindValue(account);
+    execute(q);
+    const auto session = q.next() ? q.value(0).toString() : QString{};
+    q.finish();
+    if (!session.isEmpty()) {
+      try {
+        removeCredential(reauthReference(account, session));
+        removeCredential(reauthReference(account, session, true));
+      } catch (...) {
+        // The vault refused: the account stays 'removing' and a restart
+        // retries it, as for the account's own slot (finishRemoval).
+        accountChange([&] {
+          QSqlQuery u(db_);
+          u.prepare("UPDATE operations SET receipt=? WHERE id=?");
+          u.addBindValue(
+              QJsonDocument(
+                  QJsonObject{{"operationId", operation},
+                              {"state", "failed"},
+                              {"error", failure("CREDENTIALS_LOCKED")}})
+                  .toJson(QJsonDocument::Compact));
+          u.addBindValue(operation);
+          execute(u);
+        });
+        return;
+      }
+    }
+    accountChange([&] {
+      QSqlQuery u(db_);
+      // A switch that cannot finish (a missing root, a refused target) ends
+      // with the account: its receipt fails, nothing is replayed.
+      u.prepare("SELECT o.id,o.receipt FROM switch_intents s JOIN operations "
+                "o ON o.id=s.operation_id WHERE s.account_id=?");
+      u.addBindValue(account);
+      execute(u);
+      if (u.next() && QJsonDocument::fromJson(u.value(1).toByteArray())
+                              .object()
+                              .value("state") == "running") {
+        const auto id = u.value(0).toString();
+        u.finish();
+        u.prepare("UPDATE operations SET receipt=? WHERE id=?");
+        u.addBindValue(
+            QJsonDocument(QJsonObject{{"operationId", id},
+                                      {"state", "failed"},
+                                      {"error", failure("CANCELLED")}})
+                .toJson(QJsonDocument::Compact));
+        u.addBindValue(id);
+        execute(u);
+      }
+      u.finish();
+      for (const auto &table :
+           {"switch_intents", "switch_context", "pending_policies"}) {
+        u.prepare(QStringLiteral("DELETE FROM %1 WHERE account_id=?")
+                      .arg(QLatin1String(table)));
+        u.addBindValue(account);
+        execute(u);
+      }
+      u.prepare("UPDATE reauthentication SET phase='failed',reason='CANCELLED' "
+                "WHERE account_id=? AND phase IN "
+                "('waiting','prepared','installed','discarding')");
+      u.addBindValue(account);
+      execute(u);
+      u.prepare("DELETE FROM folders WHERE account_id=?");
+      u.addBindValue(account);
+      execute(u);
+    });
+    std::erase_if(inspections_, [&](const auto &item) {
+      return item.second.account == account;
+    });
+    if (network_)
+      network_->accounts.erase(account);
+    removeAccount(account, operation);
+  } catch (...) {
+    stopForStorageFailure();
+  }
 }

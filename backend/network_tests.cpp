@@ -220,7 +220,9 @@ void policies(bool stale) {
     account = q.value(0).toString();
     primary = q.value(1).toString();
     q.finish();
-    q.prepare("INSERT INTO endpoints VALUES(?,?, "
+    q.prepare("INSERT INTO "
+              "endpoints(id,account_id,name,base_url,approved,state,expires,"
+              "operation_id) VALUES(?,?, "
               "'owned-alternate','https://alternate.example.invalid/"
               "',1,'verified','',?)");
     q.addBindValue(alternate);
@@ -623,7 +625,9 @@ void requestConstraints() {
       }
       if (constraint == "SERVER_THROTTLED") {
         const auto alternate = uuid();
-        q.prepare("INSERT INTO endpoints VALUES(?,?,'Alternate',"
+        q.prepare("INSERT INTO "
+                  "endpoints(id,account_id,name,base_url,approved,state,"
+                  "expires,operation_id) VALUES(?,?,'Alternate',"
                   "'https://alternate.example.invalid/',1,'verified','',?)");
         q.addBindValue(alternate);
         q.addBindValue(account);
@@ -705,10 +709,16 @@ void nativeResume() {
     };
     pump();
     notified = false;
-    window = FindWindowExW(HWND_MESSAGE, nullptr,
-                           L"NextcloudMyGo.NetworkMonitor", nullptr);
+    // Another running SyncD owns a window of the same class: take this
+    // process's own.
     DWORD process = 0;
-    GetWindowThreadProcessId(window, &process);
+    window = nullptr;
+    do {
+      window = FindWindowExW(HWND_MESSAGE, window,
+                             L"NextcloudMyGo.NetworkMonitor", nullptr);
+      process = 0;
+      GetWindowThreadProcessId(window, &process);
+    } while (window && process != GetCurrentProcessId());
     require(window && process == GetCurrentProcessId(),
             "owned power-notification recipient missing");
     require(PostMessageW(window, WM_POWERBROADCAST, PBT_APMRESUMEAUTOMATIC, 0),

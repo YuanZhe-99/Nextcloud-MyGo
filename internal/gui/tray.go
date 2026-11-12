@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"image/png"
 	"math"
+	"strconv"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -55,7 +56,8 @@ func (t *Tray) refresh() {
 	if a.snap.Daemon.AllPaused {
 		pauseLabel = L.ActionResumeSync()
 	}
-	key := o.word() + pauseLabel + L.TrayOpen()
+	live := a.snap.Daemon.Connected
+	key := o.word() + pauseLabel + L.TrayOpen() + strconv.FormatBool(live)
 	if t.flyout != nil {
 		t.flyout.Invalidate()
 	}
@@ -68,8 +70,8 @@ func (t *Tray) refresh() {
 		{Label: o.word(), Disabled: true},
 		mygo.Separator(),
 		{Label: L.TrayOpen(), Click: func(*mygo.MenuItem, *mygo.Window) { a.Focus() }},
-		{Label: pauseLabel, Click: func(*mygo.MenuItem, *mygo.Window) { a.togglePause() }},
-		{Label: L.ActionCheckNow(), Click: func(*mygo.MenuItem, *mygo.Window) { a.checkAll() }},
+		{Label: pauseLabel, Disabled: !live, Click: func(*mygo.MenuItem, *mygo.Window) { a.togglePause() }},
+		{Label: L.ActionCheckNow(), Disabled: !live, Click: func(*mygo.MenuItem, *mygo.Window) { a.checkAll() }},
 		mygo.Separator(),
 		{Label: L.TrayCloseWindow(), Click: func(*mygo.MenuItem, *mygo.Window) { a.QuitWindow() }},
 		{Label: L.TrayQuitStop(), Click: func(*mygo.MenuItem, *mygo.Window) { a.QuitAndStop() }},
@@ -119,7 +121,7 @@ func (a *App) flyoutView(c *ui.Context) {
 			ui.Column(c).Grow(1).Children(func() {
 				ui.Text(c, "Nextcloud MyGo").FontWeight(600)
 				sub := o.word()
-				if len(s.Accounts) > 0 {
+				if len(s.Accounts) > 0 && s.Daemon.Connected {
 					if e, _, ok := activeEndpoint(s, s.Accounts[0].ID); ok {
 						sub += " · " + L.SidebarThrough(e.Name)
 					}
@@ -129,7 +131,7 @@ func (a *App) flyoutView(c *ui.Context) {
 		})
 		ui.Column(c).FillWidth().Padding(12, 16).Gap(8).Children(func() {
 			for _, d := range s.Decisions {
-				if d.Kind != syncd.DecisionLocalDeletions {
+				if d.Kind != syncd.DecisionBulkDeletions {
 					continue
 				}
 				f, _ := s.Folder(d.FolderID)
@@ -140,7 +142,7 @@ func (a *App) flyoutView(c *ui.Context) {
 				}
 			}
 			for _, acc := range s.Accounts {
-				if !acc.SignedIn && flyoutNotice(c, "fly-s-"+acc.ID, icLock, p.pane, p.border, p.muted, L.AttnSignInTitle(""), accountName(acc)) {
+				if needsSignIn(s, acc) && flyoutNotice(c, "fly-s-"+acc.ID, icLock, p.pane, p.border, p.muted, L.AttnSignInTitle(""), accountName(acc)) {
 					hide()
 					a.page = pageFolders
 					a.Focus()
@@ -150,7 +152,7 @@ func (a *App) flyoutView(c *ui.Context) {
 		ui.Scroll(c.Key("fly-folders")).Grow(1).FillWidth().Padding(4, 16).Children(func() {
 			muted(c, L.TrayFolders(), fontSmall).FontWeight(600).Padding(6, 0)
 			for _, f := range s.Folders {
-				word, col, hollow := folderWord(f, p)
+				word, col, hollow := folderWord(f, s, p)
 				switch {
 				case f.State == syncd.FolderSyncing && f.Phase == syncd.PhaseUploading:
 					word = L.TrayUploading()
@@ -176,10 +178,10 @@ func (a *App) flyoutView(c *ui.Context) {
 				if s.Daemon.AllPaused {
 					label = L.ActionResume()
 				}
-				if button(c, "fly-pause", label, nil).Clicked() {
+				if button(c, "fly-pause", label, nil).Disabled(!s.Daemon.Connected || a.busy["all"]).Clicked() {
 					a.togglePause()
 				}
-				if button(c, "fly-check", L.ActionCheckNow(), nil).Clicked() {
+				if button(c, "fly-check", L.ActionCheckNow(), nil).Disabled(!s.Daemon.Connected || s.Daemon.AllPaused).Clicked() {
 					a.checkAll()
 				}
 			})

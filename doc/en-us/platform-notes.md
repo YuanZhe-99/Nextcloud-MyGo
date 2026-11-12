@@ -8,6 +8,121 @@
 
 ## Windows
 
+Backend completion for 0.1.0 on the same ARM64 host (2026-11-12), protocol 1.9 and Control schema
+11, SyncD rebuilt against `build/at-D0C17DFD07B7` (`build/syncd-ARM64`) and `build/xt-5F1D91E19629`
+(`build/syncd-x64`, run under emulation), disposable Nextcloud 35.0.2 containers (`wslc`):
+
+| Run | Native ARM64 | Emulated x64 |
+|---|---|---|
+| `tools/test-all.ps1 -Tier fast` | passed, 35.0 s: format and vet 2.7 s, Go tests with real pipes 19.4 s, 22 CTest targets 12.8 s | passed, 42.0 s: Go tests 21.7 s, 22 CTest targets 20.2 s (a first attempt failed `internal/syncd` once, reason not captured; three repeats of the x64 Go suite then passed) |
+| `tools/test-all.ps1 -Tier server` | passed, 459.5 s: server start 62.0 s; active upload 108.4 s, download 65.8 s, lost PUT reply 104.3 s; lost MOVE 115.7 s, DELETE 68.1 s, final MOVE 119.1 s; kills at prepared 133.6 s, quiescing 135.0 s, verifying 125.9 s, committed 137.6 s, reconciling 137.8 s; file safety 64.4 s; chunk resume 147.8 s; held revocation 62.5 s; network 135.8 s; lifetime 4.7 s; **two accounts × two folders 64.1 s**; removal 1.9 s | passed, 162.5 s: server start 60.7 s, `switch-kill` at `committed` 100.0 s, removal 1.8 s |
+
+The two-account case is the `multi-account` scenario ([development](development.md)). Once in six
+parallel CTest runs `SyncDDurableConstraintContracts` failed and then passed alone 3/3 and in three
+more parallel runs; its cause is not established. After the final rebuild the x64 fast tier
+failed once in `SyncDNetworkContracts`: it looked up the network monitor's message-only window by
+class and found the one of the fixture daemon running at the same time; the test now takes its own
+process's window, and the tiers then passed again (ARM64 34.8 s, x64 33.7 s).
+
+The paired-daemon fixture `tools/test-login.ps1 -SyncFolders -Reauthenticate` against the shared
+server passed on native ARM64 in 561.7 s with every phase (policy, switching with restart and kill,
+watcher, two folders with deletion review, active-transfer kills and cancellation, renewal with
+cancellation, old-password revocation and restart, login cleanup). Seven earlier runs that day
+failed: the first at HTTP 507 (the test account's quota was full of leftover collections),
+two at the restart after the renewal (the client lost the daemon), two after the renewal with a
+folder still syncing and the credential-reload switch open while the client's calls came back
+busy, and two at the renewal's own 150 s wait, which is now the step budget plus three minutes because the shared server takes
+2.5–3 s per authenticated request and holds the old password's revocation for at least 60 s.
+
+
+On-demand files on the same ARM64 host (2026-11-12), Desktop v35.0.3 with patches 0001–0017 in
+`build/at-D0C17DFD07B7` (native ARM64), SyncD in `build/syncd-cfapi-ARM64`, a disposable Nextcloud
+35.0.2 container (`wslc`); x64 with the recorded patch in `build/xt-5F1D91E19629`, run under emulation
+on the same host ([on-demand](on-demand.md)):
+
+| Run | Result |
+|---|---|
+| Upstream suite, `SyncCfApiTest` excluded | 95/96 in 518.0 s; `CfApiShellExtensionsIPCTest` failed while a `SyncCfApiTest` run overlapped it, then passed 3/3 alone through CTest. With the plugin built it registers a temporary `Nextcloud!` sync root of its own, removed afterwards |
+| Upstream suite on emulated x64, `SyncCfApiTest` excluded | 96/96 in 594.6 s (`build/xt-5F1D91E19629`, the recorded patch) |
+| `tools/test-cfapi-upstream.ps1` | 50 passed, 2 skipped, 0 failed: 97.1 s on ARM64, 102.9 s on emulated x64 (39 of 40 cases; the Explorer-opening case left out), including patch 0017's `testSyncRootAccountIdWithoutShellExtension` and `testRefusedRequestsFail`; no `OC-TEST` registration or shell-extension class left |
+| SyncD CTest | 22/22 in 33.3 s on ARM64 (`SyncDOnDemandContracts` 12.6 s); 22/22 in 46.8 s on emulated x64 (`build/syncd-cfapi-x64` against `build/xt-5F1D91E19629`, 14.1 s) |
+| Real Go↔C++ pipe (`go test ./internal/syncd`, `SYNCD_TEST_EXE`) | passed with protocol 1.8, no test skipped: 13.9 s on ARM64, 18.0 s on emulated x64 (`GOARCH=amd64`) |
+| `tools/test-ondemand.ps1` | final runs, each starting and removing its own server: ARM64 65.8 s (fixture 30.7 s), emulated x64 59.2 s (fixture 32.3 s); every step listed in [on-demand](on-demand.md); the kill came at a partial hydration of a 64 MiB file and the retry after restart matched its hash; cleanup removed the remote collection, vault entry, local folder and registration, and no sync root was left. Earlier, 13 ARM64 runs passed and one failed at the switch step: a poll cycle running when the step began closed the root before the application's request arrived, a fixture race that the step now avoids by waiting for an idle runtime |
+| `tools/package.ps1 -Arch ARM64` | the plugin is staged by import closure; 29 PE files native ARM64, every import resolved |
+
+`testRefusedRequestsFail` first failed because `cmd /c type` exits 0 when a read fails; the patch
+reads with `copy`. That test-only fix was verified by rebuilding `SyncCfApiTest` in this tree after
+applying the same change to its source, so this tree's fingerprint names the patch before the fix;
+the library code is identical. The x64 build uses the recorded patch. Under x64 emulation the engine
+reported `NETWORK_UNAVAILABLE` for `https://localhost:<port>` while the container listened on IPv4
+loopback only; the fixture addresses `127.0.0.1`, which the fixture certificate names.
+
+Test redesign on the same ARM64 host (2026-11-12), with the SyncD binaries of `build/syncd-ARM64` and
+`build/syncd-x64` built from this tree. Cause of the paired-daemon fixture failure below: after any
+unclean exit the daemon stayed in crash backoff for good, because `main.cpp` passed its admission
+clock's fixed start time (`msecsSinceReference()`) instead of the current time; the fixture's own
+kills always caused one, so the probe waited for a connection that never came. Fixed with the
+current time; `TestRealPipeCrashBackoffActivates` failed against the old binary and passes on both
+architectures. Runs of `tools/test-all.ps1`, each with a disposable Nextcloud 35.0.2 container
+(`wslc`, pulled and removed by the run):
+
+| Tier | Native ARM64 | Emulated x64 |
+|---|---|---|
+| `fast` | passed, 39.9 s: format and vet 17.0 s, Go tests 15.9 s, 21 CTest targets 6.9 s | passed, 41.0 s: Go tests 30.8 s, 21 CTest targets 10.2 s |
+| `server` | passed, 471.0 s, six lanes: server start 61.3 s; active upload 113.2 s, download 69.0 s, lost PUT reply 104.3 s; lost MOVE 66.3 s, DELETE 57.7 s, final MOVE 123.5 s; kills at prepared 140.0 s, quiescing 137.7 s, verifying 128.5 s, committed 142.1 s, reconciling 136.3 s; file safety 69.2 s; chunk resume 148.3 s; held revocation 62.7 s; network 124.1 s; lifetime 5.7 s; removal 2.5 s | passed, 206.2 s: server start 76.7 s, `switch-kill` at `committed` 127.3 s, removal 2.1 s |
+
+Each kill stage is two processes (kill, restart) and stays a little above two minutes; the rest of
+each case's time is the daemon's own failover detection, circuit-open and standby probe windows.
+Not run: `network-large` (opt-in), `wrong-instance` (second instance), `-Runtime docker`.
+Reliability package on the same Windows ARM64 host (2026-11-11), server 35.0.2 throughout. The
+sixteen recorded patches were built from a fresh clone (`build/src-809fadb79180-A58E1844371E`) and
+the upstream suite run serially: **96/96 on native ARM64 (427.45 s, `build/at-88D6D388A83D`) and on
+emulated x64 (496.83 s, `build/xt-88D6D388A83D`)**, `UtilityTest` excluded because it registers
+startup integration; `ChunkingNgTest` with patch 0016 passed in both. PE inspection matched 103
+EXE/DLL build outputs per architecture (AA64 / 8664). SyncD built against those trees passed
+**21/21 CTest targets on ARM64 (20.55 s) and emulated x64 (32.28 s)**.
+
+Real fixtures (`tools/test-reauth-lifetime.ps1`, SyncD built against the fresh trees). The
+isolated server was an owned Nextcloud 35.0.2 container on a loopback port, reached through two
+reserved `.test` names, with a fixture-local root trusted only inside the acceptance process; no
+Windows trust store, hosts file or proxy setting changed. The shared server is the approved test
+instance with its two addresses.
+
+| Scenario | Server | Native ARM64 | Emulated x64 |
+|---|---|---|---|
+| `network-uncertain`: lost reply of a committed MOVE, DELETE and chunk-session final MOVE | isolated | passed, 12 min 31 s | passed, 10 min 27 s |
+| `switch-kill`: kill at `prepared`, `quiescing`, `verifying`, `committed`, `reconciling` and restart | isolated | passed, see below | passed, 11 min 0 s |
+| `switch-kill`, same five stages | shared | passed, 15 min 59 s | passed, see below |
+| `file-safety`: S04, S11, S12, S13, S14 (404), S20 | isolated | passed, 1 min 6 s | passed, 59 s |
+| `file-safety` | shared | passed, 3 min 29 s | passed, 3 min 24 s |
+| `held-revocation`: restart sends the held DELETE once | isolated | passed, 1 min 2 s | passed, 1 min 2 s |
+| `network-chunked` (regression of the earlier case) | isolated | passed, 2 min 55 s | passed, 2 min 58 s |
+| `network-active` (regression of the earlier cases) | shared | passed, 13 min 38 s | passed, 12 min 47 s |
+| `network`, `network-lifetime`, `lifetime` (regressions) | shared | passed, 2 min 51 s, 32 s, 11 s | passed, 2 min 55 s, 36 s, 13 s |
+| `network-large`: 4,296 MiB chunk session cut after 4 GiB | isolated | passed, 28 min 35 s | not run |
+
+On ARM64 the first `switch-kill` run against the fresh tree passed `prepared` and `quiescing` and
+then stopped in the fixture's setup for `verifying` (exit 1, before any switch was requested) while
+the x64 upstream build was loading the machine; its reason was not captured, and the script now
+echoes setup reasons too. The three remaining stages passed when run again on the rebuilt binary
+(6 min 47 s). On the shared server the x64 run passed four stages and then failed in the
+fixture's own teardown after every `reconciling` check had passed: it asked to remove the mapping
+while the next poll cycle ran and was refused. The fixture no longer removes the mapping there, and
+`reconciling` passed again on both architectures (x64 2 min 46 s, ARM64 4 min 1 s). Before the fresh trees existed, the same scenarios had already passed once on both
+architectures against SyncD built on the fifteen-patch trees with patch 0016 applied
+incrementally (ARM64: all five stages, 11 min 38 s in two runs; lost replies 11 min 55 s; x64:
+11 min 38 s and 9 min 42 s). `network-large` ran only in that earlier ARM64 build; its fixture
+code has not changed since. Each lost-reply case checks that the daemon was still waiting when the
+other origin showed the committed effect, and that the committed entry's server file ID and ETag
+are unchanged after recovery. Each kill stage checks the restarted process against a record written
+before the kill: account, credential reference, folder rows, native journal file identity, content
+hashes, a fresh epoch, and transfer counters that allow only the interrupted file to travel again.
+The real Go↔C++ pipe tests passed (ARM64 9.390 s, emulated x64 9.958 s). The paired-daemon fixture `tools/test-login.ps1 -SyncFolders -Reauthenticate` did **not** pass on these binaries: on ARM64 its `finish` phase ran into its 15-minute deadline about two minutes after a daemon start, its `abort` phase ran into the same deadline, and the daemon it had started outlived its dead parent; the x64 run showed the same pattern. The fixture output was not captured, so the cause is not established: it is either a regression of this package's login and Control changes or the fixture against the changed Go client. Until it is found, the real daemon's login, two-folder sync and renewal are not re-verified for this tree, and that fixture's app passwords and collections on the shared server may need manual cleanup. The Go suite, the `CGO_ENABLED=0` suite, `go vet`, MyGo vet, i18n (401 messages) and the
+docs mirror check passed. Not run: a real 429, a download above 4 GiB, `wrong-instance` (it needs a
+second instance; its code path changed only in how the scenario is named), native x64 hardware and
+clang-tidy. The owned container, volume, image, bootstrap credentials and TLS files were removed
+afterwards; the pre-existing container was not touched.
+
 Protocol 1.7 final startup/recovery integration remains in progress. The independent S19
 root-ownership regression failed before remediation
 (`cross-process descendant root admitted`). Kernel-handle hierarchical admission then passed three
@@ -332,6 +447,7 @@ Verified on Windows 11 ARM64 (2026-11-03; Go 1.27.3, MyGo v0.7.4):
 | Go module | `go vet ./...`, `go test ./...`, `go tool mygo vet .` and `go tool mygo i18n check` pass |
 | Documentation mirror | `go run ./tools/checkdocs` passes |
 | Interface | `go build` makes a native ARM64 executable that starts with its window and tray against the Mock and runs without errors; every page renders in light and dark, English and Simplified Chinese (view tests and screenshots) |
+| Installer | ARM64 and x64 packages pass the architecture check; the ARM64 package installs, reinstalls over itself and uninstalls per user with nothing left, its UI and SyncD running as ARM64 from the version directory; the x64 installer refuses ARM64 ([packaging](packaging.md)) |
 
 ## Known limitations
 
@@ -385,6 +501,6 @@ passed; gofmt reported no files and the documentation mirror check passed.
 - Native upstream basic sync is proven; product ARM64 support still requires the remaining M0 and release gates.
 - The interface talks to `syncd.Mock`, not SyncD: no file syncs, no login reaches a server.
 - The tray glyph and the mark are placeholders until the Nextcloud icon comes from the upstream
-  release.
+  release; the executable, shortcut and Apps entry already use it (`resources/icon.png`).
 - The tray flyout, notifications, open at sign-in and the update check were not exercised by
   hand; app updates are off in unsigned builds.

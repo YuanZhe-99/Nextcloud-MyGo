@@ -21,7 +21,7 @@ func exerciseActiveCrash(ctx context.Context, r *syncd.Remote, s state) {
 		panic("active crash requires the owned two-folder fixture")
 	}
 	journals := fixtureJournals(s.Profile)
-	payload := make([]byte, 16*1024*1024)
+	payload := make([]byte, 4*1024*1024)
 	if _, err := rand.Read(payload); err != nil {
 		panic("owned crash content generation failed")
 	}
@@ -76,7 +76,7 @@ func exerciseActiveCrash(ctx context.Context, r *syncd.Remote, s state) {
 		child = start()
 		if direction == "upload" {
 			await(ctx, func() bool {
-				content := fixtureDAVLimit("GET", remote+name, nil, 17*1024*1024, 200, 404)
+				content := fixtureDAVLimit("GET", remote+name, nil, 5*1024*1024, 200, 404)
 				return sha256.Sum256(content) == digest
 			}, "interrupted upload did not recover matching remote content")
 		} else {
@@ -153,7 +153,7 @@ func exerciseActiveSwitch(ctx context.Context, r *syncd.Remote, s state, account
 	retryCommand(ctx, func() error { return r.SetPolicy(account, syncd.PolicyAuto, "") })
 	folders := r.Snapshot().Folders
 	journals := fixtureJournals(s.Profile)
-	payload := make([]byte, 16*1024*1024)
+	payload := make([]byte, 4*1024*1024)
 	if _, err := rand.Read(payload); err != nil {
 		panic("owned cross-origin content generation failed")
 	}
@@ -195,11 +195,11 @@ func exerciseActiveSwitch(ctx context.Context, r *syncd.Remote, s state, account
 			return false
 		}, "cancelled transfer did not activate verified cross-origin binding")
 		retryCommand(ctx, r.ResumeAll)
-		if r.WaitOperation(ctx, operation) != nil {
+		if waitOperation(ctx, r, operation) != nil {
 			panic("cross-origin interrupted transfer did not reconcile")
 		}
 		content, err := os.ReadFile(filepath.Join(folders[0].LocalPath, name))
-		if err != nil || sha256.Sum256(content) != digest || sha256.Sum256(fixtureDAVLimit("GET", remote+name, nil, 17*1024*1024, 200)) != digest {
+		if err != nil || sha256.Sum256(content) != digest || sha256.Sum256(fixtureDAVLimit("GET", remote+name, nil, 5*1024*1024, 200)) != digest {
 			panic("cross-origin recovered content hash mismatch")
 		}
 		after := fixtureJournals(s.Profile)

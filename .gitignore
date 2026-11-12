@@ -16,3 +16,5 @@ mygo_windows_*.syso
 *.pfx
 *.key
 *.pem
+# Installer payload, staged by tools/package.ps1 for one build
+/packaging/windows/setup/payload.zip

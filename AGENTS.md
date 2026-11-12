@@ -38,11 +38,14 @@ about to change, verify against the code, then fix the docs in the same commit.
 | Reused third-party code, licenses and obligations | `doc/en-us/third-party.md` |
 | What is implemented and verified per platform and architecture | `doc/en-us/platform-notes.md` |
 | Backend work-package progress, dependency audit and test isolation | `doc/en-us/backend-progress.md` |
+| Acceptance matrix: each `PLAN.md` §20 case, §23 item and milestone with its recorded evidence | `doc/en-us/acceptance.md` |
 | URL request surfaces and endpoint-recovery audit | `doc/en-us/url-usage-audit.md` |
 | Implemented IPC contract and connected daemon scope | `doc/en-us/ipc.md` |
 | Account creation, login sessions and native credential ownership | `doc/en-us/accounts.md` |
 | Engine adapter ownership and serial scheduling | `doc/en-us/engine.md` |
+| On-demand files: Cloud Files registration, hydration, the switch boundary and removal | `doc/en-us/on-demand.md` |
 | Environment, commands, dev loop | `doc/en-us/development.md` |
+| Installer, package layout, architecture check, upgrade and uninstall | `doc/en-us/packaging.md` |
 | English→Chinese terminology | `doc/en-us/translation-guide.md` |
 | Past releases and the upstream versions they used | `doc/en-us/version-history.md` |
 | Per-package and per-module roles | `doc/en-us/functions/INDEX.md` |

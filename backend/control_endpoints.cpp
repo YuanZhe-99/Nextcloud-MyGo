@@ -101,8 +101,11 @@ QUrl Control::verifySwitchTarget(QString account, QString endpoint) try {
 
 QJsonArray Control::endpointProjection() const {
   QSqlQuery q(db_);
-  q.prepare("SELECT id,account_id,name,base_url,state FROM endpoints WHERE "
-            "approved=1 ORDER BY id");
+  // Only ready accounts: an account being removed has no binding to show.
+  q.prepare("SELECT e.id,e.account_id,e.name,e.base_url,e.state,e.kind FROM "
+            "endpoints "
+            "e JOIN accounts a ON a.id=e.account_id WHERE e.approved=1 AND "
+            "a.state='ready' ORDER BY e.id");
   execute(q);
   QJsonArray result;
   while (q.next()) {
@@ -119,7 +122,7 @@ QJsonArray Control::endpointProjection() const {
                     {"accountId", q.value(1).toString()},
                     {"name", q.value(2).toString()},
                     {"url", q.value(3).toString()},
-                    {"kind", "internet"},
+                    {"kind", q.value(5).toString()},
                     {"main", false},
                     {"approved", true},
                     {"verified", state == "verified"   ? "verified"
@@ -146,7 +149,26 @@ QJsonArray Control::endpointProjection() const {
   return result;
 }
 
-void Control::stopForStorageFailure() {
+void Control::stopForStorageFailure(std::source_location from) {
+  // Name where and why admission closed: the file name, line and the
+  // exception's fixed code only.
+  QByteArray reason = "no exception";
+  if (const auto current = std::current_exception()) {
+    try {
+      std::rethrow_exception(current);
+    } catch (const std::exception &error) {
+      reason = QByteArray(error.what()).left(80);
+    } catch (...) {
+      reason = "unknown exception";
+    }
+  }
+  const auto file = QByteArray(from.file_name());
+  qCritical("SyncD stopped for a storage failure at %s:%u (%s)",
+            file.mid(qMax(file.lastIndexOf('/'), file.lastIndexOf('\\')) + 1)
+                .constData(),
+            unsigned(from.line()), reason.constData());
+  if (storageFailed_)
+    return;
   storageFailed_ = true;
 #ifdef SYNCD_WITH_ENGINE
   if (runtime_)
@@ -186,14 +208,14 @@ QJsonObject Control::endpointMutation(const QString &method,
              approve = method == "endpoints.approveOrigin",
              remove = method == "endpoints.remove";
   const QStringList fields =
-      stage ? QStringList{"accountId", "name", "baseUrl"}
+      stage ? QStringList{"accountId", "name", "baseUrl", "kind"}
             : QStringList{approve ? "stagingId" : "endpointId"};
   for (auto it = params.begin(); it != params.end(); ++it)
     if (it.key() != "operationKey" && it.key() != "expectedRevision" &&
         !fields.contains(it.key()))
       throw std::runtime_error("INVALID_PARAMS");
   QString id = params.value(approve ? "stagingId" : "endpointId").toString(),
-          account, name, url;
+          account, name, url, kind;
   QSqlQuery q(db_);
   if (method == "endpoints.verify") {
     q.prepare("SELECT id FROM accounts WHERE endpoint_id=? AND state='ready'");
@@ -298,6 +320,12 @@ QJsonObject Control::endpointMutation(const QString &method,
   if (stage) {
     account = params.value("accountId").toString();
     name = params.value("name").toString().trimmed();
+    // Protocol 1.9: how the user reaches this address, for its icon and
+    // name; it never affects trust or scoring.
+    kind = params.value("kind").toString(QStringLiteral("internet"));
+    if ((params.contains("kind") && !params.value("kind").isString()) ||
+        (kind != "internet" && kind != "home" && kind != "vpn"))
+      throw std::runtime_error("INVALID_PARAMS");
     if (name.isEmpty() || name.size() > 128)
       throw std::runtime_error("INVALID_PARAMS");
     url = canonicalServer(params.value("baseUrl").toString()).toString();
@@ -396,7 +424,7 @@ QJsonObject Control::endpointMutation(const QString &method,
       execute(q);
       q.prepare("INSERT INTO "
                 "endpoints(id,account_id,name,base_url,state,expires,operation_"
-                "id) VALUES(?,?,?,?,'probing',?,?)");
+                "id,kind) VALUES(?,?,?,?,'probing',?,?,?)");
       q.addBindValue(id);
       q.addBindValue(account);
       q.addBindValue(name);
@@ -404,6 +432,7 @@ QJsonObject Control::endpointMutation(const QString &method,
       q.addBindValue(QDateTime::currentDateTimeUtc().addSecs(600).toString(
           Qt::ISODateWithMs));
       q.addBindValue(operation);
+      q.addBindValue(kind);
       execute(q);
     } else if (remove) {
       q.prepare("DELETE FROM endpoints WHERE id=?");

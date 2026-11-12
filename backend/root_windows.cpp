@@ -1,14 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+// windows.h and winternl.h (NTSTATUS) must precede cfapi.h.
+#include <windows.h>
+#include <winternl.h>
+
+#include <cfapi.h>
+
 #include "root.h"
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFileInfo>
 #include <QScopeGuard>
+#include <QSet>
 #include <stdexcept>
 #include <vector>
-#include <windows.h>
 
 namespace {
 /// identityOf reads a handle's stable filesystem identity without touching file
@@ -51,6 +57,13 @@ QString userScope() {
                  GetLengthSid(user->User.Sid))
           .toHex());
 }
+
+/// cloudTag reports a Cloud Files reparse tag (any of the IO_REPARSE_TAG_CLOUD
+/// variants), which an on-demand root's provider owns.
+bool cloudTag(DWORD tag) {
+  return (tag & ~IO_REPARSE_TAG_CLOUD_MASK) ==
+         (IO_REPARSE_TAG_CLOUD & ~IO_REPARSE_TAG_CLOUD_MASK);
+}
 } // namespace
 
 /// Handles retains ancestor directories, shared descendant-presence events and
@@ -72,8 +85,8 @@ struct RootLease::Handles {
   }
 };
 
-RootLease::RootLease(const QString &path)
-    : handles_(std::make_unique<Handles>()) {
+RootLease::RootLease(const QString &path, bool onDemand)
+    : onDemand_(onDemand), handles_(std::make_unique<Handles>()) {
   const QFileInfo info(path);
   if (!info.isAbsolute() || !info.isDir())
     throw std::runtime_error("LOCAL_ROOT_UNAVAILABLE");
@@ -98,7 +111,8 @@ RootLease::RootLease(const QString &path)
     FILE_ATTRIBUTE_TAG_INFO attributes{};
     if (!GetFileInformationByHandleEx(directory, FileAttributeTagInfo,
                                       &attributes, sizeof(attributes)) ||
-        (attributes.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
+        ((attributes.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) &&
+         !(onDemand_ && current == path_ && cloudTag(attributes.ReparseTag))))
       throw std::runtime_error("UNSUPPORTED_FOLDER_MODE");
     if (current == path_) {
       wchar_t filesystem[MAX_PATH + 1]{};
@@ -210,7 +224,9 @@ bool RootLease::verify() const {
     FILE_ATTRIBUTE_TAG_INFO attributes{};
     if (!GetFileInformationByHandleEx(directory, FileAttributeTagInfo,
                                       &attributes, sizeof(attributes)) ||
-        (attributes.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
+        ((attributes.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) &&
+         !(onDemand_ && directory == handles_->directories.front() &&
+           cloudTag(attributes.ReparseTag))))
       return false;
   }
   const auto native = QDir::toNativeSeparators(path_);
@@ -229,12 +245,16 @@ bool RootLease::validateTree() const {
   if (!verify())
     return false;
   QStringList pending{path_};
+  QSet<QString> placeholders; // directories admitted with a cloud tag
   while (!pending.isEmpty()) {
     const auto path = QDir::toNativeSeparators(pending.takeLast());
     const auto attributes =
         GetFileAttributesW(reinterpret_cast<LPCWSTR>(path.utf16()));
+    // verify() already admitted the root's own tag.
     if (attributes == INVALID_FILE_ATTRIBUTES ||
-        (attributes & FILE_ATTRIBUTE_REPARSE_POINT))
+        ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) &&
+         !(onDemand_ && (path == QDir::toNativeSeparators(path_) ||
+                         placeholders.contains(path)))))
       return false;
     const auto pattern = path + "\\*";
     WIN32_FIND_DATAW entry{};
@@ -255,14 +275,27 @@ bool RootLease::validateTree() const {
         valid = false;
         break;
       }
-      if (entry.dwFileAttributes &
-          (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_OFFLINE |
-           FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS)) {
+      const bool cloud =
+          onDemand_ &&
+          (entry.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) &&
+          cloudTag(entry.dwReserved0);
+      if (!cloud && (entry.dwFileAttributes &
+                     (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_OFFLINE |
+                      FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS))) {
         valid = false;
         break;
       }
-      if (entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+      if (entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+        // Listing an unpopulated directory would ask this very process to
+        // populate it; it has no local children yet.
+        if (cloud && (CfGetPlaceholderStateFromFindData(&entry) &
+                      (CF_PLACEHOLDER_STATE_PARTIAL |
+                       CF_PLACEHOLDER_STATE_PARTIALLY_ON_DISK)))
+          continue;
+        if (cloud)
+          placeholders.insert(path + '\\' + name);
         pending.append(path + '\\' + name);
+      }
     } while (FindNextFileW(search, &entry));
     if (valid && GetLastError() != ERROR_NO_MORE_FILES)
       valid = false;

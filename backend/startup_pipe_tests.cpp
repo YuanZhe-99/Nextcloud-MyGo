@@ -116,7 +116,7 @@ int client(const QString &profile, bool backoff) {
                                                 .toObject()
                                                 .value("protocol")
                                                 .toObject()
-                                                .value("minor") == 7,
+                                                .value("minor") == 9,
             "authenticated diagnostic hello failed");
     const auto bootstrap = call(pipe, 2, "state.bootstrap");
     const auto snapshot =

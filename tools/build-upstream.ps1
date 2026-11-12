@@ -79,11 +79,11 @@ $gui = if ($Mode -eq 'tests') { 'ON' } else { 'OFF' }
 $prefixes = (@($QtPrefix) + $DependencyPrefix) -join ';'
 & $cmake -S $source -B $build -G 'Visual Studio 18 2026' -A $Architecture `
     "-DCMAKE_PREFIX_PATH=$prefixes" "-DQT_HOST_PATH=$QtHostPrefix" "-DCMAKE_INSTALL_PREFIX=$build/staging" `
-    "-DBUILD_GUI=$gui" "-DBUILD_TESTING=$gui" -DBUILD_SHELL_INTEGRATION=OFF `
+    "-DBUILD_GUI=$gui" "-DBUILD_TESTING=$gui" -DBUILD_SHELL_INTEGRATION=OFF -DBUILD_CFAPI_VFS=ON `
     -DBUILD_UPDATER=OFF -DWITH_CRASHREPORTER=OFF `
     -DKDE_INSTALL_USE_QT_SYS_PATHS=OFF -DKDE_SKIP_UNINSTALL_TARGET=ON
 if ($LASTEXITCODE -ne 0) { throw 'Upstream configure failed; no build or test success is claimed.' }
-$target = if ($Mode -eq 'engine') { 'nextcloudcmd' } else { 'ALL_BUILD' }
+$target = if ($Mode -eq 'engine') { @('nextcloudcmd', 'nextcloudsync_vfs_cfapi') } else { @('ALL_BUILD') }
 & $cmake --build $build --config Release --target $target --parallel
 if ($LASTEXITCODE -ne 0) { throw 'Upstream build failed.' }
 if ($Mode -eq 'tests') {
@@ -91,8 +91,9 @@ if ($Mode -eq 'tests') {
     try {
         $bins = @((Join-Path $QtPrefix 'bin')) + @($DependencyPrefix | ForEach-Object { Join-Path $_ 'bin' })
         $env:PATH = ($bins -join ';') + ';' + $savedPath
-        # UtilityTest creates a real startup entry; M0 forbids system registration.
-        & $ctest --test-dir $build -C Release --output-on-failure --no-tests=error -E '^UtilityTest$'
+        # UtilityTest creates a real startup entry; SyncCfApiTest registers sync roots and one case opens
+        # Explorer windows, so tools/test-cfapi-upstream.ps1 runs it separately with that case left out.
+        & $ctest --test-dir $build -C Release --output-on-failure --no-tests=error -E '^(UtilityTest|SyncCfApiTest)$'
         if ($LASTEXITCODE -ne 0) { throw 'Upstream tests failed or no tests were executed.' }
     } finally { $env:PATH = $savedPath }
 }

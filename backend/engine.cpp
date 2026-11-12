@@ -10,6 +10,7 @@
 #include "deletion.h"
 #include "login.h"
 #include "namespace.h"
+#include "platform/windows/ondemand.h"
 #include "request_lifetime.h"
 #include "resume_context.h"
 #include "root.h"
@@ -22,13 +23,45 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QLoggingCategory>
 #include <QNetworkReply>
 #include <QPointer>
 #include <QTimer>
+#include <algorithm>
+#include <map>
 #include <stdexcept>
+#include <vector>
 
 namespace {
+/// deletionGroups summarizes a held deletion proposal by top-level entry:
+/// a directory counts the files the journal knows below it, loose files are
+/// one group. Returns: at most eight groups, largest first, as compact JSON.
+QByteArray deletionGroups(const QStringList &baseline,
+                          const QList<DeleteAction> &actions) {
+  std::map<QString, qint64> files;
+  for (const auto &action : actions) {
+    const bool loose = !action.path.contains('/') && !action.directory;
+    const auto name = loose ? QString{} : action.path.section('/', 0, 0);
+    qint64 count = action.directory ? 0 : 1;
+    if (action.directory)
+      for (const auto &path : baseline)
+        count += path.startsWith(action.path + '/');
+    files[name] += count;
+  }
+  std::vector<std::pair<QString, qint64>> sorted(files.begin(), files.end());
+  std::stable_sort(
+      sorted.begin(), sorted.end(),
+      [](const auto &a, const auto &b) { return a.second > b.second; });
+  QJsonArray groups;
+  for (const auto &[name, count] : sorted) {
+    if (groups.size() == 8)
+      break;
+    groups.append(QJsonObject{
+        {"name", name}, {"files", count}, {"loose", name.isEmpty()}});
+  }
+  return QJsonDocument(groups).toJson(QJsonDocument::Compact);
+}
 /// RejectedReply completes a denied destination without creating a socket or
 /// following redirects.
 class RejectedReply final : public QNetworkReply {
@@ -251,6 +284,8 @@ struct EngineAdapter::State {
   std::unique_ptr<RootLease> root;
   OCC::AccountPtr account;
   std::unique_ptr<OCC::SyncJournalDb> journal;
+  /// onDemand borrows account and journal, so it is destroyed before them.
+  std::unique_ptr<OnDemandRoot> onDemand;
   std::unique_ptr<OCC::SyncEngine> engine;
   bool active = false, stopping = false, retired = false;
   QString reason;
@@ -266,6 +301,10 @@ struct EngineAdapter::State {
   Requests requestBaseline;
   RequestLifetime::Counts lifetimeBaseline;
   quint64 uploaded = 0, downloaded = 0, deletedRemote = 0;
+  // The held proposal's summary by top-level entry (protocol 1.9).
+  QByteArray groups;
+  // Files the current cycle completed so far (protocol 1.9 progress).
+  quint64 done = 0;
   quint64 cycleNetworkGeneration = 0;
   quint64 cycle = 0;
   bool capabilitiesInstalled = false;
@@ -279,8 +318,12 @@ EngineAdapter::EngineAdapter(const Binding &binding)
       !QFileInfo(binding.journalPath).isAbsolute() ||
       !QFileInfo(binding.excludePath).isFile())
     throw std::runtime_error("Invalid engine binding");
+  if (binding.onDemand &&
+      (binding.folderId.isEmpty() || binding.accountId.isEmpty()))
+    throw std::runtime_error("Invalid engine binding");
   state_->binding = binding;
-  state_->root = std::make_unique<RootLease>(binding.localPath);
+  state_->root =
+      std::make_unique<RootLease>(binding.localPath, binding.onDemand);
   if (!binding.localIdentity.isEmpty() &&
       binding.localIdentity != state_->root->identity())
     throw std::runtime_error("FOLDER_ROOT_CHANGED");
@@ -293,6 +336,27 @@ EngineAdapter::EngineAdapter(const Binding &binding)
   OCC::ConfigFile::setConfDir(QFileInfo(binding.journalPath).absolutePath());
   createAccount();
   state_->journal = std::make_unique<OCC::SyncJournalDb>(binding.journalPath);
+  connectOnDemand();
+}
+
+void EngineAdapter::connectOnDemand() {
+  auto &s = *state_;
+  if (!s.binding.onDemand)
+    return;
+  s.onDemand = std::make_unique<OnDemandRoot>(
+      OnDemandRoot::Identity{s.binding.accountId, s.binding.folderId,
+                             QString(OnDemandRoot::provider) + " - " +
+                                 QFileInfo(s.binding.localPath).fileName()},
+      s.binding.localPath, s.binding.remotePath, s.account, s.journal.get());
+}
+
+void EngineAdapter::closeRequests() {
+  if (state_->onDemand)
+    state_->onDemand->close();
+}
+
+bool EngineAdapter::quiescent() const {
+  return !state_->active && !(state_->onDemand && state_->onDemand->busy());
 }
 
 void EngineAdapter::createAccount() {
@@ -345,6 +409,12 @@ EngineAdapter::Retirement EngineAdapter::retire() {
   if (state_->active)
     throw std::logic_error("Cannot retire an active engine binding");
   state_->retired = true;
+  // A hydration holds this epoch's account; disconnect only once it ended.
+  if (state_->onDemand) {
+    state_->onDemand->close();
+    if (!state_->onDemand->busy())
+      state_->onDemand.reset();
+  }
   state_->journal->close();
   // Account::create installs a strong back-reference in its E2EE helper. This
   // adapter never initializes E2EE; release that cycle after engine teardown.
@@ -353,8 +423,8 @@ EngineAdapter::Retirement EngineAdapter::retire() {
   state_->account.reset();
   QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
   const auto counts = requests();
-  return {counts.accounts == 0 && counts.managers == 0 && counts.active == 0 &&
-              counts.alive == 0,
+  return {!state_->onDemand && counts.accounts == 0 && counts.managers == 0 &&
+              counts.active == 0 && counts.alive == 0,
           !state_->journal->hasCommitError(), counts.uncertainWrites};
 }
 
@@ -391,6 +461,7 @@ void EngineAdapter::rebind(const QUrl &server, quint64 epoch,
   if (!login.isEmpty())
     state_->binding.login = login;
   createAccount();
+  connectOnDemand();
   state_->retired = false;
 }
 
@@ -423,6 +494,14 @@ void EngineAdapter::start() {
   if (!state_->root->validateTree())
     throw std::runtime_error("UNSUPPORTED_FOLDER_MODE");
   auto &s = *state_;
+  // A quiesce that ended without rebinding left the root refusing requests;
+  // reconnect it once its last request is done.
+  if (s.onDemand && s.onDemand->closed()) {
+    if (s.onDemand->busy())
+      throw std::runtime_error("QUIESCE_STALLED");
+    s.onDemand.reset();
+    connectOnDemand();
+  }
   s.active = true;
   s.requestBaseline = *s.requests;
   s.lifetimeBaseline = s.lifetime->counts();
@@ -455,7 +534,7 @@ void EngineAdapter::start() {
         owner->stop();
     });
   };
-  s.uploaded = s.downloaded = s.deletedRemote = 0;
+  s.uploaded = s.downloaded = s.deletedRemote = s.done = 0;
   s.cycleNetworkGeneration =
       s.binding.networkGeneration ? *s.binding.networkGeneration : 0;
   s.stopping = false;
@@ -506,6 +585,7 @@ void EngineAdapter::start() {
   }
   s.baseline.clear();
   s.proposal.clear();
+  s.groups.clear();
   s.deletion = {};
   s.upstreamGuard = false;
   QCryptographicHash baselineHash(QCryptographicHash::Sha256);
@@ -525,6 +605,8 @@ void EngineAdapter::start() {
   s.baselineDigest = baselineHash.result();
   OCC::SyncOptions options; // Keep upstream defaults and mass-deletion
                             // protection; never setIsCmd(true).
+  if (s.onDemand)
+    options._vfs = s.onDemand->vfs();
   try {
     s.engine = std::make_unique<OCC::SyncEngine>(s.account, s.binding.localPath,
                                                  options, s.binding.remotePath,
@@ -610,6 +692,7 @@ void EngineAdapter::start() {
         s.authorization.clear();
         if ((s.deletion.blocked || changedApproval) && !approved) {
           s.proposal = digest;
+          s.groups = deletionGroups(s.baseline, actions);
           s.reason = "DELETION_CONFIRMATION_REQUIRED";
           s.engine->abort();
         }
@@ -619,6 +702,8 @@ void EngineAdapter::start() {
                    [this](const OCC::SyncFileItemPtr &item, auto) {
                      if (item->_status != OCC::SyncFileItem::Success)
                        return;
+                     if (!item->isDirectory())
+                       ++state_->done;
                      if (item->_instruction == CSYNC_INSTRUCTION_REMOVE &&
                          item->_direction == OCC::SyncFileItem::Up)
                        ++state_->deletedRemote;
@@ -631,11 +716,17 @@ void EngineAdapter::start() {
                          ++state_->downloaded;
                      }
                    });
-  QObject::connect(s.engine.get(), &OCC::SyncEngine::syncError, this,
-                   [this](const QString &, auto) {
-                     if (state_->reason.isEmpty())
-                       state_->reason = "SYNC_FAILED";
-                   });
+  QObject::connect(
+      s.engine.get(), &OCC::SyncEngine::syncError, this,
+      [this](const QString &, OCC::ErrorCategory category) {
+        // A full server quota is the server's constraint, not a
+        // failed endpoint: name it (protocol 1.9).
+        if (category == OCC::ErrorCategory::InsufficientRemoteStorage &&
+            (state_->reason.isEmpty() || state_->reason == "SYNC_FAILED"))
+          state_->reason = "REMOTE_QUOTA_EXCEEDED";
+        else if (state_->reason.isEmpty())
+          state_->reason = "SYNC_FAILED";
+      });
   QObject::connect(
       s.engine.get(), &OCC::SyncEngine::finished, this, [this](bool success) {
         if (state_->reason.isEmpty() && (!success || state_->stopping))
@@ -666,20 +757,21 @@ void EngineAdapter::start() {
                     state_->reason == "SERVER_THROTTLED"
                 ? state_->lifetime->remainingServerRetry(state_->reason)
                 : 0;
-        Result result{success && !state_->stopping && state_->reason.isEmpty(),
-                      state_->engine->isAnotherSyncNeeded() !=
-                          OCC::NoFollowUpSync,
-                      state_->reason,
-                      state_->proposal,
-                      state_->deletion.local,
-                      state_->deletion.remote,
-                      state_->deletion.baseline,
-                      state_->binding.epoch,
-                      state_->uploaded,
-                      state_->downloaded,
-                      state_->deletedRemote,
-                      state_->cycleNetworkGeneration,
-                      retryAfter};
+        Result result{
+            success && !state_->stopping && state_->reason.isEmpty(),
+            state_->engine->isAnotherSyncNeeded() != OCC::NoFollowUpSync,
+            state_->reason,
+            state_->proposal,
+            state_->deletion.local,
+            state_->deletion.remote,
+            state_->deletion.baseline,
+            state_->binding.epoch,
+            state_->uploaded,
+            state_->downloaded,
+            state_->deletedRemote,
+            state_->cycleNetworkGeneration,
+            retryAfter,
+            state_->proposal.isEmpty() ? QByteArray{} : state_->groups};
         // finalize clears its propagator after emitting finished. Never destroy
         // from inside that signal.
         QTimer::singleShot(0, this, [this, result]() mutable {
@@ -687,6 +779,18 @@ void EngineAdapter::start() {
           // Patched discovery owns its worker pool; its deferred destructor
           // joins those workers.
           QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+          // Conflict copies upstream kept, for the user to look at (1.9).
+          QJsonArray conflicts;
+          // Reading never creates a journal a cancelled first cycle lacks.
+          if (QFileInfo::exists(state_->binding.journalPath))
+            for (const auto &path : state_->journal->conflictRecordPaths()) {
+              const auto record = state_->journal->conflictRecord(path);
+              conflicts.append(
+                  QJsonArray{QString::fromUtf8(path),
+                             QString::fromUtf8(record.initialBasePath)});
+            }
+          result.conflicts =
+              QJsonDocument(conflicts).toJson(QJsonDocument::Compact);
           state_->journal->close();
           if (state_->journal->hasCommitError()) {
             result.success = false;
@@ -718,3 +822,5 @@ void EngineAdapter::stop() {
   if (state_->engine && state_->engine->isSyncRunning())
     state_->engine->abort();
 }
+
+quint64 EngineAdapter::filesDone() const { return state_->done; }

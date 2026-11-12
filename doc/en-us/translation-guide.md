@@ -59,6 +59,16 @@ and Latin words only where it helps readability.
 | operation ID | operationId |
 | snapshot | 快照 |
 | rediscovery | 重新发现 |
+| test build | 测试构建 |
+| version directory | 版本目录 |
+| Apps entry | 应用列表条目 |
+| on-demand files | 按需文件 |
+| placeholder | 占位文件 |
+| hydration | 按需下载（hydration） |
+| free up space (dehydration) | 释放空间（dehydration） |
+| always keep on this device | 始终保留在此设备上 |
+| directory population | 目录填充（population） |
+| Cloud Files provider | 提供程序（provider） |
 
 ## 6. Review checklist
 

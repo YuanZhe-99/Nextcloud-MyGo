@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "control.h"
+#include "namespace.h"
+#include "network_acceptance.h"
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
@@ -18,17 +21,6 @@
 #include <QUuid>
 #include <cstdio>
 #include <stdexcept>
-
-/// networkAcceptance exercises real endpoint probes and process-local transport
-/// faults without borrowed-password revocation.
-void networkAcceptance(bool lifetimeOnly, bool activeTransfers,
-                       bool wrongInstance = false);
-/// chunkedTransferAcceptance switches the active-transfer acceptance to one
-/// interrupted chunk session on an isolated server.
-void chunkedTransferAcceptance();
-/// cleanupNetworkContent removes only the manifest-owned remote collection
-/// before native credential deletion.
-void cleanupNetworkContent(const QString &root, const QString &credential);
 
 /// ReauthTestAccess supplies borrowed credentials without adding a production
 /// IPC bypass.
@@ -189,6 +181,117 @@ void waitFor(const std::function<bool()> &condition) {
   deadline.start(70000);
   loop.exec();
   require(condition(), "renewal lifetime transition deadline");
+}
+
+/// heldRevocationRestart proves on a real server that a restarted daemon
+/// retires, once, the acquired password a previous process left held, and
+/// that the server then rejects it (N18, INV-13). Notes: needs an isolated
+/// server whose fixture password can issue an app password; that fixture
+/// password itself is never revoked.
+void heldRevocationRestart() {
+  const auto root = lifetimeRoot(),
+             path = QDir(root).filePath("control.sqlite"), connection = uuid();
+  // No relay is involved: an isolated fixture is reached at its direct origin.
+  const auto base = canonicalServer(
+      qEnvironmentVariable("NEXTCLOUD_TEST_CLEANUP_URL",
+                           qEnvironmentVariable("NEXTCLOUD_TEST_URL")));
+  const auto user = qEnvironmentVariable("NEXTCLOUD_TEST_USER"),
+             password = qEnvironmentVariable("NEXTCLOUD_TEST_PASSWORD");
+  require(!user.isEmpty() && !password.isEmpty(),
+          "owned held-revocation credentials missing");
+  QString reference, operation, issued;
+  {
+    Control control(path);
+    operation = call(control, "accounts.login.start",
+                     {{"canonicalBaseUrl", base.toString()}})
+                    .value("result")
+                    .toObject()
+                    .value("operationId")
+                    .toString();
+    require(!operation.isEmpty(), "owned held login reservation failed");
+    auto db = QSqlDatabase::addDatabase("QSQLITE", connection);
+    db.setDatabaseName(path);
+    require(db.open(), "owned held fixture DB unavailable");
+    QSqlQuery q(db);
+    require(q.exec("SELECT id,credential_ref FROM accounts") && q.next(),
+            "owned held reservation missing");
+    const auto account = q.value(0).toString();
+    reference = q.value(1).toString();
+    q.finish();
+    manifest(root, {reference});
+    // The fixture password only signs the request that issues the password
+    // the daemon then owns; it never stays in the slot.
+    writeCredential(reference, user, password);
+    issued = readServerJson(base, "ocs/v2.php/core/getapppassword?format=json",
+                            user, reference)
+                 .value("ocs")
+                 .toObject()
+                 .value("data")
+                 .toObject()
+                 .value("apppassword")
+                 .toString();
+    require(!issued.isEmpty() && issued != password,
+            "owned app password was not issued");
+    writeCredential(reference, user, issued);
+    // The state a process leaves when the server delayed the DELETE of a
+    // password it acquired and it ends before the delay does.
+    q.prepare("UPDATE accounts SET login_name=? WHERE id=?");
+    q.addBindValue(user);
+    q.addBindValue(account);
+    require(q.exec(), "owned held login name failed");
+    q.prepare("INSERT INTO held_revocations VALUES(?)");
+    q.addBindValue(account);
+    require(q.exec(), "owned held record failed");
+    q.finish();
+    db.close();
+  }
+  QSqlDatabase::removeDatabase(connection);
+  const auto accepted = [&] {
+    try {
+      readServerJson(base, "ocs/v2.php/cloud/user?format=json", user,
+                     reference);
+      return QStringLiteral("accepted");
+    } catch (const std::exception &error) {
+      return QString::fromUtf8(error.what());
+    }
+  };
+  require(accepted() == "accepted", "owned issued password never worked");
+  Control restarted(path);
+  const auto outcome = [&] {
+    return call(restarted, "operations.get", {{"operationId", operation}})
+        .value("result")
+        .toObject()
+        .value("error")
+        .toObject()
+        .value("data")
+        .toObject()
+        .value("reasonCode")
+        .toString();
+  };
+  require(findCredential(reference) && outcome() == "LOGIN_SESSION_EXPIRED",
+          "restart released the held password or misreported its login");
+  QEventLoop loop;
+  QTimer poll, deadline;
+  QObject::connect(&poll, &QTimer::timeout, &loop, [&] {
+    if (!findCredential(reference))
+      loop.quit();
+  });
+  QObject::connect(&deadline, &QTimer::timeout, &loop, &QEventLoop::quit);
+  poll.start(250);
+  deadline.start(140000);
+  loop.exec();
+  require(
+      !findCredential(reference) && outcome() == "LOGIN_SESSION_EXPIRED" &&
+          call(restarted, "accounts.list").value("result").toArray().isEmpty(),
+      "restart did not confirm the held revocation");
+  writeCredential(reference, user, issued);
+  const auto after = accepted();
+  removeCredential(reference);
+  require(after == "AUTH_REQUIRED",
+          "server still accepts the password the restart reported revoked");
+  std::puts("PASS real held revocation sent once by the restarted daemon "
+            "after the delay floor, confirmed by the server, password "
+            "rejected afterwards");
 }
 
 /// replacedDuringVerification proves cancellation/replacement cannot free a
@@ -365,13 +468,6 @@ void interrupted(const QString &phase, bool previousPresent = true) {
                     .toObject()
                     .value("reasonCode") == "QUIESCE_STALLED",
             "concurrent renewal accepted");
-    require(call(control, "accounts.remove", {{"accountId", account}})
-                    .value("error")
-                    .toObject()
-                    .value("data")
-                    .toObject()
-                    .value("reasonCode") == "QUIESCE_STALLED",
-            "account removal discarded pending credential slots");
     writeCredential(vault.candidate, "owned-user", "owned-new-secret");
     if (phase == "cancelled") {
       require(
@@ -505,6 +601,85 @@ void interrupted(const QString &phase, bool previousPresent = true) {
             "renewal persisted an application password");
   }
 }
+/// removalDuringRenewal removes an account while its renewal waits for the
+/// browser: the renewal ends, every owned vault slot goes and the removal
+/// reports the unconfirmed server revocation (INV-03/12).
+/// Notes: the fixture origin never resolves, so no request reaches a server.
+void removalDuringRenewal() {
+  QTemporaryDir root;
+  require(root.isValid(), "temporary profile unavailable");
+  VaultSlots vault;
+  const auto path = root.filePath("control.sqlite"), connection = uuid();
+  auto db = QSqlDatabase::addDatabase("QSQLITE", connection);
+  db.setDatabaseName(path);
+  {
+    Control control(path);
+    call(control, "accounts.login.start",
+         {{"canonicalBaseUrl", "https://primary.example.invalid/"}});
+    require(db.open(), "fixture profile open failed");
+    QSqlQuery q(db);
+    require(q.exec("SELECT id,credential_ref FROM accounts") && q.next(),
+            "owned reservation missing");
+    const auto account = q.value(0).toString();
+    vault.stable = q.value(1).toString();
+    q.finish();
+    sql(db, "UPDATE accounts SET state='ready',uid='owned-uid',root_id='owned-"
+            "home',login_name='owned-user'");
+    writeCredential(vault.stable, "owned-user", "owned-old-secret");
+    require(!call(control, "accounts.reauthenticate", {{"accountId", account}})
+                 .contains("error"),
+            "renewal fixture refused");
+    require(q.exec("SELECT session_id FROM reauthentication") && q.next(),
+            "durable renewal reservation missing");
+    const auto renewal = q.value(0).toString();
+    q.finish();
+    vault.candidate =
+        vault.stable + "/reauthentication/" + renewal + "/candidate";
+    vault.previous =
+        vault.stable + "/reauthentication/" + renewal + "/previous";
+    writeCredential(vault.candidate, "owned-user", "owned-new-secret");
+    const auto operation =
+        call(control, "accounts.remove", {{"accountId", account}})
+            .value("result")
+            .toObject()
+            .value("operationId")
+            .toString();
+    require(!operation.isEmpty(), "removal during a renewal was refused");
+    QJsonObject receipt;
+    QElapsedTimer clock;
+    clock.start();
+    while (clock.elapsed() < 60000) {
+      QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+      receipt = call(control, "operations.get", {{"operationId", operation}})
+                    .value("result")
+                    .toObject();
+      if (receipt.value("state") != "running")
+        break;
+    }
+    require(receipt.value("state") == "succeeded" &&
+                !receipt.value("result")
+                     .toObject()
+                     .value("serverRevocationConfirmed")
+                     .toBool(),
+            "removal during a renewal did not finish truthfully");
+    require(!findCredential(vault.stable) && !findCredential(vault.candidate) &&
+                !findCredential(vault.previous),
+            "removal left an owned vault slot");
+    require(q.exec("SELECT COUNT(*) FROM accounts") && q.next() &&
+                q.value(0).toInt() == 0,
+            "removal kept the account");
+    q.finish();
+    require(
+        call(control, "accounts.login.status", {{"loginSessionId", renewal}})
+                .value("result")
+                .toObject()
+                .value("state") != "succeeded",
+        "a removed account's renewal reported success");
+  }
+  db.close();
+  db = {};
+  QSqlDatabase::removeDatabase(connection);
+}
 } // namespace
 
 /// main exercises native-vault crash contracts by default; explicit acceptance
@@ -517,34 +692,45 @@ int main(int argc, char **argv) {
       // root here as well.
       if (qEnvironmentVariableIsSet("SYNCD_TEST_CA_CERT"))
         trustIsolatedCA();
+      cleanupOwnedUser(lifetimeRoot());
       cleanupManifest();
       return 0;
     }
-    if (app.arguments().contains("--network")) {
-      networkAcceptance(false, false);
-      return 0;
-    }
-    if (app.arguments().contains("--network-lifetime")) {
-      networkAcceptance(true, false);
-      return 0;
-    }
     if (app.arguments().contains("--lifetime")) {
+      // A disposable fixture server is addressed directly, with its root.
+      if (qEnvironmentVariableIsSet("SYNCD_TEST_CA_CERT"))
+        trustIsolatedCA();
       replacedDuringVerification();
       return 0;
     }
-    if (app.arguments().contains("--network-active")) {
-      networkAcceptance(false, true);
+    if (app.arguments().contains("--held-revocation")) {
+      trustIsolatedCA();
+      heldRevocationRestart();
       return 0;
     }
-    if (app.arguments().contains("--network-chunked")) {
-      trustIsolatedCA();
-      chunkedTransferAcceptance();
-      networkAcceptance(false, true);
-      return 0;
-    }
-    if (app.arguments().contains("--wrong-instance")) {
-      trustIsolatedCA();
-      networkAcceptance(false, false, true);
+    const auto scenario = app.arguments().value(1).mid(2);
+    const bool isolated = scenario == "network-chunked" ||
+                          scenario.section('=', 0, 0) == "network-uncertain" ||
+                          scenario == "network-large" ||
+                          scenario == "wrong-instance";
+    if (isolated || scenario == "network" || scenario == "network-lifetime" ||
+        scenario.section('=', 0, 0) == "network-active" ||
+        scenario == "file-safety" || scenario == "multi-account" ||
+        scenario.startsWith("switch-kill=") ||
+        scenario.startsWith("switch-recover=")) {
+      // Chunk sessions and destructive lost-reply cases need a server of
+      // their own; the others accept one when its root is acknowledged.
+      if (isolated || qEnvironmentVariableIsSet("SYNCD_TEST_CA_CERT"))
+        trustIsolatedCA();
+      if (scenario == "network-chunked")
+        chunkedTransferAcceptance();
+      if (scenario.section('=', 0, 0) == "network-uncertain")
+        uncertainTransferAcceptance();
+      if (scenario == "network-large")
+        largeTransferAcceptance();
+      if (scenario == "file-safety")
+        fileSafetyTransferAcceptance();
+      networkAcceptance(scenario);
       return 0;
     }
     interrupted("waiting");
@@ -554,6 +740,7 @@ int main(int argc, char **argv) {
     interrupted("installed");
     interrupted("installed-same");
     interrupted("cancelled");
+    removalDuringRenewal();
     std::puts("PASS account-preserving renewal cancellation, vault rollback "
               "and committed restart");
     return 0;

@@ -41,7 +41,7 @@ func NewMock(sample bool, now func() time.Time) *Mock {
 	}
 	m := &Mock{now: now, subs: map[int]func(){}, logins: map[string]mockLogin{}, staged: map[string]mockStage{}, cycle: map[string]int{}}
 	m.s = Snapshot{
-		Daemon:   Daemon{Version: "0.1.0", Protocol: 1, Demo: true, StateAvailable: true, StartupState: StartupNormal, CheckedAt: now().Add(-2 * time.Minute)},
+		Daemon:   mockDaemon(now()),
 		Accounts: []Account{}, Folders: []Folder{}, Endpoints: []Endpoint{}, Networks: []Network{}, Switches: []Switch{}, Decisions: []Decision{}, Activity: []Activity{},
 	}
 	if sample {
@@ -51,10 +51,20 @@ func NewMock(sample bool, now func() time.Time) *Mock {
 	return m
 }
 
+// mockDaemon is the Mock's own description: connected, with every
+// capability it simulates, and labelled as sample data.
+func mockDaemon(now time.Time) Daemon {
+	return Daemon{
+		Connected: true, StateAvailable: true, StartupState: StartupNormal,
+		Capabilities: map[string]bool{"login": true, "fullSync": true, "endpointAutoSwitch": true},
+		Version:      "0.1.0", Protocol: 1, ProtocolMinor: 8, Demo: true, CheckedAt: now.Add(-2 * time.Minute),
+	}
+}
+
 // sampleState is the design's sample: what the screens in design/ show.
 func sampleState(now time.Time) Snapshot {
 	return Snapshot{
-		Daemon: Daemon{Version: "0.1.0", Protocol: 1, Demo: true, StateAvailable: true, StartupState: StartupNormal, CheckedAt: now.Add(-2 * time.Minute)},
+		Daemon: mockDaemon(now),
 		Accounts: []Account{
 			{ID: "a-home", User: "alex", DisplayName: "Alex", Server: "cloud.example.com", SignedIn: true},
 			{ID: "a-work", User: "alex", DisplayName: "Alex", Server: "work.example", SignedIn: false},
@@ -83,7 +93,7 @@ func sampleState(now time.Time) Snapshot {
 			{AccountID: "a-home", At: now.Add(-20 * time.Hour), FromID: "e-wan", ToID: "e-lan", Reason: ReasonPostponed, Postponed: 6 * time.Minute},
 		},
 		Decisions: []Decision{
-			{ID: "d-photos", Kind: DecisionLocalDeletions, AccountID: "a-home", FolderID: "f-photos", Digest: "sha256:photos-142", Count: 142, Groups: []FileGroup{
+			{ID: "d-photos", Kind: DecisionBulkDeletions, AccountID: "a-home", FolderID: "f-photos", Digest: "sha256:photos-142", Count: 142, RemoteDeletes: 142, Expires: now.Add(10 * time.Minute), Groups: []FileGroup{
 				{Name: "Vacation 2025", Files: 96, Bytes: 1_800_000_000},
 				{Name: "Screenshots", Files: 44, Bytes: 120_000_000},
 				{Name: "Photos", Files: 2, Bytes: 8_000_000, Loose: true},
@@ -216,7 +226,7 @@ func (m *Mock) settle(f *Folder) {
 
 func (m *Mock) pendingDeletion(folderID string) bool {
 	for _, d := range m.s.Decisions {
-		if d.FolderID == folderID && d.Kind == DecisionLocalDeletions {
+		if d.FolderID == folderID && d.Kind == DecisionBulkDeletions {
 			return true
 		}
 	}
@@ -293,8 +303,9 @@ func (m *Mock) RemoveFolder(id string) error {
 	return err
 }
 
-// ResolveDecision answers a decision once; a later or second answer to
-// the same proposal changes nothing.
+// ResolveDecision answers a decision once, as SyncD does: Later keeps it
+// pending, an approval consumes it and the folder syncs the deletions; a
+// second answer to the same proposal is refused.
 func (m *Mock) ResolveDecision(id, digest string, action Action) error {
 	var err error
 	m.change(func() {
@@ -304,29 +315,25 @@ func (m *Mock) ResolveDecision(id, digest string, action Action) error {
 			return
 		}
 		d := m.s.Decisions[i]
-		if d.Digest != digest {
+		switch {
+		case d.Digest != digest || m.now().After(d.Expires) && !d.Expires.IsZero():
 			err = ErrStale
 			return
-		}
-		if action == ActionLater {
+		case action == ActionLater:
+			return
+		case d.Kind == DecisionBulkDeletions && action != ActionApproveDeletion,
+			d.Kind == DecisionConflict && action != ActionResolved:
+			err = ErrRefused
 			return
 		}
 		m.s.Decisions = slices.Delete(m.s.Decisions, i, i+1)
-		f := m.folder(d.FolderID)
-		switch action {
-		case ActionDeleteRemote:
-			m.s.Activity = slices.Insert(m.s.Activity, 0, Activity{At: m.now(), Kind: ActDeleted, FolderID: d.FolderID, Count: d.Count})
-		case ActionRestore:
-			if f != nil {
-				f.State = FolderUpToDate
-				m.cycle[f.ID] = d.Count
-			}
+		if d.Kind != DecisionBulkDeletions {
+			return
 		}
-		if f != nil {
+		m.s.Activity = slices.Insert(m.s.Activity, 0, Activity{At: m.now(), Kind: ActDeleted, FolderID: d.FolderID, Count: d.Count})
+		if f := m.folder(d.FolderID); f != nil {
+			f.State = FolderUpToDate
 			m.settle(f)
-			if action == ActionRestore && f.State == FolderSyncing {
-				f.Phase = PhaseDownloading
-			}
 		}
 	})
 	return err
@@ -422,13 +429,16 @@ func (m *Mock) RemoteFolders(string) ([]RemoteFolder, error) {
 	return []RemoteFolder{{Path: "/Documents"}, {Path: "/Photos"}, {Path: "/Work"}, {Path: "/Vault", Encrypted: true}}, nil
 }
 
-func (m *Mock) AddFolder(accountID, remotePath, localPath string) error {
+func (m *Mock) AddFolder(accountID, remotePath, localPath string, mode ...FolderMode) error {
 	m.change(func() {
 		name := strings.TrimPrefix(remotePath, "/")
 		if i := strings.LastIndex(name, "/"); i >= 0 {
 			name = name[i+1:]
 		}
-		f := Folder{ID: m.id("f"), AccountID: accountID, Name: name, LocalPath: localPath, RemotePath: remotePath}
+		f := Folder{ID: m.id("f"), AccountID: accountID, Name: name, LocalPath: localPath, RemotePath: remotePath, Mode: FolderFull}
+		if len(mode) > 0 {
+			f.Mode = mode[0]
+		}
 		m.settle(&f)
 		f.Phase = PhaseDownloading
 		m.s.Folders = append(m.s.Folders, f)
@@ -436,8 +446,11 @@ func (m *Mock) AddFolder(accountID, remotePath, localPath string) error {
 	return nil
 }
 
-func (m *Mock) SetPolicy(accountID string, p Policy, fixed string) error {
+// RequestPolicy changes the policy at once: the Mock has no transfer to
+// wait for.
+func (m *Mock) RequestPolicy(accountID string, p Policy, fixed string) (string, error) {
 	var err error
+	var op string
 	m.change(func() {
 		for i := range m.s.Networks {
 			n := &m.s.Networks[i]
@@ -461,14 +474,15 @@ func (m *Mock) SetPolicy(accountID string, p Policy, fixed string) error {
 					n.ActiveID, n.Why, n.Speedup, n.Switched, n.SwitchReason = fixed, []Reason{ReasonUserChoice, ReasonVerified}, 0, m.now(), ReasonUserChoice
 				}
 			}
+			op = m.id("op")
 			return
 		}
 		err = ErrNotFound
 	})
-	return err
+	return op, err
 }
 
-func (m *Mock) StageEndpoint(accountID, name, url string) (Staging, error) {
+func (m *Mock) StageEndpoint(accountID, name, url string, kind ...EndpointKind) (Staging, error) {
 	host := hostOf(url)
 	if host == "" {
 		return Staging{}, ErrRefused
@@ -476,7 +490,11 @@ func (m *Mock) StageEndpoint(accountID, name, url string) (Staging, error) {
 	var st Staging
 	m.change(func() {
 		st = Staging{ID: m.id("stage"), URL: "https://" + host, SecureTLS: true, CertSubject: host, CertIssuer: "Sample CA", SameVersion: true}
-		m.staged[st.ID] = mockStage{st: st, accountID: accountID, name: name}
+		stage := mockStage{st: st, accountID: accountID, name: name, kind: KindInternet}
+		if len(kind) > 0 {
+			stage.kind = kind[0]
+		}
+		m.staged[st.ID] = stage
 	})
 	return st, nil
 }
@@ -494,10 +512,11 @@ func (m *Mock) ApproveEndpoint(stagingID string) (string, error) {
 		}
 		delete(m.staged, stagingID)
 		id = m.id("e")
-		kind := KindInternet
-		if l := strings.ToLower(sg.name); strings.Contains(l, "vpn") {
+		// Without an explicit kind the sample data guesses one from the name.
+		kind := sg.kind
+		if l := strings.ToLower(sg.name); kind == KindInternet && strings.Contains(l, "vpn") {
 			kind = KindVPN
-		} else if strings.Contains(l, "home") || strings.Contains(l, "lan") {
+		} else if kind == KindInternet && (strings.Contains(l, "home") || strings.Contains(l, "lan")) {
 			kind = KindHome
 		}
 		m.s.Endpoints = append(m.s.Endpoints, Endpoint{ID: id, AccountID: sg.accountID, Name: sg.name, Kind: kind, URL: sg.st.URL, Approved: true, Verified: VerifyPending})
@@ -566,6 +585,21 @@ func (m *Mock) PrepareUpdate(string) error {
 
 func (m *Mock) Shutdown() error { return nil }
 
+// Diagnostics reports the sample folders with no transfers.
+func (m *Mock) Diagnostics(context.Context) (RuntimeDiagnostics, error) {
+	s := m.Snapshot()
+	d := RuntimeDiagnostics{Version: s.Daemon.Version, Protocol: "1.8", NetworkGeneration: "1", AllPaused: s.Daemon.AllPaused, StateAvailable: true, StartupState: StartupNormal}
+	for _, f := range s.Folders {
+		d.Folders = append(d.Folders, FolderDiagnostics{FolderID: f.ID, AccountID: f.AccountID, Epoch: "1", State: string(f.State), ReasonCode: f.ReasonCode, UserPaused: f.UserPaused})
+	}
+	return d, nil
+}
+
+// ExportDiagnostics writes nothing: sample data has no bundle.
+func (m *Mock) ExportDiagnostics() (string, error) { return "", ErrRefused }
+
+var _ Client = (*Mock)(nil)
+
 // hostOf is the host of an address typed with or without its scheme.
 func hostOf(s string) string {
 	s = strings.TrimSpace(s)
@@ -583,4 +617,5 @@ func hostOf(s string) string {
 type mockStage struct {
 	st              Staging
 	accountID, name string
+	kind            EndpointKind
 }

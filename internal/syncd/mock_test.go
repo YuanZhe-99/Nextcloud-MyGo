@@ -8,6 +8,8 @@ import (
 
 func fixed() time.Time { return time.Date(2026, 11, 3, 14, 6, 0, 0, time.UTC) }
 
+// TestResolveDecisionOnce: a deletion proposal is answered once, bound to
+// its digest, with only the answers SyncD accepts (PLAN.md §11.3, INV-11).
 func TestResolveDecisionOnce(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -16,10 +18,10 @@ func TestResolveDecisionOnce(t *testing.T) {
 		want   error
 		left   int // decisions left
 	}{
-		{"stale digest is refused", "sha256:other", ActionRestore, ErrStale, 2},
+		{"stale digest is refused", "sha256:other", ActionApproveDeletion, ErrStale, 2},
 		{"later keeps it", "sha256:photos-142", ActionLater, nil, 2},
-		{"restore answers it", "sha256:photos-142", ActionRestore, nil, 1},
-		{"delete answers it", "sha256:photos-142", ActionDeleteRemote, nil, 1},
+		{"a conflict answer is refused", "sha256:photos-142", ActionResolved, ErrRefused, 2},
+		{"approval consumes it", "sha256:photos-142", ActionApproveDeletion, nil, 1},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -37,6 +39,17 @@ func TestResolveDecisionOnce(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestExpiredProposalIsStale: an approval after the proposal expired is
+// refused; the folder is checked again instead (PLAN.md §11.3 item 7).
+func TestExpiredProposalIsStale(t *testing.T) {
+	now := fixed()
+	m := NewMock(true, func() time.Time { return now })
+	now = now.Add(11 * time.Minute)
+	if err := m.ResolveDecision("d-photos", "sha256:photos-142", ActionApproveDeletion); !errors.Is(err, ErrStale) {
+		t.Fatalf("expired approval: %v, want stale", err)
 	}
 }
 
@@ -76,23 +89,21 @@ func TestSyncNowRefusedWhileBlocked(t *testing.T) {
 	}
 }
 
-func TestRestoreDownloadsThenUpToDate(t *testing.T) {
+// TestApprovalSyncsTheFolder: after an approval the folder syncs again and
+// the deletion is in the history.
+func TestApprovalSyncsTheFolder(t *testing.T) {
 	m := NewMock(true, fixed)
-	if err := m.ResolveDecision("d-photos", "sha256:photos-142", ActionRestore); err != nil {
+	if err := m.ResolveDecision("d-photos", "sha256:photos-142", ActionApproveDeletion); err != nil {
 		t.Fatal(err)
 	}
-	f, _ := m.Snapshot().Folder("f-photos")
-	if f.State != FolderSyncing || f.Phase != PhaseDownloading {
-		t.Fatalf("Photos = %s/%s, want downloading", f.State, f.Phase)
+	s := m.Snapshot()
+	if f, _ := s.Folder("f-photos"); f.State != FolderSyncing {
+		t.Fatalf("Photos = %s, want syncing", f.State)
 	}
-	for range 142 {
-		m.Step()
-	}
-	if f, _ := m.Snapshot().Folder("f-photos"); f.State != FolderUpToDate {
-		t.Fatalf("Photos = %s, want up to date", f.State)
+	if s.Activity[0].Kind != ActDeleted || s.Activity[0].Count != 142 {
+		t.Fatalf("history = %+v, want the deletion first", s.Activity[0])
 	}
 }
-
 func TestPrepareUpdateWaitsForSafePoint(t *testing.T) {
 	m := NewMock(true, fixed)
 	if err := m.PrepareUpdate("0.1.1"); !errors.Is(err, ErrBusy) {

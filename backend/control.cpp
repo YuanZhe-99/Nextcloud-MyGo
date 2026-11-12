@@ -25,11 +25,40 @@ void execute(QSqlQuery &q) {
   if (!q.exec())
     throw std::runtime_error("Control database operation failed");
 }
+/// addColumn adds one later-schema column unless the table already has it
+/// (schema 10: folders.mode; schema 11: endpoints.kind, decisions.groups,
+/// settings.daemon_version).
+/// Returns: false on a SQL failure, which aborts the migration.
+bool addColumn(QSqlQuery &q, const QString &table, const QString &column,
+               const QString &definition) {
+  if (!q.exec(QStringLiteral("SELECT COUNT(*) FROM pragma_table_info('%1') "
+                             "WHERE name='%2'")
+                  .arg(table, column)) ||
+      !q.next())
+    return false;
+  const bool present = q.value(0).toInt() > 0;
+  q.finish();
+  return present || q.exec(QStringLiteral("ALTER TABLE %1 ADD COLUMN %2 %3")
+                               .arg(table, column, definition));
+}
 /// capabilities advertises only end-to-end implemented workflows.
+/// Notes: `engine` separates a build linked to the upstream engine (folders,
+/// switching) from a foundation build (pipe, login, settings only).
 QJsonObject capabilities(bool available = true) {
-  return {{"multiAccount", false}, {"login", available},
-          {"fullSync", false},     {"endpointAutoSwitch", false},
-          {"virtualFiles", false}, {"endToEndEncryption", false}};
+#ifdef SYNCD_WITH_ENGINE
+  constexpr bool engine = true;
+#else
+  constexpr bool engine = false;
+#endif
+  // multiAccount: two accounts with two folders each passed on a real server
+  // (multi-account acceptance, 2026-11-12).
+  return {{"multiAccount", available},
+          {"login", available},
+          {"fullSync", false},
+          {"endpointAutoSwitch", false},
+          {"virtualFiles", false},
+          {"endToEndEncryption", false},
+          {"engine", engine && available}};
 }
 } // namespace
 
@@ -54,7 +83,7 @@ Control::Control(const QString &path, StartupMode mode, Startup *startup)
   if (!activationAllowed_)
     return;
   try {
-    backupControlBeforeMigration(path, 8);
+    backupControlBeforeMigration(path, schemaVersion);
     db_ = QSqlDatabase::addDatabase("QSQLITE", boot_);
     db_.setDatabaseName(path);
     if (!db_.open())
@@ -66,7 +95,8 @@ Control::Control(const QString &path, StartupMode mode, Startup *startup)
       if (!q.exec(sql))
         throw std::runtime_error("Cannot configure Control database");
     }
-    if (!q.exec("PRAGMA user_version") || !q.next() || q.value(0).toInt() > 8)
+    if (!q.exec("PRAGMA user_version") || !q.next() ||
+        q.value(0).toInt() > schemaVersion)
       throw std::runtime_error("Unsupported Control database version");
     const auto schema = q.value(0).toInt();
     q.finish();
@@ -77,7 +107,8 @@ Control::Control(const QString &path, StartupMode mode, Startup *startup)
         {"CREATE TABLE IF NOT EXISTS settings(id INTEGER PRIMARY KEY "
          "CHECK(id=1), revision INTEGER NOT NULL, seq INTEGER NOT NULL, paused "
          "INTEGER NOT NULL)",
-         "INSERT OR IGNORE INTO settings VALUES(1,0,0,0)",
+         "INSERT OR IGNORE INTO settings(id,revision,seq,paused) "
+         "VALUES(1,0,0,0)",
          "CREATE TABLE IF NOT EXISTS operations(key TEXT PRIMARY KEY, id TEXT "
          "UNIQUE NOT NULL, digest BLOB NOT NULL, receipt BLOB NOT NULL)",
          "CREATE TABLE IF NOT EXISTS outbox(seq INTEGER PRIMARY KEY, payload "
@@ -108,6 +139,10 @@ Control::Control(const QString &path, StartupMode mode, Startup *startup)
             "UNIQUE,paused INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL "
             "DEFAULT 'offline',reason TEXT NOT NULL DEFAULT '',last_sync TEXT "
             "NOT NULL DEFAULT '',UNIQUE(account_id,remote_path))") ||
+        // Schema 10: a folder's file mode is fixed when it is added (§2.3).
+        !addColumn(q, "folders", "mode",
+                   "TEXT NOT NULL DEFAULT 'full' CHECK(mode IN "
+                   "('full','onDemand'))") ||
         !q.exec(
             "CREATE TABLE IF NOT EXISTS decisions(id TEXT PRIMARY "
             "KEY,folder_id TEXT UNIQUE NOT NULL REFERENCES folders(id) ON "
@@ -169,7 +204,24 @@ Control::Control(const QString &path, StartupMode mode, Startup *startup)
             "deadline_utc INTEGER,CHECK((delay_ms=-1 AND deadline_utc IS NULL) "
             "OR (delay_ms>0 AND deadline_utc IS NOT NULL AND "
             "deadline_utc=received_utc+delay_ms)))") ||
-        !SwitchState::createSchema(db_) || !q.exec("PRAGMA user_version=8")) {
+        // A row means: this creating account's vault slot holds a password
+        // the daemon acquired, its DELETE is only delayed by the server, and
+        // none is in flight.
+        !q.exec("CREATE TABLE IF NOT EXISTS held_revocations(account_id TEXT "
+                "PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE)") ||
+        // Schema 11: how an address is reached, what a deletion proposal
+        // covers, conflict copies and the last version that ran (protocol 1.9).
+        !addColumn(q, "endpoints", "kind",
+                   "TEXT NOT NULL DEFAULT 'internet' CHECK(kind IN "
+                   "('internet','home','vpn'))") ||
+        !addColumn(q, "decisions", "groups", "TEXT NOT NULL DEFAULT '[]'") ||
+        !addColumn(q, "settings", "daemon_version",
+                   "TEXT NOT NULL DEFAULT ''") ||
+        !q.exec("CREATE TABLE IF NOT EXISTS conflicts(id TEXT PRIMARY KEY,"
+                "folder_id TEXT NOT NULL REFERENCES folders(id) ON DELETE "
+                "CASCADE,file TEXT NOT NULL,copy TEXT NOT NULL,dismissed "
+                "INTEGER NOT NULL DEFAULT 0,UNIQUE(folder_id,copy))") ||
+        !SwitchState::createSchema(db_) || !q.exec("PRAGMA user_version=11")) {
       db_.rollback();
       throw std::runtime_error("Schema version update failed");
     }
@@ -181,6 +233,17 @@ Control::Control(const QString &path, StartupMode mode, Startup *startup)
     revision_ = q.value(0).toLongLong();
     seq_ = q.value(1).toLongLong();
     paused_ = q.value(2).toBool();
+    q.finish();
+    // The installer asks after an update what this start migrated from.
+    previousSchema_ = schema;
+    if (!q.exec("SELECT daemon_version FROM settings WHERE id=1") || !q.next())
+      throw std::runtime_error("Control database settings missing");
+    previousVersion_ = q.value(0).toString();
+    q.finish();
+    q.prepare("UPDATE settings SET daemon_version=? WHERE id=1");
+    q.addBindValue(QStringLiteral(SYNCD_VERSION));
+    if (!q.exec())
+      throw std::runtime_error("Control database settings update failed");
     q.finish();
     restoreAccountConstraints();
     if (startup_)
@@ -273,7 +336,10 @@ bool Control::activate(qint64 monotonicMs) {
   }
   QTimer::singleShot(0, &networkTasks_, [this] { startNetwork(); });
 #ifndef SYNCD_WITH_ENGINE
-  QTimer::singleShot(0, &networkTasks_, [this] { resumeReauthentication(); });
+  QTimer::singleShot(0, &networkTasks_, [this] {
+    resumeReauthentication();
+    selfCheck();
+  });
 #endif
   return true;
 }
@@ -311,6 +377,11 @@ QJsonObject Control::projection() const {
             {"seq", QString::number(seq_)},
             {"revision", QString::number(revision_)},
             {"snapshot", snapshot}};
+  {
+    auto daemon = snapshot.value("daemon").toObject();
+    daemon.insert("startupReport", startupReport());
+    snapshot.insert("daemon", daemon);
+  }
   for (const auto &key : {"accounts", "folders", "endpoints", "networks",
                           "switches", "decisions", "activity"})
     snapshot.insert(key, QJsonArray{});
@@ -330,11 +401,37 @@ QJsonObject Control::projection() const {
     const bool switching = intent.next();
     const bool blocked = switching && intent.value(0).toString() == "blocked";
     const QUrl url(q.value(1).toString());
+    // Protocol 1.9: revoked when the server refused the stored app password,
+    // needsSignIn when it cannot be used here or a renewal waits for the
+    // browser, signedIn otherwise.
+    QString auth = QStringLiteral("signedIn");
+    QSqlQuery reasons(db_);
+    reasons.prepare("SELECT reason FROM folders WHERE account_id=?");
+    reasons.addBindValue(account);
+    execute(reasons);
+    while (reasons.next()) {
+      if (reasons.value(0) == "AUTH_REQUIRED")
+        auth = QStringLiteral("revoked");
+      else if (reasons.value(0) == "CREDENTIALS_LOCKED" && auth == "signedIn")
+        auth = QStringLiteral("needsSignIn");
+    }
+    reasons.finish();
+    if (network_ && network_->accounts.contains(account) &&
+        !network_->accounts.at(account).authFailed.isEmpty())
+      auth = QStringLiteral("revoked");
+    reasons.prepare("SELECT 1 FROM reauthentication WHERE account_id=? AND "
+                    "phase IN ('waiting','prepared','discarding')");
+    reasons.addBindValue(account);
+    execute(reasons);
+    if (reasons.next())
+      auth = QStringLiteral("needsSignIn");
+    reasons.finish();
     accounts.append(QJsonObject{{"id", account},
                                 {"user", q.value(2).toString()},
                                 {"displayName", q.value(3).toString()},
                                 {"server", url.host()},
-                                {"signedIn", true}});
+                                {"auth", auth},
+                                {"signedIn", auth == "signedIn"}});
     endpoints.append(QJsonObject{{"id", endpoint},
                                  {"accountId", account},
                                  {"name", url.host()},
@@ -388,6 +485,70 @@ QJsonObject Control::projection() const {
   snapshot.insert("accounts", accounts);
   for (const auto &endpoint : endpointProjection())
     endpoints.append(endpoint);
+  // Protocol 1.9: measured latency, how an address is reached and one
+  // unambiguous reason it cannot serve, strongest first.
+  for (qsizetype i = 0; i < endpoints.size(); ++i) {
+    auto item = endpoints.at(i).toObject();
+    const auto account = item.value("accountId").toString(),
+               id = item.value("id").toString();
+    QString reason;
+    QSqlQuery quarantine(db_);
+    quarantine.prepare("SELECT reason FROM endpoint_quarantine WHERE "
+                       "account_id=? AND endpoint_id=?");
+    quarantine.addBindValue(account);
+    quarantine.addBindValue(id);
+    execute(quarantine);
+    if (quarantine.next())
+      reason = quarantine.value(0).toString();
+    qint64 latency = 0;
+    if (network_ && network_->accounts.contains(account)) {
+      const auto health = network_->accounts.at(account).policy.health(
+          id, network_->clock.elapsed());
+      latency = health.latencyMs;
+      if (reason.isEmpty() && health.authBlocked)
+        reason = QStringLiteral("AUTH_REQUIRED");
+      if (reason.isEmpty() && item.value("verified") == "failed")
+        reason = QStringLiteral("ENDPOINT_IDENTITY_MISMATCH");
+      if (reason.isEmpty() && item.value("verified") != "verified")
+        reason = QStringLiteral("VERIFICATION_PENDING");
+      if (reason.isEmpty() && health.failed)
+        reason = QStringLiteral("NETWORK_UNAVAILABLE");
+    } else if (reason.isEmpty() && item.value("blocked").toBool())
+      reason = item.value("verified") == "failed"
+                   ? QStringLiteral("ENDPOINT_IDENTITY_MISMATCH")
+                   : QStringLiteral("VERIFICATION_PENDING");
+    item.insert("latencyMs", latency);
+    item.insert("blockedReason", reason);
+    item.insert("blocked", !reason.isEmpty());
+    if (!reason.isEmpty())
+      item.insert("reachable", false);
+    endpoints.replace(i, item);
+  }
+  // Protocol 1.9: why the address in use was chosen and why the last switch
+  // happened, from the committed switch history.
+  for (qsizetype i = 0; i < networks.size(); ++i) {
+    auto item = networks.at(i).toObject();
+    QSqlQuery last(db_);
+    last.prepare("SELECT at,reason FROM activity WHERE account_id=? AND "
+                 "kind='switched' ORDER BY cursor DESC LIMIT 1");
+    last.addBindValue(item.value("accountId").toString());
+    execute(last);
+    const bool switched = last.next();
+    if (switched) {
+      item.insert("switched", last.value(0).toString());
+      item.insert("switchReason", last.value(1).toString());
+    }
+    QJsonArray why;
+    if (item.value("policy") == "fixed")
+      why.append("userChoice");
+    else
+      why.append(switched ? last.value(1).toString()
+                          : QStringLiteral("verified"));
+    if (item.value("switching").toBool())
+      why.append("postponed");
+    item.insert("why", why);
+    networks.replace(i, item);
+  }
   snapshot.insert("endpoints", endpoints);
   snapshot.insert("networks", networks);
   snapshot.insert("folders", folderProjection());
@@ -444,13 +605,13 @@ QJsonValue Control::dispatch(const QJsonValue &request, bool &negotiated,
         return reply;
       }
       negotiated = true;
-      result =
-          QJsonObject{{"protocol", QJsonObject{{"major", 1}, {"minor", 7}}},
-                      {"bootId", boot_},
-                      {"daemonVersion", SYNCD_VERSION},
-                      {"capabilities", capabilities(stateAvailable_)},
-                      {"limits", QJsonObject{{"maxFrameBytes", 1048576},
-                                             {"maxInFlight", 32}}}};
+      result = QJsonObject{
+          {"protocol", QJsonObject{{"major", 1}, {"minor", protocolMinor}}},
+          {"bootId", boot_},
+          {"daemonVersion", SYNCD_VERSION},
+          {"capabilities", capabilities(stateAvailable_)},
+          {"limits",
+           QJsonObject{{"maxFrameBytes", 1048576}, {"maxInFlight", 32}}}};
     } else if (!negotiated) {
       reply.insert("error", failure("PROTOCOL_MISMATCH"));
       return reply;
@@ -505,7 +666,8 @@ QJsonValue Control::dispatch(const QJsonValue &request, bool &negotiated,
                method == "endpoints.verify" || method == "endpoints.remove" ||
                method == "endpoints.requestSwitch" ||
                method == "endpoints.setPolicy" ||
-               method == "diagnostics.export") {
+               method == "diagnostics.export" ||
+               method == "daemon.prepareUpdate") {
       auto receipt = mutate(method, params);
       if (receipt.contains("code")) {
         reply.insert("error", receipt);
@@ -544,6 +706,8 @@ QJsonValue Control::dispatch(const QJsonValue &request, bool &negotiated,
                             "UNSUPPORTED_CAPABILITY",
                             "REVISION_CONFLICT",
                             "PAUSED",
+                            "DECISION_PENDING",
+                            "ACCOUNT_EXISTS",
                             "QUIESCE_STALLED"};
     reply.insert("error",
                  failure(known.contains(reason) ? reason : "INTERNAL_ERROR"));
@@ -582,6 +746,8 @@ QJsonObject Control::mutate(const QString &method, const QJsonObject &params) {
     return policyMutation(params, digest);
   if (method == "diagnostics.export")
     return exportDiagnostics(params, digest);
+  if (method == "daemon.prepareUpdate")
+    return prepareUpdate(params, digest);
   if (method == "accounts.reauthenticate")
     return reauthenticate(params, digest);
   if (method.startsWith("endpoints."))

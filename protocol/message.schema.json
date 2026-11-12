@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/YuanZhe-99/Nextcloud-MyGo/protocol/message.schema.json",
-  "title": "SyncD protocol 1.7 message or bounded batch",
+  "title": "SyncD protocol 1.9 message or bounded batch",
   "oneOf": [
     {"$ref": "#/$defs/message"},
     {"type": "array", "minItems": 1, "maxItems": 32, "items": {"$ref": "#/$defs/message"}}
@@ -37,6 +37,58 @@
         {"required": ["id", "error"], "not": {"anyOf": [{"required": ["method"]}, {"required": ["result"]}]}}
       ]
     },
+    "reasonCode": {"type": "string", "maxLength": 80, "pattern": "^[A-Z_]*$"},
+    "startupReport": {
+      "description": "1.9: what this start migrated from and its self-check, for the installer after an update.",
+      "type": "object", "required": ["previousVersion", "previousSchema", "schema", "selfCheck", "reasonCodes"],
+      "properties": {
+        "previousVersion": {"type": "string"}, "previousSchema": {"type": "integer", "minimum": 0},
+        "schema": {"type": "integer", "minimum": 1}, "selfCheck": {"enum": ["pending", "passed", "failed"]},
+        "reasonCodes": {"type": "array", "items": {"$ref": "#/$defs/reasonCode"}}
+      }
+    },
+    "account": {
+      "type": "object", "required": ["id", "user", "displayName", "server", "auth", "signedIn"],
+      "properties": {
+        "auth": {"description": "1.9: revoked when the server refused the stored app password; needsSignIn when it cannot be used here or a renewal waits for the browser.", "enum": ["signedIn", "needsSignIn", "revoked"]},
+        "signedIn": {"type": "boolean", "description": "auth == signedIn"}
+      }
+    },
+    "folder": {
+      "type": "object",
+      "properties": {
+        "reasonCode": {"$ref": "#/$defs/reasonCode"}, "mode": {"enum": ["full", "onDemand"]},
+        "phase": {"description": "1.9: what a syncing folder does now; empty while it does not sync.", "enum": ["", "checking", "uploading", "downloading"]},
+        "filesDone": {"type": "integer", "minimum": 0, "description": "1.9: files the running cycle completed so far; no total exists while discovery runs."}
+      }
+    },
+    "endpoint": {
+      "type": "object",
+      "properties": {
+        "kind": {"enum": ["internet", "home", "vpn"]},
+        "latencyMs": {"type": "integer", "minimum": 0, "description": "1.9: smoothed probe round trip; 0 before a probe succeeded."},
+        "blocked": {"type": "boolean"},
+        "blockedReason": {"description": "1.9: the one reason blocked is true, strongest first; empty when not blocked.", "enum": ["", "TLS_ERROR", "ENDPOINT_IDENTITY_MISMATCH", "ENDPOINT_UNTRUSTED", "AUTH_REQUIRED", "VERIFICATION_PENDING", "NETWORK_UNAVAILABLE"]}
+      }
+    },
+    "network": {
+      "type": "object",
+      "properties": {
+        "why": {"description": "1.9: why the address in use was chosen, strongest first.", "type": "array", "items": {"enum": ["verified", "faster", "unreachable", "userChoice", "postponed"]}},
+        "switchReason": {"description": "1.9: why the last switch happened.", "enum": ["verified", "faster", "unreachable", "userChoice"]},
+        "switched": {"type": "string", "format": "date-time"}
+      }
+    },
+    "decision": {
+      "type": "object", "required": ["id", "kind", "accountId", "folderId"],
+      "properties": {
+        "kind": {"enum": ["bulkDeletions", "conflict"]},
+        "groups": {"description": "1.9: what a deletion proposal covers, largest first, at most eight.", "type": "array", "maxItems": 8,
+          "items": {"type": "object", "required": ["name", "files", "loose"], "properties": {"name": {"type": "string"}, "files": {"type": "integer", "minimum": 0}, "loose": {"type": "boolean"}}}},
+        "file": {"type": "string", "description": "1.9 conflict: the original file, folder-relative"},
+        "copy": {"type": "string", "description": "1.9 conflict: the copy upstream kept beside it"}
+      }
+    },
     "operationKey": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
     "revision": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},
     "settingsUpdate": {
@@ -63,11 +115,17 @@
                 "version": {"type": "string"}, "protocol": {"const": 1}, "demo": {"const": false},
                 "allPaused": {"type": "boolean"}, "capabilities": {"type": "object", "additionalProperties": {"type": "boolean"}},
                 "stateAvailable": {"type": "boolean"},
-                "startupState": {"enum": ["normal", "backoff", "diagnostic", "stopped", "databaseUnavailable"]}
+                "startupState": {"enum": ["normal", "backoff", "diagnostic", "stopped", "databaseUnavailable"]},
+                "startupReport": {"$ref": "#/$defs/startupReport"}
               }
             },
-            "accounts": {"type": "array"}, "folders": {"type": "array", "items": {"type": "object", "properties": {"reasonCode": {"type": "string", "maxLength": 80, "pattern": "^[A-Z_]*$"}}}}, "endpoints": {"type": "array"},
-            "networks": {"type": "array"}, "switches": {"type": "array"}, "decisions": {"type": "array"}, "activity": {"type": "array"}
+            "accounts": {"type": "array", "items": {"$ref": "#/$defs/account"}},
+            "folders": {"type": "array", "items": {"$ref": "#/$defs/folder"}},
+            "endpoints": {"type": "array", "items": {"$ref": "#/$defs/endpoint"}},
+            "networks": {"type": "array", "items": {"$ref": "#/$defs/network"}},
+            "switches": {"type": "array"},
+            "decisions": {"type": "array", "items": {"$ref": "#/$defs/decision"}},
+            "activity": {"type": "array"}
           },
           "allOf": [{
             "if": {"properties": {"daemon": {"properties": {"stateAvailable": {"const": true}}}}},

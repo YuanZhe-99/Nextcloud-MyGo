@@ -17,9 +17,12 @@ func (a *App) view(c *ui.Context) {
 	p := pal(c)
 	ui.Column(c).Fill().Background(p.base).TextColor(p.text).FontSize(fontBody).Children(func() {
 		a.titleBar(c)
-		if a.setupShown() {
+		switch {
+		case a.setupShown():
 			a.setupView(c)
-		} else {
+		case !stateKnown(a.snap) && len(a.snap.Accounts) == 0:
+			a.statusView(c)
+		default:
 			ui.Row(c).Grow(1).FillWidth().AlignItems(ui.Stretch).Padding(0, 8, 8, 0).Children(func() {
 				a.sidebar(c)
 				a.pane(c)
@@ -100,7 +103,7 @@ func (a *App) sidebar(c *ui.Context) {
 		a.navItem(c, pageOverview, icHome, L.NavOverview(), 0)
 		a.navItem(c, pageFolders, icFolder, L.NavFolders(), 0)
 		a.navItem(c, pageNetwork, icGlobe, L.NavNetwork(), 0)
-		a.navItem(c, pageActivity, icPulse, L.NavActivity(), len(s.Decisions))
+		a.navItem(c, pageActivity, icPulse, L.NavActivity(), waitingCount(s))
 		ui.Spacer(c)
 		if sbRow(c, "sb-settings", icGear, L.NavSettings(), false, 0).Clicked() {
 			a.openSettings(spGeneral)
@@ -112,7 +115,7 @@ func (a *App) sidebar(c *ui.Context) {
 				dot(c, o.color(p), false)
 				ui.Column(c).Children(func() {
 					ui.Text(c, o.word()).FontSize(13).FontWeight(600)
-					if len(s.Accounts) > 0 {
+					if len(s.Accounts) > 0 && s.Daemon.Connected {
 						if e, _, ok := activeEndpoint(s, s.Accounts[0].ID); ok {
 							muted(c, L.SidebarThrough(e.Name), fontSmall)
 						}
@@ -184,10 +187,17 @@ func avatar(c *ui.Context, acc syncd.Account, size float32) {
 func (a *App) pane(c *ui.Context) {
 	p := pal(c)
 	ui.Column(c).Grow(1).MinWidth(0).Background(p.pane).Border(1, p.border).Radius(radiusCard).Shadow(0, 2, 8, 0, ui.RGBA(20, 30, 45, 0.06)).Clip().Children(func() {
-		if a.snap.Daemon.Demo {
+		switch {
+		case a.snap.Daemon.Demo:
 			ui.Row(c).FillWidth().Padding(6, 28).Gap(8).Background(p.subtle).BorderWidth(0, 0, 1, 0).BorderColor(p.border).Children(func() {
 				ui.Icon(c, icInfo).FontSize(14).TextColor(p.muted)
 				muted(c, L.DemoBanner(), fontSmall)
+			})
+		case !a.snap.Daemon.Connected:
+			// The last known lists, never as current (PLAN.md §13.6).
+			ui.Row(c).FillWidth().Padding(6, 28).Gap(8).Background(p.warnBg).BorderWidth(0, 0, 1, 0).BorderColor(p.warnBorder).Role(ui.RoleStatus).Children(func() {
+				ui.Icon(c, icWarn).FontSize(14).TextColor(p.warn)
+				ui.Text(c, L.DisconnectedBanner()).FontSize(fontSmall).Wrap().Grow(1).MinWidth(0)
 			})
 		}
 		switch a.page {
@@ -200,6 +210,40 @@ func (a *App) pane(c *ui.Context) {
 		default:
 			a.overviewPage(c)
 		}
+	})
+}
+
+// statusView stands for the pages while SyncD's state is not known: still
+// connecting, or running without its state (a recovery start). Nothing is
+// shown as empty or healthy meanwhile (INV-15).
+func (a *App) statusView(c *ui.Context) {
+	p := pal(c)
+	d := a.snap.Daemon
+	ui.Column(c).Grow(1).FillWidth().Center().Padding(32).Children(func() {
+		ui.Column(c).MaxWidth(520).Gap(14).Padding(28).Radius(radiusDlg).Background(p.pane).Border(1, p.border).Role(ui.RoleStatus).Children(func() {
+			if d.StartupState == "" {
+				ui.Row(c).Gap(12).Children(func() {
+					ui.Spinner(c).Size(20, 20)
+					ui.Text(c, L.DaemonDisconnected()).FontSize(fontSection).FontWeight(600)
+				})
+				muted(c, L.DaemonConnectingHint(), 13).Wrap()
+			} else {
+				ui.Row(c).Gap(12).Children(func() {
+					ui.Icon(c, icWarn).FontSize(22).TextColor(p.warn)
+					ui.Text(c, L.StateUnavailableTitle()).FontSize(fontSection).FontWeight(600).Wrap().Grow(1).MinWidth(0)
+				})
+				muted(c, startupWord(d.StartupState), 13).Wrap()
+				muted(c, L.StateUnavailableBody(), 13).Wrap()
+			}
+			ui.Row(c).Gap(10).Children(func() {
+				if button(c, "st-diag", L.PageDiagnostics(), icLog).Clicked() {
+					a.openSettings(spDiagnostics)
+				}
+				if button(c, "st-settings", L.NavSettings(), icGear).Clicked() {
+					a.openSettings(spGeneral)
+				}
+			})
+		})
 	})
 }
 
@@ -232,6 +276,9 @@ func (a *App) toastView(c *ui.Context) {
 // openSettings opens the Settings sheet at a page.
 func (a *App) openSettings(pg settingsPage) {
 	a.settings.open, a.settings.page, a.settings.query = true, pg, ""
+	if pg == spDiagnostics {
+		a.loadDiagnostics()
+	}
 }
 
 // itoa is a count for a badge: more than 99 shows as 99+.

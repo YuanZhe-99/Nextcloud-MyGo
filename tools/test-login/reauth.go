@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 
 	"github.com/YuanZhe-99/Nextcloud-MyGo/internal/syncd"
@@ -33,7 +32,7 @@ func exerciseReauthentication(ctx context.Context, r *syncd.Remote, account stri
 	var cancelled syncd.Login
 	retryCommand(ctx, func() error { var err error; cancelled, err = r.Reauthenticate(account); return err })
 	retryCommand(ctx, func() error { return r.CancelLogin(cancelled.ID) })
-	if id, err := r.WaitLogin(ctx, cancelled.ID); err == nil || id != "" {
+	if id, err := waitLogin(ctx, r, cancelled.ID); err == nil || id != "" {
 		panic("cancelled renewal became successful")
 	}
 	if _, ok := r.Snapshot().Account(account); !ok {
@@ -48,9 +47,9 @@ func exerciseReauthentication(ctx context.Context, r *syncd.Remote, account stri
 	}
 	// The fixture parent consumes this one-time browser handoff only in memory, never in a saved diagnostic.
 	fmt.Println(login.LoginURL)
-	id, err := r.WaitLogin(ctx, login.ID)
+	id, err := waitLogin(ctx, r, login.ID)
 	if err != nil || id != account {
-		panic("real renewal failed to preserve account or confirm prior-password revocation")
+		fail(fmt.Sprintf("real renewal failed to preserve account or confirm prior-password revocation (%s, same account %v)", reasonWord(err), id == account))
 	}
 	if !r.Snapshot().Daemon.AllPaused {
 		panic("renewal erased global pause")
@@ -100,13 +99,9 @@ func exerciseReauthentication(ctx context.Context, r *syncd.Remote, account stri
 	retryCommand(ctx, r.PauseAll)
 	retryCommand(ctx, r.Shutdown)
 	await(ctx, func() bool { return !r.Snapshot().Daemon.Connected }, "renewed daemon did not stop")
-	command := exec.Command(os.Getenv("SYNCD_TEST_EXE"), "--profile", profile)
-	if command.Start() != nil {
-		panic("renewed daemon restart failed")
-	}
-	_ = command.Process.Release()
+	ownDaemon(profile)
 	await(ctx, func() bool { return r.Snapshot().Daemon.Connected }, "renewed daemon did not reconnect")
-	if restored, err := r.WaitLogin(ctx, login.ID); err != nil || restored != account {
+	if restored, err := waitLogin(ctx, r, login.ID); err != nil || restored != account {
 		panic("completed renewal session or installed credential did not survive restart")
 	}
 	for _, f := range folders {

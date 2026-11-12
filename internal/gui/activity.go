@@ -21,18 +21,13 @@ const (
 // recent history (design/Activity.html).
 func (a *App) activityPage(c *ui.Context) {
 	s := a.snap
-	waiting := len(s.Decisions)
-	for _, acc := range s.Accounts {
-		if !acc.SignedIn {
-			waiting++
-		}
-	}
+	waiting := waitingCount(s)
 	pageHeader(c, L.NavActivity(), func() {
 		ui.Segmented(c.Key("act-filter"), &a.filter, L.FilterAll(), L.FilterAttention(waiting), L.FilterFiles(), L.FilterNetwork())
 	})
 	var review *syncd.Decision
 	for i := range s.Decisions {
-		if s.Decisions[i].Kind == syncd.DecisionLocalDeletions {
+		if s.Decisions[i].Kind == syncd.DecisionBulkDeletions {
 			review = &s.Decisions[i]
 			break
 		}
@@ -59,7 +54,7 @@ func (a *App) activityPage(c *ui.Context) {
 					case others > 0:
 						ui.Box(c).Margin(0, 0, 8, 0).Children(func() { sectionTitle(c, L.AlsoNeedsAttention()) })
 						ui.Column(c).Gap(10).Margin(0, 0, 18, 0).Children(func() { a.attentionItems(c, "act") })
-					case review == nil:
+					case review == nil && stateKnown(s):
 						muted(c, L.NothingNeedsYou(), fontBody).Margin(0, 0, 18, 0)
 					}
 				}
@@ -71,9 +66,10 @@ func (a *App) activityPage(c *ui.Context) {
 	})
 }
 
-// reviewCard is a deletion proposal: how many files, which way the
-// deletion would go, what it covers, and the three answers, the safe one
-// first (PLAN.md §11.3, §17 item 6).
+// reviewCard is a deletion proposal: how many files, which way each
+// deletion would go, what it covers when SyncD names it, and the answers:
+// Decide later, the safe one, first; allowing asks a second time
+// (PLAN.md §11.3, §17 item 6).
 func (a *App) reviewCard(c *ui.Context, d syncd.Decision) {
 	p := pal(c)
 	f, _ := a.snap.Folder(d.FolderID)
@@ -84,26 +80,37 @@ func (a *App) reviewCard(c *ui.Context, d syncd.Decision) {
 			ui.Text(c, L.ReviewTitle(d.Count)).FontSize(20).FontWeight(600).Level(2)
 			muted(c, L.ReviewBody(f.Name), 13).Wrap()
 		})
-		ui.Row(c).FillWidth().Gap(14).Padding(16, 20).BorderWidth(0, 0, 1, 0).BorderColor(p.warnBorder).Children(func() {
-			side := func(icon *ui.SVG, label, count string) {
-				ui.Column(c).Width(130).Shrink(0).AlignItems(ui.Center).Gap(4).Children(func() {
-					ui.Icon(c, icon).FontSize(28)
-					muted(c, label, fontSmall)
-					ui.Text(c, count).FontSize(13).FontWeight(600)
+		// One row per direction: which side lost the files, and where the
+		// deletion would be carried.
+		direction := func(key string, from, to *ui.SVG, fromName, toName, count string) {
+			ui.Row(c.Key(key)).FillWidth().Gap(14).Padding(16, 20).BorderWidth(0, 0, 1, 0).BorderColor(p.warnBorder).Children(func() {
+				side := func(icon *ui.SVG, label string) {
+					ui.Column(c).Width(130).Shrink(0).AlignItems(ui.Center).Gap(4).Children(func() {
+						ui.Icon(c, icon).FontSize(28)
+						muted(c, label, fontSmall).Ellipsis("…").MaxLines(1)
+					})
+				}
+				side(from, fromName)
+				ui.Column(c).Grow(1).AlignItems(ui.Center).Gap(4).Children(func() {
+					ui.Text(c, count).FontSize(fontSmall).FontWeight(600).TextColor(p.warn).TextAlign(ui.Center).Wrap()
+					ui.Row(c).FillWidth().Children(func() {
+						ui.Box(c).Grow(1).Height(2).Stripes(p.warn, 6, 5, 0)
+						ui.Icon(c, icChevron).FontSize(16).TextColor(p.warn).Rotate(-90)
+					})
 				})
-			}
-			side(icMonitor, L.ThisPC(), L.ReviewDeleted(d.Count))
-			ui.Column(c).Grow(1).AlignItems(ui.Center).Gap(4).Children(func() {
-				ui.Text(c, L.ReviewWouldDelete()).FontSize(fontSmall).FontWeight(600).TextColor(p.warn)
-				ui.Row(c).FillWidth().Children(func() {
-					ui.Box(c).Grow(1).Height(2).Stripes(p.warn, 6, 5, 0)
-					ui.Icon(c, icChevron).FontSize(16).TextColor(p.warn).Rotate(-90)
-				})
+				side(to, toName)
 			})
-			side(icCloud, acc.Server, L.ReviewStillThere(d.Count))
-		})
-		ui.Column(c).FillWidth().Padding(12, 20).Children(func() {
-			muted(c, L.ReviewWhat(), fontSmall).FontWeight(600).Margin(0, 0, 6, 0)
+		}
+		if d.RemoteDeletes > 0 {
+			direction("rv-remote", icMonitor, icCloud, L.ThisPC(), acc.Server, L.ReviewWouldDeleteServer(d.RemoteDeletes))
+		}
+		if d.LocalDeletes > 0 {
+			direction("rv-local", icCloud, icMonitor, acc.Server, L.ThisPC(), L.ReviewWouldDeletePC(d.LocalDeletes))
+		}
+		ui.Column(c).FillWidth().Padding(12, 20).Gap(4).Children(func() {
+			if len(d.Groups) > 0 {
+				muted(c, L.ReviewWhat(), fontSmall).FontWeight(600).Margin(0, 0, 6, 0)
+			}
 			for i, g := range d.Groups {
 				r := ui.Row(c).FillWidth().Gap(10).Padding(9, 0)
 				if i < len(d.Groups)-1 {
@@ -119,36 +126,44 @@ func (a *App) reviewCard(c *ui.Context, d syncd.Decision) {
 					muted(c, what, 13)
 				})
 			}
+			muted(c, L.ReviewKeep(), 13).Wrap()
+			if !d.Expires.IsZero() {
+				muted(c, L.ReviewExpires(d.Expires.Local().Format("15:04")), fontSmall).Wrap()
+			}
 		})
 		ui.Row(c).FillWidth().Gap(10).Padding(14, 20).Background(p.subtle).BorderWidth(1, 0, 0, 0).BorderColor(p.hover).Children(func() {
-			busy := a.busy["d-"+d.ID]
-			if primary(c, "rv-restore", L.ActionRestorePC(), nil).Disabled(busy).Clicked() {
-				a.answer(d, syncd.ActionRestore, L.ToastRestoring())
+			busy := a.busy["d-"+d.ID] || !a.snap.Daemon.Connected
+			if primary(c, "rv-later", L.ActionDecideLater(), nil).Disabled(busy).Clicked() {
+				a.answer(d, syncd.ActionLater, "")
+				a.page = pageOverview
 			}
-			del := ui.ButtonBase(c.Key("rv-delete")).Height(32).Padding(0, 14).Radius(radiusCtl).Border(1, p.dangerBorder).Background(p.pane).Disabled(busy).Label(L.ActionDeleteServer(d.Count))
-			del.Children(func() { ui.Text(c, L.ActionDeleteServer(d.Count)).FontWeight(600).TextColor(p.danger) })
-			if del.Clicked() {
-				a.ask(L.ConfirmDeleteTitle(d.Count), L.ConfirmDeleteBody(f.Name), L.ConfirmDelete(), func() {
-					a.answer(d, syncd.ActionDeleteRemote, L.ToastDeleted())
-				})
+			if button(c, "rv-open", L.ActionOpenFolder(), nil).Clicked() {
+				a.openPath(f.LocalPath)
 			}
 			ui.Spacer(c)
-			if link(c, "rv-later", L.ActionDecideLater()).Clicked() {
-				a.page = pageOverview
+			del := ui.ButtonBase(c.Key("rv-delete")).Height(32).Padding(0, 14).Radius(radiusCtl).Border(1, p.dangerBorder).Background(p.pane).Disabled(busy).Label(L.ActionAllowDeletions(d.Count))
+			del.Children(func() { ui.Text(c, L.ActionAllowDeletions(d.Count)).FontWeight(600).TextColor(p.danger) })
+			if del.Clicked() {
+				a.ask(L.ConfirmDeleteTitle(d.Count), L.ConfirmDeleteBody(f.Name), L.ConfirmDelete(), func() {
+					a.answer(d, syncd.ActionApproveDeletion, L.ToastAllowed())
+				})
 			}
 		})
 	})
 }
 
 // answer resolves a decision once, bound to the proposal shown (its
-// digest), and says what happened.
+// digest), and says what happened; accepted is not propagated: the
+// folder's state shows the outcome.
 func (a *App) answer(d syncd.Decision, act syncd.Action, done string) {
 	a.do("d-"+d.ID, func() error { return a.client.ResolveDecision(d.ID, d.Digest, act) }, func(err error) {
 		if err != nil {
 			a.setToast(errText(err))
 			return
 		}
-		a.setToast(done)
+		if done != "" {
+			a.setToast(done)
+		}
 	})
 }
 
@@ -166,7 +181,9 @@ func (a *App) recentList(c *ui.Context) {
 		list = append(list, e)
 	}
 	if len(list) == 0 {
-		muted(c, L.NothingYet(), 13)
+		if stateKnown(s) {
+			muted(c, L.NothingYet(), 13)
+		}
 		return
 	}
 	now := time.Now()

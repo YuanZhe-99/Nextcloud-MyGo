@@ -1,4 +1,6 @@
 [
+  {"name":"add-on-demand-folder", "valid":true, "json":"{\"jsonrpc\":\"2.0\",\"id\":\"add\",\"method\":\"folders.add\",\"params\":{\"operationKey\":\"44444444-4444-4444-8444-444444444444\",\"expectedRevision\":\"0\",\"inspectToken\":\"55555555-5555-4555-8555-555555555555\",\"mode\":\"onDemand\"}}"},
+  {"name":"duplicate-folder-mode", "valid":false, "json":"{\"method\":\"folders.add\",\"params\":{\"mode\":\"full\",\"mode\":\"onDemand\"}}"},
   {"name":"fixed-policy", "valid":true, "json":"{\"jsonrpc\":\"2.0\",\"id\":\"policy\",\"method\":\"endpoints.setPolicy\",\"params\":{\"policy\":\"fixed\",\"fixedEndpointId\":\"33333333-3333-4333-8333-333333333333\"}}"},
   {"name":"duplicate-policy-target", "valid":false, "json":"{\"method\":\"endpoints.setPolicy\",\"params\":{\"fixedEndpointId\":\"one\",\"fixedEndpointId\":\"two\"}}"},
   {"name":"hello", "valid":true, "json":"{\"jsonrpc\":\"2.0\",\"id\":\"h\",\"method\":\"session.hello\",\"params\":{\"protocol\":{\"major\":1,\"minor\":1}}}"},
@@ -12,5 +14,8 @@
   {"name":"nested-duplicate", "valid":false, "json":"{\"params\":{\"x\":1,\"x\":2}}"},
   {"name":"nonfinite", "valid":false, "json":"{\"x\":1e999}"},
   {"name":"trailing", "valid":false, "json":"{}{}"},
-  {"name":"array", "valid":true, "json":"[{\"id\":1},{\"id\":2}]"}
+  {"name":"array", "valid":true, "json":"[{\"id\":1},{\"id\":2}]"},
+  {"name":"prepare-update", "valid":true, "json":"{\"jsonrpc\":\"2.0\",\"id\":\"update\",\"method\":\"daemon.prepareUpdate\",\"params\":{\"operationKey\":\"60000000-0000-4000-8000-000000000004\",\"expectedRevision\":\"3\",\"targetVersion\":\"0.1.1\"}}"},
+  {"name":"duplicate-update-target", "valid":false, "json":"{\"method\":\"daemon.prepareUpdate\",\"params\":{\"targetVersion\":\"0.1.1\",\"targetVersion\":\"0.1.2\"}}"},
+  {"name":"stage-with-kind", "valid":true, "json":"{\"jsonrpc\":\"2.0\",\"id\":\"stage\",\"method\":\"endpoints.stage\",\"params\":{\"name\":\"Home\",\"kind\":\"home\"}}"}
 ]

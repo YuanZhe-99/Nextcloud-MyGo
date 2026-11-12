@@ -4,6 +4,8 @@
 [CmdletBinding()]
 param([Parameter(Mandatory)][string]$Executable, [switch]$SyncFolders, [switch]$Reauthenticate)
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'test-job.ps1')
+if (-not (Enter-OwnedJob)) { Invoke-InOwnedJob $PSCommandPath $PSBoundParameters; if ($LASTEXITCODE) { throw 'Login fixture failed.' }; return }
 $root = Split-Path $PSScriptRoot -Parent
 if (-not [IO.Path]::IsPathFullyQualified($Executable) -or -not (Test-Path -LiteralPath $Executable)) { throw 'Existing absolute daemon path required.' }
 if (-not $env:NEXTCLOUD_TEST_USER -or -not $env:NEXTCLOUD_TEST_PASSWORD) { throw 'Approved test credentials required in the environment.' }
@@ -128,7 +130,12 @@ try {
                 }
                 $readError = [regex]::Match($diagnostic, '(?m)^SYNCD_DIAGNOSTICS_ERROR (syncd: [A-Za-z0-9 _-]+|json: [A-Za-z0-9 ,._:-]+)\r?$').Groups[1].Value.Trim()
                 if ($readError) { Write-Output ('Owned fixture diagnostics unavailable: ' + $readError) }
-                $summary = [regex]::Match($diagnostic, '(?m)^panic: [A-Za-z0-9 _,/():.\[\]-]+\r?$').Value.Trim()
+                # A watchdog exit carries goroutine stacks: echo only the fixture's own frames and lines.
+                foreach ($frame in ([regex]::Matches($diagnostic, '(?m)^\s+\S*[\\/](tools[\\/]test-login[\\/][a-z_]+\.go:\d+)') | Select-Object -First 12)) { Write-Output ('  at ' + $frame.Groups[1].Value) }
+                foreach ($line in ([regex]::Matches($diagnostic, '(?m)^SYNCD_DAEMON [A-Za-z0-9 _.,:()-]+\r?$') | Select-Object -Last 6)) { Write-Output ('  ' + $line.Value.Trim()) }
+                $last = [regex]::Match($diagnostic, '(?m)^(watchdog last state: [A-Za-z0-9 _=;/.-]+|step: [A-Za-z0-9 _=;/().-]+)\r?$').Value.Trim()
+                if ($last) { Write-Output $last }
+                $summary = [regex]::Match($diagnostic, '(?m)^panic: [A-Za-z0-9 _,/():.\[\]=;-]+\r?$').Value.Trim()
                 throw "Daemon renewal acceptance failed (exit $($child.ExitCode)). $summary"
             }
         } finally {
@@ -139,6 +146,9 @@ try {
         & $probe finish
         if ($LASTEXITCODE -ne 0) { throw 'Daemon account completion or cleanup failed.' }
     }
+} catch {
+    # Keep the run's own failure: a cleanup failure below must not replace it.
+    $failure = $_.Exception.Message
 } finally {
     $cleanupFailed = $false
     if (Test-Path -LiteralPath $env:SYNCD_LOGIN_FIXTURE_STATE) {
@@ -155,5 +165,6 @@ try {
     $env:SYNCD_LOGIN_FIXTURE_STATE = $savedState
     $env:SYNCD_TEST_FOLDERS = $savedFolders
     $env:SYNCD_TEST_REAUTH = $savedReauth
-    if ($cleanupFailed) { throw 'Owned login fixture cleanup needs attention.' }
+    if ($cleanupFailed) { $failure = ("$failure Owned login fixture cleanup needs attention.").Trim() }
+    if ($failure) { throw $failure }
 }

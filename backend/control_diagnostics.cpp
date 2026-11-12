@@ -20,7 +20,7 @@ QJsonObject Control::diagnosticsProjection() const {
       daemon.value("startupState").toString(QStringLiteral("normal"));
   if (!available)
     return {{"version", SYNCD_VERSION},
-            {"protocol", "1.7"},
+            {"protocol", "1.8"},
             {"stateAvailable", false},
             {"startupState", startupState},
             {"reasonCode", daemon.value("reasonCode").toString()},
@@ -30,7 +30,9 @@ QJsonObject Control::diagnosticsProjection() const {
   QJsonArray folders;
   QSqlQuery q(db_);
   if (!q.exec(
-          "SELECT id,account_id,status,reason,paused FROM folders ORDER BY id"))
+          "SELECT f.id,f.account_id,f.status,f.reason,f.paused FROM folders f "
+          "JOIN accounts a ON a.id=f.account_id WHERE a.state='ready' "
+          "ORDER BY f.id"))
     throw std::runtime_error("INTERNAL_ERROR");
   while (q.next()) {
     const auto folder = q.value(0).toString(), account = q.value(1).toString();
@@ -64,7 +66,7 @@ QJsonObject Control::diagnosticsProjection() const {
   }
   return {{"version", SYNCD_VERSION},
           {"allPaused", paused_},
-          {"protocol", "1.7"},
+          {"protocol", "1.8"},
           {"stateAvailable", true},
           {"startupState", startupState},
           {"reasonCode", ""},

@@ -86,10 +86,6 @@ void consentRecovery() {
                   q.value(0).toBool() && q.value(1).toString() == "verifying",
               "credential permission was not durable before verification");
       q.finish();
-      reply = command(control, "accounts.remove", {{"accountId", "account"}});
-      require(reply.value("error").toObject().value("data").toObject().value(
-                  "reasonCode") == "QUIESCE_STALLED",
-              "account removed while credential probe was pending");
     }
     db.close();
   }
@@ -166,6 +162,47 @@ void capabilities() {
             "malformed or unsupported capability response was accepted");
   }
 }
+/// removalWaitsForProbe accepts removal of an account whose credentialed
+/// address check is still pending, and removes nothing before it ends
+/// (INV-03/12). Notes: queued network work never runs in this executable.
+void removalWaitsForProbe() {
+  QTemporaryDir dir;
+  Control control(dir.filePath("control.sqlite"));
+  const auto connection = QUuid::createUuid().toString();
+  {
+    auto db = QSqlDatabase::addDatabase("QSQLITE", connection);
+    db.setDatabaseName(dir.filePath("control.sqlite"));
+    require(db.open(), "removal fixture database unavailable");
+    QSqlQuery q(db);
+    require(
+        q.exec("INSERT INTO "
+               "accounts(id,session_id,operation_id,endpoint_id,base_url,"
+               "credential_ref,state) "
+               "VALUES('6f1c8d52-6a5e-4c8e-9f39-2d0f1f9a3b11','session',"
+               "'operation','primary','https://primary.example.invalid/',"
+               "'unused-test-reference','ready')") &&
+            q.exec("INSERT INTO endpoints(id,account_id,name,base_url,"
+                   "approved,state,expires,operation_id) VALUES('alternate',"
+                   "'6f1c8d52-6a5e-4c8e-9f39-2d0f1f9a3b11','Alternate','https:/"
+                   "/alternate.example."
+                   "invalid/',1,'verifying','2000-01-01T00:00:00.000Z',"
+                   "'probe')"),
+        "removal fixture rows failed");
+    const auto reply =
+        command(control, "accounts.remove",
+                {{"accountId", "6f1c8d52-6a5e-4c8e-9f39-2d0f1f9a3b11"}});
+    require(reply.value("result").toObject().value("state") == "running",
+            "removal of an account with a pending probe was refused");
+    require(q.exec("SELECT a.state,e.state FROM accounts a JOIN endpoints e "
+                   "ON e.account_id=a.id") &&
+                q.next() && q.value(0) == "removing" &&
+                q.value(1) == "verifying",
+            "removal released the account before its probe ended");
+    q.finish();
+    db.close();
+  }
+  QSqlDatabase::removeDatabase(connection);
+}
 } // namespace
 /// main verifies origin consent and crash boundaries without contacting a
 /// server or creating credentials.
@@ -174,6 +211,7 @@ int main(int argc, char **argv) {
   try {
     consentRecovery();
     capabilities();
+    removalWaitsForProbe();
     std::puts("PASS endpoint consent and interrupted verification recovery");
     return 0;
   } catch (const std::exception &e) {

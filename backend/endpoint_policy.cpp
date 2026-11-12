@@ -195,10 +195,15 @@ EndpointPolicy::Health EndpointPolicy::health(const QString &id,
   if (it == entries_.end())
     return {true};
   const auto &e = it->second;
+  // Measured latency is reported only once a probe succeeded.
   return {e.circuit != Circuit::Closed || e.quarantined || e.authBlocked,
-          eligible(e, now), e.circuit == Circuit::HalfOpen,
+          eligible(e, now),
+          e.circuit == Circuit::HalfOpen,
           int(e.successes.size()),
-          e.successes.empty() ? 0 : now - e.successes.front()};
+          e.successes.empty() ? 0 : now - e.successes.front(),
+          e.successes.empty() ? 0 : qint64(e.rtt + 0.5),
+          e.quarantined,
+          e.authBlocked};
 }
 
 void EndpointPolicy::businessSuccess(const QString &id, qint64 now) {

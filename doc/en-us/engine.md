@@ -65,8 +65,15 @@ Automatic policy activation and complete fault recovery are still unfinished.
 Interrupted-switch startup recovery uses the last committed endpoint, not an uncommitted target.
 After reacquiring original root leases it reserves a new internal operation/epoch and runs the same
 fresh verification and reconciliation path. The interrupted receipt stays failed. A previous hard
-verification failure is not automatically retried. Same-origin recovery admits existing transfer rows
-to upstream recovery. Cross-origin rebinding admits only audited relative download state with a
+verification failure is not automatically retried. A process kill at each durable stage of a real
+switch, followed by a restart on the same profile, confirmed this ([development](development.md),
+`switch-kill`): killed with the intent stored, with a transfer still running on the old address, or
+with the target's verification about to be sent, the daemon came back on the previous binding;
+killed after the binding was published, before or after the first transfer of the new epoch, it came
+back on the committed one. Every restart failed the interrupted receipt as `OPERATION_INTERRUPTED`,
+allocated an epoch above both the old and the abandoned one, kept the credential reference, the
+folder rows and the native journal file, and transferred only the file the kill had interrupted.
+Same-origin recovery admits existing transfer rows to upstream recovery. Cross-origin rebinding admits only audited relative download state with a
 nonempty ETag, single-PUT uncertainty state with a nonempty checksum, and chunking-v2 sessions with a
 nonempty checksum; poll URLs and legacy v1 chunk indexes remain blocked. Admission never edits those rows.
 Before publication, verification also requires the OCS files capability map and readable (`G`) DAV
@@ -128,8 +135,18 @@ upstream regressions for exactly that after an origin change. In a real run agai
 first 100 MiB chunk; with the previous gate the same run could not leave the failed address.
 Any pending poll URL, legacy v1 chunk index or unsupported/malformed transfer context is reported as
 `RESUME_CONTEXT_UNSUPPORTED`; it is never removed or rewritten to force a switch. An absent journal
-has no existing resume context. Same-origin recovery remains upstream-owned. A real withheld final
-MOVE, uncertain MOVE/DELETE of existing items and files above 4 GiB are not yet accepted.
+has no existing resume context. Same-origin recovery remains upstream-owned.
+
+A lost reply is never answered by a second request from SyncD (`PLAN.md` §12.3). The adapter counts
+the unanswered mutating request as an unconfirmed write, the cycle ends unsuccessfully with its
+journal unchanged, and the next cycle on whichever origin is then bound starts with full remote
+discovery. Real runs against server 35.0.2 lost the reply of three committed writes and let
+another client create the affected path again before recovery. After a MOVE of an existing entry,
+upstream found the renamed entry by its file ID, left it alone and downloaded the new object at the
+old path. After a DELETE, it downloaded the re-created object instead of deleting it. After the
+final MOVE of a 112 MiB chunk session, it adopted the assembled file by checksum and sent neither a
+chunk nor a MOVE again. In each case the server file ID and ETag of the committed result were the
+same after recovery, and the native journal file was the original one.
 Relative resume paths also reject trailing-dot/space components and Windows wildcard/control
 characters, rather than allowing Win32 normalization to reinterpret a purported child path. The
 read-only regression rejected neither `.. /outside` nor its nested form before this boundary fix;
@@ -180,6 +197,27 @@ claim that this alone proves endpoint-switch quiescence. Patch 0010 permits abor
 creation. Deletion proposals count descendants against the previous journal baseline separately for
 each side; expiring one-use approval requires a matching rediscovery digest. Full sync stays capability-disabled until
 folder ownership, propagation safety and real daemon acceptance are connected and verified.
+
+## Progress, decisions and the update hold
+
+Protocol 1.9 reads, without changing any decision, what the adapter already observes. While a
+cycle runs, `EngineRuntime::progress` names its phase from the live request counters (an
+unfinished upload reply is `uploading`, a download `downloading`, otherwise `checking`) and the
+files upstream reported completed in this cycle; the runtime tick publishes a snapshot event at
+most once a second when either changes. There is no total: discovery does not know one.
+
+A held deletion proposal keeps, beside its digest, a summary by top-level entry (`groups`: a
+directory counts the files the journal knows below it). There is no restore answer: bringing the
+entries back would mean forgetting their journal records, which the behavior contract forbids
+unless the user decides otherwise.
+
+After each finished cycle the adapter reads the journal's conflict records (copy and original,
+folder-relative) and Control keeps them as `conflict` decisions; a copy that is gone is forgotten,
+and `resolved` closes a notice while its copy exists. Both files always stay.
+
+`daemon.prepareUpdate` uses `EngineRuntime::hold`: admission freezes like a pause, but a running
+cycle is not cancelled and finishes on its own; the user's own pause is kept apart and restored
+when the hold ends.
 
 ## Scheduling
 
@@ -235,6 +273,14 @@ PIDs; release and process termination drop ownership, and kernel-object failures
 does not detect future official-client registration. Recursive preflight and pre-propagation scans
 continue rejecting reparse points, offline/recall objects, unreadable directories and upstream journals
 inside the tree.
+
+An on-demand folder's lease (`RootLease(path, true)`) also admits the Cloud Files reparse tag on the
+root itself and Cloud Files placeholders in the tree, and does not list unpopulated directories;
+every other reparse point still fails. Its adapter owns an `OnDemandRoot` between the journal and the
+engine, gives its VFS to every cycle, and counts a running hydration as activity: `quiesceAccount`
+closes the account's roots and reports quiescence only when no cycle and no on-demand request runs;
+`retire` destroys an idle root before it releases the account; `rebind` connects a new one; a cycle
+after a quiesce without rebinding reconnects a closed root ([on-demand](on-demand.md)).
 
 ## Build and acceptance
 

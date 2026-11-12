@@ -37,6 +37,9 @@ public:
   /// pause freezes admission and cancels current work; resume preserves
   /// per-folder blockers.
   void pause(bool value);
+  /// hold freezes admission for an update without cancelling the running
+  /// cycle, which finishes naturally; independent of the user's pause.
+  void hold(bool value);
   /// shutdown freezes admission and reports stopped only after the active
   /// adapter finishes teardown.
   void shutdown();
@@ -92,6 +95,22 @@ public:
   std::function<void(const QString &)> started;
   /// requests exposes safe request counters for acceptance and diagnostics.
   EngineAdapter::Requests requests(const QString &folder) const;
+  /// Progress is what the running cycle of a folder does now.
+  struct Progress {
+    QString phase; // checking, uploading or downloading
+    quint64 filesDone = 0;
+    bool operator==(const Progress &) const = default;
+  };
+  /// progress reports the running cycle of a folder, or nothing when idle.
+  std::optional<Progress> progress(const QString &folder) const;
+  /// progressed is called at most once a second while a running cycle's
+  /// progress changes, so its owner can publish it.
+  std::function<void()> progressed;
+  /// quiescent reports, without closing anything, that a folder runs neither a
+  /// cycle nor an on-demand request; for acceptance and diagnostics.
+  bool quiescent(const QString &folder) const {
+    return folders_.at(folder).adapter->quiescent();
+  }
   /// blockers exposes scheduler admission evidence without paths, credentials
   /// or journal access.
   QSet<QString> blockers(const QString &folder) const {
@@ -127,10 +146,13 @@ private:
   Scheduler scheduler_;
   std::map<QString, Folder> folders_;
   std::optional<Scheduler::Run> active_;
+  std::optional<Progress> published_;
+  qint64 progressAt_ = 0;
   QElapsedTimer clock_;
   QTimer timer_;
   std::shared_ptr<quint64> networkGeneration_ = std::make_shared<quint64>(0);
   bool stopping_ = false;
+  bool paused_ = false, held_ = false;
   bool shutdownFinished_ = false;
   qint64 shutdownStarted_ = 0;
 };

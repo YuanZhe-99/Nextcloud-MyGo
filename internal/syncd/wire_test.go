@@ -75,3 +75,16 @@ func TestFramingBounds(t *testing.T) {
 		}
 	}
 }
+
+// TestFolderModeProjection decodes protocol 1.8's folder mode and keeps a
+// pre-1.8 projection, which has none, distinguishable (PLAN §2.3).
+func TestFolderModeProjection(t *testing.T) {
+	var folders []Folder
+	projection := `[{"id":"a","mode":"onDemand","reasonCode":""},{"id":"b","mode":"full"},{"id":"c"}]`
+	if err := json.Unmarshal([]byte(projection), &folders); err != nil {
+		t.Fatal(err)
+	}
+	if folders[0].Mode != FolderOnDemand || folders[1].Mode != FolderFull || folders[2].Mode != "" {
+		t.Fatalf("modes %q %q %q", folders[0].Mode, folders[1].Mode, folders[2].Mode)
+	}
+}

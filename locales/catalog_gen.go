@@ -164,16 +164,6 @@ func (msgs Messages) LoginUnavailable() string {
 	return Catalog.Format(msgs.locale, "LoginUnavailable", nil)
 }
 
-// SyncUnavailable says "Your account is signed in. Folder synchronization is not available in this development build yet."
-// in the language the app shows.
-func SyncUnavailable() string { return In(i18n.Locale()).SyncUnavailable() }
-
-// SyncUnavailable says "Your account is signed in. Folder synchronization is not available in this development build yet."
-// in the language of msgs.
-func (msgs Messages) SyncUnavailable() string {
-	return Catalog.Format(msgs.locale, "SyncUnavailable", nil)
-}
-
 // AccountRemovedRevocationUnconfirmed says "Account removed from this PC. We could not confirm revoking its app password; you can remove it in your server's secu…"
 // in the language the app shows.
 func AccountRemovedRevocationUnconfirmed() string {
@@ -254,16 +244,6 @@ func StateOffline() string { return In(i18n.Locale()).StateOffline() }
 // in the language of msgs.
 func (msgs Messages) StateOffline() string {
 	return Catalog.Format(msgs.locale, "StateOffline", nil)
-}
-
-// StateStarting says "Starting…"
-// in the language the app shows.
-func StateStarting() string { return In(i18n.Locale()).StateStarting() }
-
-// StateStarting says "Starting…"
-// in the language of msgs.
-func (msgs Messages) StateStarting() string {
-	return Catalog.Format(msgs.locale, "StateStarting", nil)
 }
 
 // ActionPauseSync says "Pause sync"
@@ -760,26 +740,14 @@ func (msgs Messages) NeedsAttention() string {
 	return Catalog.Format(msgs.locale, "NeedsAttention", nil)
 }
 
-// AttnDeletionsTitle says "{count, plural, one {# file was} other {# files were}} deleted on this PC in {folder}"
+// AttnDeletionsBody says "Sync of {folder} waits for your review. Nothing is deleted until you decide."
 // in the language the app shows.
-func AttnDeletionsTitle(count int, folder string) string {
-	return In(i18n.Locale()).AttnDeletionsTitle(count, folder)
-}
+func AttnDeletionsBody(folder string) string { return In(i18n.Locale()).AttnDeletionsBody(folder) }
 
-// AttnDeletionsTitle says "{count, plural, one {# file was} other {# files were}} deleted on this PC in {folder}"
+// AttnDeletionsBody says "Sync of {folder} waits for your review. Nothing is deleted until you decide."
 // in the language of msgs.
-func (msgs Messages) AttnDeletionsTitle(count int, folder string) string {
-	return Catalog.Format(msgs.locale, "AttnDeletionsTitle", map[string]any{"count": count, "folder": folder})
-}
-
-// AttnDeletionsBody says "Sync paused for this folder. Nothing is removed from the server until you decide."
-// in the language the app shows.
-func AttnDeletionsBody() string { return In(i18n.Locale()).AttnDeletionsBody() }
-
-// AttnDeletionsBody says "Sync paused for this folder. Nothing is removed from the server until you decide."
-// in the language of msgs.
-func (msgs Messages) AttnDeletionsBody() string {
-	return Catalog.Format(msgs.locale, "AttnDeletionsBody", nil)
+func (msgs Messages) AttnDeletionsBody(folder string) string {
+	return Catalog.Format(msgs.locale, "AttnDeletionsBody", map[string]any{"folder": folder})
 }
 
 // AttnSignInTitle says "Sign in again to {account}"
@@ -944,11 +912,11 @@ func (msgs Messages) FolderChecking() string {
 	return Catalog.Format(msgs.locale, "FolderChecking", nil)
 }
 
-// FolderDeletions says "{count, plural, one {# deletion} other {# deletions}} on this PC"
+// FolderDeletions says "{count, plural, one {# deletion} other {# deletions}} to review"
 // in the language the app shows.
 func FolderDeletions(count int) string { return In(i18n.Locale()).FolderDeletions(count) }
 
-// FolderDeletions says "{count, plural, one {# deletion} other {# deletions}} on this PC"
+// FolderDeletions says "{count, plural, one {# deletion} other {# deletions}} to review"
 // in the language of msgs.
 func (msgs Messages) FolderDeletions(count int) string {
 	return Catalog.Format(msgs.locale, "FolderDeletions", map[string]any{"count": count})
@@ -1004,11 +972,11 @@ func (msgs Messages) ColStatus() string {
 	return Catalog.Format(msgs.locale, "ColStatus", nil)
 }
 
-// AccountSignedIn says "Signed in · {count, plural, one {# address} other {# addresses}} approved"
+// AccountSignedIn says "Signed in · {count, plural, one {# address} other {# addresses}} verified"
 // in the language the app shows.
 func AccountSignedIn(count int) string { return In(i18n.Locale()).AccountSignedIn(count) }
 
-// AccountSignedIn says "Signed in · {count, plural, one {# address} other {# addresses}} approved"
+// AccountSignedIn says "Signed in · {count, plural, one {# address} other {# addresses}} verified"
 // in the language of msgs.
 func (msgs Messages) AccountSignedIn(count int) string {
 	return Catalog.Format(msgs.locale, "AccountSignedIn", map[string]any{"count": count})
@@ -1318,11 +1286,11 @@ func (msgs Messages) WhyNote() string {
 	return Catalog.Format(msgs.locale, "WhyNote", nil)
 }
 
-// Switching says "A better address is ready; switching after the current transfer."
+// Switching says "Changing the address at the next safe point, between transfers."
 // in the language the app shows.
 func Switching() string { return In(i18n.Locale()).Switching() }
 
-// Switching says "A better address is ready; switching after the current transfer."
+// Switching says "Changing the address at the next safe point, between transfers."
 // in the language of msgs.
 func (msgs Messages) Switching() string {
 	return Catalog.Format(msgs.locale, "Switching", nil)
@@ -1448,21 +1416,21 @@ func (msgs Messages) ProtectionLabel(folder string) string {
 	return Catalog.Format(msgs.locale, "ProtectionLabel", map[string]any{"folder": folder})
 }
 
-// ReviewTitle says "{count, plural, one {# file was} other {# files were}} deleted on this PC"
+// ReviewTitle says "{count, plural, one {# file would be deleted} other {# files would be deleted}}"
 // in the language the app shows.
 func ReviewTitle(count int) string { return In(i18n.Locale()).ReviewTitle(count) }
 
-// ReviewTitle says "{count, plural, one {# file was} other {# files were}} deleted on this PC"
+// ReviewTitle says "{count, plural, one {# file would be deleted} other {# files would be deleted}}"
 // in the language of msgs.
 func (msgs Messages) ReviewTitle(count int) string {
 	return Catalog.Format(msgs.locale, "ReviewTitle", map[string]any{"count": count})
 }
 
-// ReviewBody says "Sync for {folder} is paused until you choose. Nothing has been removed from the server."
+// ReviewBody says "Deletion protection stopped this sync of {folder} before anything was deleted. It waits until you choose."
 // in the language the app shows.
 func ReviewBody(folder string) string { return In(i18n.Locale()).ReviewBody(folder) }
 
-// ReviewBody says "Sync for {folder} is paused until you choose. Nothing has been removed from the server."
+// ReviewBody says "Deletion protection stopped this sync of {folder} before anything was deleted. It waits until you choose."
 // in the language of msgs.
 func (msgs Messages) ReviewBody(folder string) string {
 	return Catalog.Format(msgs.locale, "ReviewBody", map[string]any{"folder": folder})
@@ -1476,36 +1444,6 @@ func ThisPC() string { return In(i18n.Locale()).ThisPC() }
 // in the language of msgs.
 func (msgs Messages) ThisPC() string {
 	return Catalog.Format(msgs.locale, "ThisPC", nil)
-}
-
-// ReviewDeleted says "{count} deleted"
-// in the language the app shows.
-func ReviewDeleted(count int) string { return In(i18n.Locale()).ReviewDeleted(count) }
-
-// ReviewDeleted says "{count} deleted"
-// in the language of msgs.
-func (msgs Messages) ReviewDeleted(count int) string {
-	return Catalog.Format(msgs.locale, "ReviewDeleted", map[string]any{"count": count})
-}
-
-// ReviewWouldDelete says "would delete on the server"
-// in the language the app shows.
-func ReviewWouldDelete() string { return In(i18n.Locale()).ReviewWouldDelete() }
-
-// ReviewWouldDelete says "would delete on the server"
-// in the language of msgs.
-func (msgs Messages) ReviewWouldDelete() string {
-	return Catalog.Format(msgs.locale, "ReviewWouldDelete", nil)
-}
-
-// ReviewStillThere says "all {count} still there"
-// in the language the app shows.
-func ReviewStillThere(count int) string { return In(i18n.Locale()).ReviewStillThere(count) }
-
-// ReviewStillThere says "all {count} still there"
-// in the language of msgs.
-func (msgs Messages) ReviewStillThere(count int) string {
-	return Catalog.Format(msgs.locale, "ReviewStillThere", map[string]any{"count": count})
 }
 
 // ReviewWhat says "WHAT WOULD BE DELETED"
@@ -1540,26 +1478,6 @@ func (msgs Messages) ReviewLoose(count int, folder string) string {
 	return Catalog.Format(msgs.locale, "ReviewLoose", map[string]any{"count": count, "folder": folder})
 }
 
-// ActionRestorePC says "Restore them on this PC"
-// in the language the app shows.
-func ActionRestorePC() string { return In(i18n.Locale()).ActionRestorePC() }
-
-// ActionRestorePC says "Restore them on this PC"
-// in the language of msgs.
-func (msgs Messages) ActionRestorePC() string {
-	return Catalog.Format(msgs.locale, "ActionRestorePC", nil)
-}
-
-// ActionDeleteServer says "Delete {count} on the server too"
-// in the language the app shows.
-func ActionDeleteServer(count int) string { return In(i18n.Locale()).ActionDeleteServer(count) }
-
-// ActionDeleteServer says "Delete {count} on the server too"
-// in the language of msgs.
-func (msgs Messages) ActionDeleteServer(count int) string {
-	return Catalog.Format(msgs.locale, "ActionDeleteServer", map[string]any{"count": count})
-}
-
 // ActionDecideLater says "Decide later"
 // in the language the app shows.
 func ActionDecideLater() string { return In(i18n.Locale()).ActionDecideLater() }
@@ -1570,31 +1488,31 @@ func (msgs Messages) ActionDecideLater() string {
 	return Catalog.Format(msgs.locale, "ActionDecideLater", nil)
 }
 
-// ConfirmDeleteTitle says "Delete {count, plural, one {# file} other {# files}} on the server?"
+// ConfirmDeleteTitle says "Allow deleting {count, plural, one {# file} other {# files}}?"
 // in the language the app shows.
 func ConfirmDeleteTitle(count int) string { return In(i18n.Locale()).ConfirmDeleteTitle(count) }
 
-// ConfirmDeleteTitle says "Delete {count, plural, one {# file} other {# files}} on the server?"
+// ConfirmDeleteTitle says "Allow deleting {count, plural, one {# file} other {# files}}?"
 // in the language of msgs.
 func (msgs Messages) ConfirmDeleteTitle(count int) string {
 	return Catalog.Format(msgs.locale, "ConfirmDeleteTitle", map[string]any{"count": count})
 }
 
-// ConfirmDeleteBody says "They are removed from the server and from every device that syncs {folder}. The server's trash keeps them for a while."
+// ConfirmDeleteBody says "The deletions go ahead in {folder}, on this PC and on the server as shown. Files deleted on the server stay in its tr…"
 // in the language the app shows.
 func ConfirmDeleteBody(folder string) string { return In(i18n.Locale()).ConfirmDeleteBody(folder) }
 
-// ConfirmDeleteBody says "They are removed from the server and from every device that syncs {folder}. The server's trash keeps them for a while."
+// ConfirmDeleteBody says "The deletions go ahead in {folder}, on this PC and on the server as shown. Files deleted on the server stay in its tr…"
 // in the language of msgs.
 func (msgs Messages) ConfirmDeleteBody(folder string) string {
 	return Catalog.Format(msgs.locale, "ConfirmDeleteBody", map[string]any{"folder": folder})
 }
 
-// ConfirmDelete says "Delete on the server"
+// ConfirmDelete says "Allow the deletions"
 // in the language the app shows.
 func ConfirmDelete() string { return In(i18n.Locale()).ConfirmDelete() }
 
-// ConfirmDelete says "Delete on the server"
+// ConfirmDelete says "Allow the deletions"
 // in the language of msgs.
 func (msgs Messages) ConfirmDelete() string {
 	return Catalog.Format(msgs.locale, "ConfirmDelete", nil)
@@ -2322,11 +2240,11 @@ func (msgs Messages) OtherAddressTitle() string {
 	return Catalog.Format(msgs.locale, "OtherAddressTitle", nil)
 }
 
-// OtherAddressBody says "Optional. Add its other addresses and Nextcloud MyGo picks the best one by itself."
+// OtherAddressBody says "Optional. Add its other addresses; each one is approved and verified before it is used."
 // in the language the app shows.
 func OtherAddressBody() string { return In(i18n.Locale()).OtherAddressBody() }
 
-// OtherAddressBody says "Optional. Add its other addresses and Nextcloud MyGo picks the best one by itself."
+// OtherAddressBody says "Optional. Add its other addresses; each one is approved and verified before it is used."
 // in the language of msgs.
 func (msgs Messages) OtherAddressBody() string {
 	return Catalog.Format(msgs.locale, "OtherAddressBody", nil)
@@ -3072,16 +2990,6 @@ func (msgs Messages) AutoDaily() string {
 	return Catalog.Format(msgs.locale, "AutoDaily", nil)
 }
 
-// SectionAboutApp says "Nextcloud MyGo"
-// in the language the app shows.
-func SectionAboutApp() string { return In(i18n.Locale()).SectionAboutApp() }
-
-// SectionAboutApp says "Nextcloud MyGo"
-// in the language of msgs.
-func (msgs Messages) SectionAboutApp() string {
-	return Catalog.Format(msgs.locale, "SectionAboutApp", nil)
-}
-
 // VersionRow says "Version {version}"
 // in the language the app shows.
 func VersionRow(version string) string { return In(i18n.Locale()).VersionRow(version) }
@@ -3104,14 +3012,14 @@ func (msgs Messages) VersionHint(platform string, syncd string, state string) st
 	return Catalog.Format(msgs.locale, "VersionHint", map[string]any{"platform": platform, "syncd": syncd, "state": state})
 }
 
-// SyncdRunning says "running"
+// SyncdRunning says "running, protocol {protocol}"
 // in the language the app shows.
-func SyncdRunning() string { return In(i18n.Locale()).SyncdRunning() }
+func SyncdRunning(protocol string) string { return In(i18n.Locale()).SyncdRunning(protocol) }
 
-// SyncdRunning says "running"
+// SyncdRunning says "running, protocol {protocol}"
 // in the language of msgs.
-func (msgs Messages) SyncdRunning() string {
-	return Catalog.Format(msgs.locale, "SyncdRunning", nil)
+func (msgs Messages) SyncdRunning(protocol string) string {
+	return Catalog.Format(msgs.locale, "SyncdRunning", map[string]any{"protocol": protocol})
 }
 
 // SyncdSample says "sample data"
@@ -3184,26 +3092,6 @@ func (msgs Messages) SectionDiagnostics() string {
 	return Catalog.Format(msgs.locale, "SectionDiagnostics", nil)
 }
 
-// LogsRow says "Logs"
-// in the language the app shows.
-func LogsRow() string { return In(i18n.Locale()).LogsRow() }
-
-// LogsRow says "Logs"
-// in the language of msgs.
-func (msgs Messages) LogsRow() string {
-	return Catalog.Format(msgs.locale, "LogsRow", nil)
-}
-
-// LogsHint says "This app's own logs. They never hold passwords or file contents."
-// in the language the app shows.
-func LogsHint() string { return In(i18n.Locale()).LogsHint() }
-
-// LogsHint says "This app's own logs. They never hold passwords or file contents."
-// in the language of msgs.
-func (msgs Messages) LogsHint() string {
-	return Catalog.Format(msgs.locale, "LogsHint", nil)
-}
-
 // ActionOpenFolder says "Open folder"
 // in the language the app shows.
 func ActionOpenFolder() string { return In(i18n.Locale()).ActionOpenFolder() }
@@ -3224,11 +3112,11 @@ func (msgs Messages) SupportBundle() string {
 	return Catalog.Format(msgs.locale, "SupportBundle", nil)
 }
 
-// SupportBundleHint says "One file with the logs and settings, without passwords, for asking for help."
+// SupportBundleHint says "A file with the sync service's sanitized state (versions, states, counters) to share when asking for help. No passwor…"
 // in the language the app shows.
 func SupportBundleHint() string { return In(i18n.Locale()).SupportBundleHint() }
 
-// SupportBundleHint says "One file with the logs and settings, without passwords, for asking for help."
+// SupportBundleHint says "A file with the sync service's sanitized state (versions, states, counters) to share when asking for help. No passwor…"
 // in the language of msgs.
 func (msgs Messages) SupportBundleHint() string {
 	return Catalog.Format(msgs.locale, "SupportBundleHint", nil)
@@ -3242,16 +3130,6 @@ func ActionExport() string { return In(i18n.Locale()).ActionExport() }
 // in the language of msgs.
 func (msgs Messages) ActionExport() string {
 	return Catalog.Format(msgs.locale, "ActionExport", nil)
-}
-
-// ExportSoon says "The support bundle comes from the sync service, which is not connected."
-// in the language the app shows.
-func ExportSoon() string { return In(i18n.Locale()).ExportSoon() }
-
-// ExportSoon says "The support bundle comes from the sync service, which is not connected."
-// in the language of msgs.
-func (msgs Messages) ExportSoon() string {
-	return Catalog.Format(msgs.locale, "ExportSoon", nil)
 }
 
 // TrayOpen says "Open Nextcloud MyGo"
@@ -3334,16 +3212,6 @@ func (msgs Messages) FirstClose() string {
 	return Catalog.Format(msgs.locale, "FirstClose", nil)
 }
 
-// ToastCannotSync says "This folder cannot sync now: something waits for you first."
-// in the language the app shows.
-func ToastCannotSync() string { return In(i18n.Locale()).ToastCannotSync() }
-
-// ToastCannotSync says "This folder cannot sync now: something waits for you first."
-// in the language of msgs.
-func (msgs Messages) ToastCannotSync() string {
-	return Catalog.Format(msgs.locale, "ToastCannotSync", nil)
-}
-
 // ToastStale says "The list changed. Review it again."
 // in the language the app shows.
 func ToastStale() string { return In(i18n.Locale()).ToastStale() }
@@ -3364,26 +3232,6 @@ func (msgs Messages) ToastFailed() string {
 	return Catalog.Format(msgs.locale, "ToastFailed", nil)
 }
 
-// ToastRestoring says "Restoring the files on this PC."
-// in the language the app shows.
-func ToastRestoring() string { return In(i18n.Locale()).ToastRestoring() }
-
-// ToastRestoring says "Restoring the files on this PC."
-// in the language of msgs.
-func (msgs Messages) ToastRestoring() string {
-	return Catalog.Format(msgs.locale, "ToastRestoring", nil)
-}
-
-// ToastDeleted says "Deleted on the server."
-// in the language the app shows.
-func ToastDeleted() string { return In(i18n.Locale()).ToastDeleted() }
-
-// ToastDeleted says "Deleted on the server."
-// in the language of msgs.
-func (msgs Messages) ToastDeleted() string {
-	return Catalog.Format(msgs.locale, "ToastDeleted", nil)
-}
-
 // ToastCopied says "Copied"
 // in the language the app shows.
 func ToastCopied() string { return In(i18n.Locale()).ToastCopied() }
@@ -3392,4 +3240,852 @@ func ToastCopied() string { return In(i18n.Locale()).ToastCopied() }
 // in the language of msgs.
 func (msgs Messages) ToastCopied() string {
 	return Catalog.Format(msgs.locale, "ToastCopied", nil)
+}
+
+// ActionAllowDeletions says "Allow {count, plural, one {# deletion} other {# deletions}}"
+// in the language the app shows.
+func ActionAllowDeletions(count int) string { return In(i18n.Locale()).ActionAllowDeletions(count) }
+
+// ActionAllowDeletions says "Allow {count, plural, one {# deletion} other {# deletions}}"
+// in the language of msgs.
+func (msgs Messages) ActionAllowDeletions(count int) string {
+	return Catalog.Format(msgs.locale, "ActionAllowDeletions", map[string]any{"count": count})
+}
+
+// ActionCopyPath says "Copy path"
+// in the language the app shows.
+func ActionCopyPath() string { return In(i18n.Locale()).ActionCopyPath() }
+
+// ActionCopyPath says "Copy path"
+// in the language of msgs.
+func (msgs Messages) ActionCopyPath() string {
+	return Catalog.Format(msgs.locale, "ActionCopyPath", nil)
+}
+
+// ActionRefresh says "Refresh"
+// in the language the app shows.
+func ActionRefresh() string { return In(i18n.Locale()).ActionRefresh() }
+
+// ActionRefresh says "Refresh"
+// in the language of msgs.
+func (msgs Messages) ActionRefresh() string {
+	return Catalog.Format(msgs.locale, "ActionRefresh", nil)
+}
+
+// ActionTryAgain says "Try again"
+// in the language the app shows.
+func ActionTryAgain() string { return In(i18n.Locale()).ActionTryAgain() }
+
+// ActionTryAgain says "Try again"
+// in the language of msgs.
+func (msgs Messages) ActionTryAgain() string {
+	return Catalog.Format(msgs.locale, "ActionTryAgain", nil)
+}
+
+// AddFolderFailed says "{folder} could not be added."
+// in the language the app shows.
+func AddFolderFailed(folder string) string { return In(i18n.Locale()).AddFolderFailed(folder) }
+
+// AddFolderFailed says "{folder} could not be added."
+// in the language of msgs.
+func (msgs Messages) AddFolderFailed(folder string) string {
+	return Catalog.Format(msgs.locale, "AddFolderFailed", map[string]any{"folder": folder})
+}
+
+// AutoUnavailable says "Automatic choice of the address is not available in this build yet: each account uses the one address you choose."
+// in the language the app shows.
+func AutoUnavailable() string { return In(i18n.Locale()).AutoUnavailable() }
+
+// AutoUnavailable says "Automatic choice of the address is not available in this build yet: each account uses the one address you choose."
+// in the language of msgs.
+func (msgs Messages) AutoUnavailable() string {
+	return Catalog.Format(msgs.locale, "AutoUnavailable", nil)
+}
+
+// BundleSaved says "Support bundle saved"
+// in the language the app shows.
+func BundleSaved() string { return In(i18n.Locale()).BundleSaved() }
+
+// BundleSaved says "Support bundle saved"
+// in the language of msgs.
+func (msgs Messages) BundleSaved() string {
+	return Catalog.Format(msgs.locale, "BundleSaved", nil)
+}
+
+// ConfirmRemoveAddressBody says "Nextcloud MyGo stops using this address and forgets your permission to send your sign-in there. Your files are not af…"
+// in the language the app shows.
+func ConfirmRemoveAddressBody() string { return In(i18n.Locale()).ConfirmRemoveAddressBody() }
+
+// ConfirmRemoveAddressBody says "Nextcloud MyGo stops using this address and forgets your permission to send your sign-in there. Your files are not af…"
+// in the language of msgs.
+func (msgs Messages) ConfirmRemoveAddressBody() string {
+	return Catalog.Format(msgs.locale, "ConfirmRemoveAddressBody", nil)
+}
+
+// ConfirmRemoveAddressTitle says "Remove {name}?"
+// in the language the app shows.
+func ConfirmRemoveAddressTitle(name string) string {
+	return In(i18n.Locale()).ConfirmRemoveAddressTitle(name)
+}
+
+// ConfirmRemoveAddressTitle says "Remove {name}?"
+// in the language of msgs.
+func (msgs Messages) ConfirmRemoveAddressTitle(name string) string {
+	return Catalog.Format(msgs.locale, "ConfirmRemoveAddressTitle", map[string]any{"name": name})
+}
+
+// DaemonConnectingHint says "The background sync service starts by itself. Your files are not shown until it answers; that does not mean they are …"
+// in the language the app shows.
+func DaemonConnectingHint() string { return In(i18n.Locale()).DaemonConnectingHint() }
+
+// DaemonConnectingHint says "The background sync service starts by itself. Your files are not shown until it answers; that does not mean they are …"
+// in the language of msgs.
+func (msgs Messages) DaemonConnectingHint() string {
+	return Catalog.Format(msgs.locale, "DaemonConnectingHint", nil)
+}
+
+// DetailFinished says "Every folder finished its last sync. File sync in this build is still being verified: keep your own copy of important…"
+// in the language the app shows.
+func DetailFinished() string { return In(i18n.Locale()).DetailFinished() }
+
+// DetailFinished says "Every folder finished its last sync. File sync in this build is still being verified: keep your own copy of important…"
+// in the language of msgs.
+func (msgs Messages) DetailFinished() string {
+	return Catalog.Format(msgs.locale, "DetailFinished", nil)
+}
+
+// DetailOffline says "The server cannot be reached now. Nothing is lost: sync goes on when it answers again."
+// in the language the app shows.
+func DetailOffline() string { return In(i18n.Locale()).DetailOffline() }
+
+// DetailOffline says "The server cannot be reached now. Nothing is lost: sync goes on when it answers again."
+// in the language of msgs.
+func (msgs Messages) DetailOffline() string {
+	return Catalog.Format(msgs.locale, "DetailOffline", nil)
+}
+
+// DetailUnknown says "Not connected to the background sync service, so its state is not known."
+// in the language the app shows.
+func DetailUnknown() string { return In(i18n.Locale()).DetailUnknown() }
+
+// DetailUnknown says "Not connected to the background sync service, so its state is not known."
+// in the language of msgs.
+func (msgs Messages) DetailUnknown() string {
+	return Catalog.Format(msgs.locale, "DetailUnknown", nil)
+}
+
+// DiagEpoch says "Endpoint epoch"
+// in the language the app shows.
+func DiagEpoch() string { return In(i18n.Locale()).DiagEpoch() }
+
+// DiagEpoch says "Endpoint epoch"
+// in the language of msgs.
+func (msgs Messages) DiagEpoch() string {
+	return Catalog.Format(msgs.locale, "DiagEpoch", nil)
+}
+
+// DiagFolder says "Folder ID"
+// in the language the app shows.
+func DiagFolder() string { return In(i18n.Locale()).DiagFolder() }
+
+// DiagFolder says "Folder ID"
+// in the language of msgs.
+func (msgs Messages) DiagFolder() string {
+	return Catalog.Format(msgs.locale, "DiagFolder", nil)
+}
+
+// DiagNetwork says "Network generation"
+// in the language the app shows.
+func DiagNetwork() string { return In(i18n.Locale()).DiagNetwork() }
+
+// DiagNetwork says "Network generation"
+// in the language of msgs.
+func (msgs Messages) DiagNetwork() string {
+	return Catalog.Format(msgs.locale, "DiagNetwork", nil)
+}
+
+// DiagPaused says "Everything paused"
+// in the language the app shows.
+func DiagPaused() string { return In(i18n.Locale()).DiagPaused() }
+
+// DiagPaused says "Everything paused"
+// in the language of msgs.
+func (msgs Messages) DiagPaused() string {
+	return Catalog.Format(msgs.locale, "DiagPaused", nil)
+}
+
+// DiagStartup says "Startup · state available"
+// in the language the app shows.
+func DiagStartup() string { return In(i18n.Locale()).DiagStartup() }
+
+// DiagStartup says "Startup · state available"
+// in the language of msgs.
+func (msgs Messages) DiagStartup() string {
+	return Catalog.Format(msgs.locale, "DiagStartup", nil)
+}
+
+// DiagState says "State"
+// in the language the app shows.
+func DiagState() string { return In(i18n.Locale()).DiagState() }
+
+// DiagState says "State"
+// in the language of msgs.
+func (msgs Messages) DiagState() string {
+	return Catalog.Format(msgs.locale, "DiagState", nil)
+}
+
+// DiagTotals says "Totals"
+// in the language the app shows.
+func DiagTotals() string { return In(i18n.Locale()).DiagTotals() }
+
+// DiagTotals says "Totals"
+// in the language of msgs.
+func (msgs Messages) DiagTotals() string {
+	return Catalog.Format(msgs.locale, "DiagTotals", nil)
+}
+
+// DiagTotalsValue says "{requests} requests · {failures} transport failures · {up} up · {down} down"
+// in the language the app shows.
+func DiagTotalsValue(requests string, failures string, up string, down string) string {
+	return In(i18n.Locale()).DiagTotalsValue(requests, failures, up, down)
+}
+
+// DiagTotalsValue says "{requests} requests · {failures} transport failures · {up} up · {down} down"
+// in the language of msgs.
+func (msgs Messages) DiagTotalsValue(requests string, failures string, up string, down string) string {
+	return Catalog.Format(msgs.locale, "DiagTotalsValue", map[string]any{"requests": requests, "failures": failures, "up": up, "down": down})
+}
+
+// DiagTransfers says "Active transfers"
+// in the language the app shows.
+func DiagTransfers() string { return In(i18n.Locale()).DiagTransfers() }
+
+// DiagTransfers says "Active transfers"
+// in the language of msgs.
+func (msgs Messages) DiagTransfers() string {
+	return Catalog.Format(msgs.locale, "DiagTransfers", nil)
+}
+
+// DiagTransfersValue says "{up} up · {down} down · {requests} requests"
+// in the language the app shows.
+func DiagTransfersValue(up string, down string, requests string) string {
+	return In(i18n.Locale()).DiagTransfersValue(up, down, requests)
+}
+
+// DiagTransfersValue says "{up} up · {down} down · {requests} requests"
+// in the language of msgs.
+func (msgs Messages) DiagTransfersValue(up string, down string, requests string) string {
+	return Catalog.Format(msgs.locale, "DiagTransfersValue", map[string]any{"up": up, "down": down, "requests": requests})
+}
+
+// DiagUncertain says "Unconfirmed writes · held replies"
+// in the language the app shows.
+func DiagUncertain() string { return In(i18n.Locale()).DiagUncertain() }
+
+// DiagUncertain says "Unconfirmed writes · held replies"
+// in the language of msgs.
+func (msgs Messages) DiagUncertain() string {
+	return Catalog.Format(msgs.locale, "DiagUncertain", nil)
+}
+
+// DiagVersion says "Version · protocol"
+// in the language the app shows.
+func DiagVersion() string { return In(i18n.Locale()).DiagVersion() }
+
+// DiagVersion says "Version · protocol"
+// in the language of msgs.
+func (msgs Messages) DiagVersion() string {
+	return Catalog.Format(msgs.locale, "DiagVersion", nil)
+}
+
+// DisconnectedBanner says "Not connected to the background sync service. This is the last known state; nothing here is current."
+// in the language the app shows.
+func DisconnectedBanner() string { return In(i18n.Locale()).DisconnectedBanner() }
+
+// DisconnectedBanner says "Not connected to the background sync service. This is the last known state; nothing here is current."
+// in the language of msgs.
+func (msgs Messages) DisconnectedBanner() string {
+	return Catalog.Format(msgs.locale, "DisconnectedBanner", nil)
+}
+
+// EndpointSwitchingTo says "Switching to it"
+// in the language the app shows.
+func EndpointSwitchingTo() string { return In(i18n.Locale()).EndpointSwitchingTo() }
+
+// EndpointSwitchingTo says "Switching to it"
+// in the language of msgs.
+func (msgs Messages) EndpointSwitchingTo() string {
+	return Catalog.Format(msgs.locale, "EndpointSwitchingTo", nil)
+}
+
+// FolderUnknown says "Unknown state"
+// in the language the app shows.
+func FolderUnknown() string { return In(i18n.Locale()).FolderUnknown() }
+
+// FolderUnknown says "Unknown state"
+// in the language of msgs.
+func (msgs Messages) FolderUnknown() string {
+	return Catalog.Format(msgs.locale, "FolderUnknown", nil)
+}
+
+// MenuRemoveAddress says "Remove this address"
+// in the language the app shows.
+func MenuRemoveAddress() string { return In(i18n.Locale()).MenuRemoveAddress() }
+
+// MenuRemoveAddress says "Remove this address"
+// in the language of msgs.
+func (msgs Messages) MenuRemoveAddress() string {
+	return Catalog.Format(msgs.locale, "MenuRemoveAddress", nil)
+}
+
+// MenuSignInAgain says "Sign in again"
+// in the language the app shows.
+func MenuSignInAgain() string { return In(i18n.Locale()).MenuSignInAgain() }
+
+// MenuSignInAgain says "Sign in again"
+// in the language of msgs.
+func (msgs Messages) MenuSignInAgain() string {
+	return Catalog.Format(msgs.locale, "MenuSignInAgain", nil)
+}
+
+// NoAddressInUse says "No address can be used right now."
+// in the language the app shows.
+func NoAddressInUse() string { return In(i18n.Locale()).NoAddressInUse() }
+
+// NoAddressInUse says "No address can be used right now."
+// in the language of msgs.
+func (msgs Messages) NoAddressInUse() string {
+	return Catalog.Format(msgs.locale, "NoAddressInUse", nil)
+}
+
+// OverviewUnknown says "Status unknown"
+// in the language the app shows.
+func OverviewUnknown() string { return In(i18n.Locale()).OverviewUnknown() }
+
+// OverviewUnknown says "Status unknown"
+// in the language of msgs.
+func (msgs Messages) OverviewUnknown() string {
+	return Catalog.Format(msgs.locale, "OverviewUnknown", nil)
+}
+
+// ReasonAuthRequired says "The server no longer accepts this app's password. Sign in again."
+// in the language the app shows.
+func ReasonAuthRequired() string { return In(i18n.Locale()).ReasonAuthRequired() }
+
+// ReasonAuthRequired says "The server no longer accepts this app's password. Sign in again."
+// in the language of msgs.
+func (msgs Messages) ReasonAuthRequired() string {
+	return Catalog.Format(msgs.locale, "ReasonAuthRequired", nil)
+}
+
+// ReasonBusy says "Sync is finishing something first. Try again in a moment."
+// in the language the app shows.
+func ReasonBusy() string { return In(i18n.Locale()).ReasonBusy() }
+
+// ReasonBusy says "Sync is finishing something first. Try again in a moment."
+// in the language of msgs.
+func (msgs Messages) ReasonBusy() string {
+	return Catalog.Format(msgs.locale, "ReasonBusy", nil)
+}
+
+// ReasonCancelled says "It was cancelled."
+// in the language the app shows.
+func ReasonCancelled() string { return In(i18n.Locale()).ReasonCancelled() }
+
+// ReasonCancelled says "It was cancelled."
+// in the language of msgs.
+func (msgs Messages) ReasonCancelled() string {
+	return Catalog.Format(msgs.locale, "ReasonCancelled", nil)
+}
+
+// ReasonCredentialsLocked says "Windows could not unlock the saved sign-in. Sign in to Windows again, then try again."
+// in the language the app shows.
+func ReasonCredentialsLocked() string { return In(i18n.Locale()).ReasonCredentialsLocked() }
+
+// ReasonCredentialsLocked says "Windows could not unlock the saved sign-in. Sign in to Windows again, then try again."
+// in the language of msgs.
+func (msgs Messages) ReasonCredentialsLocked() string {
+	return Catalog.Format(msgs.locale, "ReasonCredentialsLocked", nil)
+}
+
+// ReasonDeletions says "Many deletions wait for your review."
+// in the language the app shows.
+func ReasonDeletions() string { return In(i18n.Locale()).ReasonDeletions() }
+
+// ReasonDeletions says "Many deletions wait for your review."
+// in the language of msgs.
+func (msgs Messages) ReasonDeletions() string {
+	return Catalog.Format(msgs.locale, "ReasonDeletions", nil)
+}
+
+// ReasonDiscovery says "Not every file could be checked. Nothing is deleted until a full check succeeds."
+// in the language the app shows.
+func ReasonDiscovery() string { return In(i18n.Locale()).ReasonDiscovery() }
+
+// ReasonDiscovery says "Not every file could be checked. Nothing is deleted until a full check succeeds."
+// in the language of msgs.
+func (msgs Messages) ReasonDiscovery() string {
+	return Catalog.Format(msgs.locale, "ReasonDiscovery", nil)
+}
+
+// ReasonFolderMode says "This folder cannot be synced, for example because it is end-to-end encrypted."
+// in the language the app shows.
+func ReasonFolderMode() string { return In(i18n.Locale()).ReasonFolderMode() }
+
+// ReasonFolderMode says "This folder cannot be synced, for example because it is end-to-end encrypted."
+// in the language of msgs.
+func (msgs Messages) ReasonFolderMode() string {
+	return Catalog.Format(msgs.locale, "ReasonFolderMode", nil)
+}
+
+// ReasonFolderOwned says "This folder, or one inside or around it, already syncs."
+// in the language the app shows.
+func ReasonFolderOwned() string { return In(i18n.Locale()).ReasonFolderOwned() }
+
+// ReasonFolderOwned says "This folder, or one inside or around it, already syncs."
+// in the language of msgs.
+func (msgs Messages) ReasonFolderOwned() string {
+	return Catalog.Format(msgs.locale, "ReasonFolderOwned", nil)
+}
+
+// ReasonAccountExists says "This account is already added: the same user on the same server."
+// in the language the app shows.
+func ReasonAccountExists() string { return In(i18n.Locale()).ReasonAccountExists() }
+
+// ReasonAccountExists says "This account is already added: the same user on the same server."
+// in the language of msgs.
+func (msgs Messages) ReasonAccountExists() string {
+	return Catalog.Format(msgs.locale, "ReasonAccountExists", nil)
+}
+
+// ReasonQuota says "Your storage on the server is full: free some space there, and syncing continues."
+// in the language the app shows.
+func ReasonQuota() string { return In(i18n.Locale()).ReasonQuota() }
+
+// ReasonQuota says "Your storage on the server is full: free some space there, and syncing continues."
+// in the language of msgs.
+func (msgs Messages) ReasonQuota() string {
+	return Catalog.Format(msgs.locale, "ReasonQuota", nil)
+}
+
+// ReasonIdentity says "This address answers as a different server. Your sign-in is never sent there."
+// in the language the app shows.
+func ReasonIdentity() string { return In(i18n.Locale()).ReasonIdentity() }
+
+// ReasonIdentity says "This address answers as a different server. Your sign-in is never sent there."
+// in the language of msgs.
+func (msgs Messages) ReasonIdentity() string {
+	return Catalog.Format(msgs.locale, "ReasonIdentity", nil)
+}
+
+// ReasonInterrupted says "The background sync service restarted before this finished. Try again."
+// in the language the app shows.
+func ReasonInterrupted() string { return In(i18n.Locale()).ReasonInterrupted() }
+
+// ReasonInterrupted says "The background sync service restarted before this finished. Try again."
+// in the language of msgs.
+func (msgs Messages) ReasonInterrupted() string {
+	return Catalog.Format(msgs.locale, "ReasonInterrupted", nil)
+}
+
+// ReasonJournal says "The folder's sync record cannot be read. Nothing is deleted; Diagnostics has details."
+// in the language the app shows.
+func ReasonJournal() string { return In(i18n.Locale()).ReasonJournal() }
+
+// ReasonJournal says "The folder's sync record cannot be read. Nothing is deleted; Diagnostics has details."
+// in the language of msgs.
+func (msgs Messages) ReasonJournal() string {
+	return Catalog.Format(msgs.locale, "ReasonJournal", nil)
+}
+
+// ReasonLocalRoot says "The folder on this PC cannot be found or opened."
+// in the language the app shows.
+func ReasonLocalRoot() string { return In(i18n.Locale()).ReasonLocalRoot() }
+
+// ReasonLocalRoot says "The folder on this PC cannot be found or opened."
+// in the language of msgs.
+func (msgs Messages) ReasonLocalRoot() string {
+	return Catalog.Format(msgs.locale, "ReasonLocalRoot", nil)
+}
+
+// ReasonLocked says "A file is locked on the server. Sync tries again later."
+// in the language the app shows.
+func ReasonLocked() string { return In(i18n.Locale()).ReasonLocked() }
+
+// ReasonLocked says "A file is locked on the server. Sync tries again later."
+// in the language of msgs.
+func (msgs Messages) ReasonLocked() string {
+	return Catalog.Format(msgs.locale, "ReasonLocked", nil)
+}
+
+// ReasonLoginExpired says "The sign-in link expired. Start again."
+// in the language the app shows.
+func ReasonLoginExpired() string { return In(i18n.Locale()).ReasonLoginExpired() }
+
+// ReasonLoginExpired says "The sign-in link expired. Start again."
+// in the language of msgs.
+func (msgs Messages) ReasonLoginExpired() string {
+	return Catalog.Format(msgs.locale, "ReasonLoginExpired", nil)
+}
+
+// ReasonNetwork says "The server cannot be reached now."
+// in the language the app shows.
+func ReasonNetwork() string { return In(i18n.Locale()).ReasonNetwork() }
+
+// ReasonNetwork says "The server cannot be reached now."
+// in the language of msgs.
+func (msgs Messages) ReasonNetwork() string {
+	return Catalog.Format(msgs.locale, "ReasonNetwork", nil)
+}
+
+// ReasonPermission says "The server does not allow this change."
+// in the language the app shows.
+func ReasonPermission() string { return In(i18n.Locale()).ReasonPermission() }
+
+// ReasonPermission says "The server does not allow this change."
+// in the language of msgs.
+func (msgs Messages) ReasonPermission() string {
+	return Catalog.Format(msgs.locale, "ReasonPermission", nil)
+}
+
+// ReasonRemoteRoot says "The folder on the server cannot be found or opened."
+// in the language the app shows.
+func ReasonRemoteRoot() string { return In(i18n.Locale()).ReasonRemoteRoot() }
+
+// ReasonRemoteRoot says "The folder on the server cannot be found or opened."
+// in the language of msgs.
+func (msgs Messages) ReasonRemoteRoot() string {
+	return Catalog.Format(msgs.locale, "ReasonRemoteRoot", nil)
+}
+
+// ReasonRootChanged says "The folder was replaced or moved. Nothing syncs until it is checked."
+// in the language the app shows.
+func ReasonRootChanged() string { return In(i18n.Locale()).ReasonRootChanged() }
+
+// ReasonRootChanged says "The folder was replaced or moved. Nothing syncs until it is checked."
+// in the language of msgs.
+func (msgs Messages) ReasonRootChanged() string {
+	return Catalog.Format(msgs.locale, "ReasonRootChanged", nil)
+}
+
+// ReasonSentenceVerified says "it was verified as your server."
+// in the language the app shows.
+func ReasonSentenceVerified() string { return In(i18n.Locale()).ReasonSentenceVerified() }
+
+// ReasonSentenceVerified says "it was verified as your server."
+// in the language of msgs.
+func (msgs Messages) ReasonSentenceVerified() string {
+	return Catalog.Format(msgs.locale, "ReasonSentenceVerified", nil)
+}
+
+// ReasonServerResponse says "The server answered in a way that was not understood."
+// in the language the app shows.
+func ReasonServerResponse() string { return In(i18n.Locale()).ReasonServerResponse() }
+
+// ReasonServerResponse says "The server answered in a way that was not understood."
+// in the language of msgs.
+func (msgs Messages) ReasonServerResponse() string {
+	return Catalog.Format(msgs.locale, "ReasonServerResponse", nil)
+}
+
+// ReasonStateUnavailable says "The background sync service cannot read its state right now."
+// in the language the app shows.
+func ReasonStateUnavailable() string { return In(i18n.Locale()).ReasonStateUnavailable() }
+
+// ReasonStateUnavailable says "The background sync service cannot read its state right now."
+// in the language of msgs.
+func (msgs Messages) ReasonStateUnavailable() string {
+	return Catalog.Format(msgs.locale, "ReasonStateUnavailable", nil)
+}
+
+// ReasonSyncFailed says "The last sync did not finish. It is tried again by itself."
+// in the language the app shows.
+func ReasonSyncFailed() string { return In(i18n.Locale()).ReasonSyncFailed() }
+
+// ReasonSyncFailed says "The last sync did not finish. It is tried again by itself."
+// in the language of msgs.
+func (msgs Messages) ReasonSyncFailed() string {
+	return Catalog.Format(msgs.locale, "ReasonSyncFailed", nil)
+}
+
+// ReasonThrottled says "The server asked to slow down. Sync goes on by itself later."
+// in the language the app shows.
+func ReasonThrottled() string { return In(i18n.Locale()).ReasonThrottled() }
+
+// ReasonThrottled says "The server asked to slow down. Sync goes on by itself later."
+// in the language of msgs.
+func (msgs Messages) ReasonThrottled() string {
+	return Catalog.Format(msgs.locale, "ReasonThrottled", nil)
+}
+
+// ReasonTLS says "The server's certificate could not be verified. Nothing is sent there."
+// in the language the app shows.
+func ReasonTLS() string { return In(i18n.Locale()).ReasonTLS() }
+
+// ReasonTLS says "The server's certificate could not be verified. Nothing is sent there."
+// in the language of msgs.
+func (msgs Messages) ReasonTLS() string {
+	return Catalog.Format(msgs.locale, "ReasonTLS", nil)
+}
+
+// ReasonUnsupported says "This build cannot do that yet."
+// in the language the app shows.
+func ReasonUnsupported() string { return In(i18n.Locale()).ReasonUnsupported() }
+
+// ReasonUnsupported says "This build cannot do that yet."
+// in the language of msgs.
+func (msgs Messages) ReasonUnsupported() string {
+	return Catalog.Format(msgs.locale, "ReasonUnsupported", nil)
+}
+
+// ReviewExpires says "Allowed by {time}, the sync goes ahead; after that, the folder is checked again first."
+// in the language the app shows.
+func ReviewExpires(time_ string) string { return In(i18n.Locale()).ReviewExpires(time_) }
+
+// ReviewExpires says "Allowed by {time}, the sync goes ahead; after that, the folder is checked again first."
+// in the language of msgs.
+func (msgs Messages) ReviewExpires(time_ string) string {
+	return Catalog.Format(msgs.locale, "ReviewExpires", map[string]any{"time": time_})
+}
+
+// ReviewKeep says "To keep the files, put them back where they were and choose Decide later: the next check finds them again."
+// in the language the app shows.
+func ReviewKeep() string { return In(i18n.Locale()).ReviewKeep() }
+
+// ReviewKeep says "To keep the files, put them back where they were and choose Decide later: the next check finds them again."
+// in the language of msgs.
+func (msgs Messages) ReviewKeep() string {
+	return Catalog.Format(msgs.locale, "ReviewKeep", nil)
+}
+
+// ReviewWouldDeletePC says "{count, plural, one {# file deleted on the server would be deleted here} other {# files deleted on the server would b…"
+// in the language the app shows.
+func ReviewWouldDeletePC(count int) string { return In(i18n.Locale()).ReviewWouldDeletePC(count) }
+
+// ReviewWouldDeletePC says "{count, plural, one {# file deleted on the server would be deleted here} other {# files deleted on the server would b…"
+// in the language of msgs.
+func (msgs Messages) ReviewWouldDeletePC(count int) string {
+	return Catalog.Format(msgs.locale, "ReviewWouldDeletePC", map[string]any{"count": count})
+}
+
+// ReviewWouldDeleteServer says "{count, plural, one {# file deleted here would be deleted on the server} other {# files deleted here would be deleted…"
+// in the language the app shows.
+func ReviewWouldDeleteServer(count int) string {
+	return In(i18n.Locale()).ReviewWouldDeleteServer(count)
+}
+
+// ReviewWouldDeleteServer says "{count, plural, one {# file deleted here would be deleted on the server} other {# files deleted here would be deleted…"
+// in the language of msgs.
+func (msgs Messages) ReviewWouldDeleteServer(count int) string {
+	return Catalog.Format(msgs.locale, "ReviewWouldDeleteServer", map[string]any{"count": count})
+}
+
+// SignedInAgain says "Signed in again."
+// in the language the app shows.
+func SignedInAgain() string { return In(i18n.Locale()).SignedInAgain() }
+
+// SignedInAgain says "Signed in again."
+// in the language of msgs.
+func (msgs Messages) SignedInAgain() string {
+	return Catalog.Format(msgs.locale, "SignedInAgain", nil)
+}
+
+// StartupBackoff says "It waits before it tries to start again."
+// in the language the app shows.
+func StartupBackoff() string { return In(i18n.Locale()).StartupBackoff() }
+
+// StartupBackoff says "It waits before it tries to start again."
+// in the language of msgs.
+func (msgs Messages) StartupBackoff() string {
+	return Catalog.Format(msgs.locale, "StartupBackoff", nil)
+}
+
+// StartupDatabase says "It cannot open its own database."
+// in the language the app shows.
+func StartupDatabase() string { return In(i18n.Locale()).StartupDatabase() }
+
+// StartupDatabase says "It cannot open its own database."
+// in the language of msgs.
+func (msgs Messages) StartupDatabase() string {
+	return Catalog.Format(msgs.locale, "StartupDatabase", nil)
+}
+
+// StartupDiagnostic says "It started in a diagnostic mode."
+// in the language the app shows.
+func StartupDiagnostic() string { return In(i18n.Locale()).StartupDiagnostic() }
+
+// StartupDiagnostic says "It started in a diagnostic mode."
+// in the language of msgs.
+func (msgs Messages) StartupDiagnostic() string {
+	return Catalog.Format(msgs.locale, "StartupDiagnostic", nil)
+}
+
+// StartupStopped says "It stopped after a problem."
+// in the language the app shows.
+func StartupStopped() string { return In(i18n.Locale()).StartupStopped() }
+
+// StartupStopped says "It stopped after a problem."
+// in the language of msgs.
+func (msgs Messages) StartupStopped() string {
+	return Catalog.Format(msgs.locale, "StartupStopped", nil)
+}
+
+// StateFinished says "Last sync finished"
+// in the language the app shows.
+func StateFinished() string { return In(i18n.Locale()).StateFinished() }
+
+// StateFinished says "Last sync finished"
+// in the language of msgs.
+func (msgs Messages) StateFinished() string {
+	return Catalog.Format(msgs.locale, "StateFinished", nil)
+}
+
+// StateUnavailableBody says "Your accounts and folders are not shown until it can read them again. Diagnostics has details."
+// in the language the app shows.
+func StateUnavailableBody() string { return In(i18n.Locale()).StateUnavailableBody() }
+
+// StateUnavailableBody says "Your accounts and folders are not shown until it can read them again. Diagnostics has details."
+// in the language of msgs.
+func (msgs Messages) StateUnavailableBody() string {
+	return Catalog.Format(msgs.locale, "StateUnavailableBody", nil)
+}
+
+// StateUnavailableTitle says "The background sync service runs without its state"
+// in the language the app shows.
+func StateUnavailableTitle() string { return In(i18n.Locale()).StateUnavailableTitle() }
+
+// StateUnavailableTitle says "The background sync service runs without its state"
+// in the language of msgs.
+func (msgs Messages) StateUnavailableTitle() string {
+	return Catalog.Format(msgs.locale, "StateUnavailableTitle", nil)
+}
+
+// StateUnknown says "Status unknown"
+// in the language the app shows.
+func StateUnknown() string { return In(i18n.Locale()).StateUnknown() }
+
+// StateUnknown says "Status unknown"
+// in the language of msgs.
+func (msgs Messages) StateUnknown() string {
+	return Catalog.Format(msgs.locale, "StateUnknown", nil)
+}
+
+// StopFailed says "Background sync did not stop; it keeps running."
+// in the language the app shows.
+func StopFailed() string { return In(i18n.Locale()).StopFailed() }
+
+// StopFailed says "Background sync did not stop; it keeps running."
+// in the language of msgs.
+func (msgs Messages) StopFailed() string {
+	return Catalog.Format(msgs.locale, "StopFailed", nil)
+}
+
+// SwitchFaster says "It answers faster."
+// in the language the app shows.
+func SwitchFaster() string { return In(i18n.Locale()).SwitchFaster() }
+
+// SwitchFaster says "It answers faster."
+// in the language of msgs.
+func (msgs Messages) SwitchFaster() string {
+	return Catalog.Format(msgs.locale, "SwitchFaster", nil)
+}
+
+// SyncdNotConnected says "not connected"
+// in the language the app shows.
+func SyncdNotConnected() string { return In(i18n.Locale()).SyncdNotConnected() }
+
+// SyncdNotConnected says "not connected"
+// in the language of msgs.
+func (msgs Messages) SyncdNotConnected() string {
+	return Catalog.Format(msgs.locale, "SyncdNotConnected", nil)
+}
+
+// SyncdWithoutState says "running without its state"
+// in the language the app shows.
+func SyncdWithoutState() string { return In(i18n.Locale()).SyncdWithoutState() }
+
+// SyncdWithoutState says "running without its state"
+// in the language of msgs.
+func (msgs Messages) SyncdWithoutState() string {
+	return Catalog.Format(msgs.locale, "SyncdWithoutState", nil)
+}
+
+// SyncPreview says "File sync in this build is still being verified and is not yet supported for everyday use. Keep your own copy of impo…"
+// in the language the app shows.
+func SyncPreview() string { return In(i18n.Locale()).SyncPreview() }
+
+// SyncPreview says "File sync in this build is still being verified and is not yet supported for everyday use. Keep your own copy of impo…"
+// in the language of msgs.
+func (msgs Messages) SyncPreview() string {
+	return Catalog.Format(msgs.locale, "SyncPreview", nil)
+}
+
+// SyncServiceHint says "Its version, how it started, and for each folder its transfers and counters, as it reports them."
+// in the language the app shows.
+func SyncServiceHint() string { return In(i18n.Locale()).SyncServiceHint() }
+
+// SyncServiceHint says "Its version, how it started, and for each folder its transfers and counters, as it reports them."
+// in the language of msgs.
+func (msgs Messages) SyncServiceHint() string {
+	return Catalog.Format(msgs.locale, "SyncServiceHint", nil)
+}
+
+// SyncServiceRow says "Background sync service"
+// in the language the app shows.
+func SyncServiceRow() string { return In(i18n.Locale()).SyncServiceRow() }
+
+// SyncServiceRow says "Background sync service"
+// in the language of msgs.
+func (msgs Messages) SyncServiceRow() string {
+	return Catalog.Format(msgs.locale, "SyncServiceRow", nil)
+}
+
+// ToastAllowed says "Allowed. The folder syncs the deletions now."
+// in the language the app shows.
+func ToastAllowed() string { return In(i18n.Locale()).ToastAllowed() }
+
+// ToastAllowed says "Allowed. The folder syncs the deletions now."
+// in the language of msgs.
+func (msgs Messages) ToastAllowed() string {
+	return Catalog.Format(msgs.locale, "ToastAllowed", nil)
+}
+
+// ToastNoAnswer says "The background sync service did not answer in time. What you asked may still happen."
+// in the language the app shows.
+func ToastNoAnswer() string { return In(i18n.Locale()).ToastNoAnswer() }
+
+// ToastNoAnswer says "The background sync service did not answer in time. What you asked may still happen."
+// in the language of msgs.
+func (msgs Messages) ToastNoAnswer() string {
+	return Catalog.Format(msgs.locale, "ToastNoAnswer", nil)
+}
+
+// ToastNotConnected says "Not connected to the background sync service. Try again in a moment."
+// in the language the app shows.
+func ToastNotConnected() string { return In(i18n.Locale()).ToastNotConnected() }
+
+// ToastNotConnected says "Not connected to the background sync service. Try again in a moment."
+// in the language of msgs.
+func (msgs Messages) ToastNotConnected() string {
+	return Catalog.Format(msgs.locale, "ToastNotConnected", nil)
+}
+
+// ToastRefused says "That is not possible right now."
+// in the language the app shows.
+func ToastRefused() string { return In(i18n.Locale()).ToastRefused() }
+
+// ToastRefused says "That is not possible right now."
+// in the language of msgs.
+func (msgs Messages) ToastRefused() string {
+	return Catalog.Format(msgs.locale, "ToastRefused", nil)
+}
+
+// WhyMain says "Your server's main address, verified when you signed in"
+// in the language the app shows.
+func WhyMain() string { return In(i18n.Locale()).WhyMain() }
+
+// WhyMain says "Your server's main address, verified when you signed in"
+// in the language of msgs.
+func (msgs Messages) WhyMain() string {
+	return Catalog.Format(msgs.locale, "WhyMain", nil)
 }

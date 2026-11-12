@@ -101,6 +101,8 @@ void LoginFlow::constrained(const QString &reason, qint64 retryAfterMs) {
     // later attempt; otherwise report the unconfirmed revocation explicitly.
     if (!delay || gateUntil_ < 0)
       fail("APP_PASSWORD_REVOCATION_UNCONFIRMED");
+    else
+      hold();
     return;
   }
   // Polling may resume only when the delay ends inside the unextended session.
@@ -416,6 +418,8 @@ void LoginFlow::fail(const QString &reason) {
       fail("APP_PASSWORD_REVOCATION_UNCONFIRMED");
     else if (!gated())
       revoke();
+    else
+      hold();
     return;
   }
   if (state_ == "discarding" && ownedPassword_) {
@@ -441,6 +445,13 @@ void LoginFlow::fail(const QString &reason) {
 }
 
 void LoginFlow::revoke() {
+  // From here the DELETE's outcome is unknown until answered: the durable
+  // "only delayed" record must be gone first, or a restart would send another.
+  if (heldRecorded_ && !held(false)) {
+    fail("APP_PASSWORD_REVOCATION_UNCONFIRMED");
+    return;
+  }
+  heldRecorded_ = false;
   request(base_.resolved(QUrl("ocs/v2.php/core/apppassword?format=json")),
           "DELETE", {}, authorization_,
           [this](int code, const QByteArray &body) {

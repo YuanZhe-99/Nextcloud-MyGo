@@ -119,6 +119,50 @@ void relay() {
   wait([&] { return client.state() == QAbstractSocket::UnconnectedState; });
   QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
   require(!witness, "failed active relay retained its callback recipient");
+  // A withholding relay delivers the second client message and loses its
+  // reply: the shape of a committed write whose answer never arrives.
+  failed = false;
+  QTcpServer withholding;
+  require(withholding.listen(QHostAddress::LocalHost, 0),
+          "owned withholding listener unavailable");
+  QObject::connect(&withholding, &QTcpServer::newConnection, &withholding, [&] {
+    while (auto *socket = withholding.nextPendingConnection())
+      witness = new NetworkTunnel(
+          socket, approved, QUrl("https://other.example.invalid/"),
+          [&](bool) { return failed; }, {}, true);
+  });
+  QTcpSocket lost;
+  lost.setProxy(QNetworkProxy::NoProxy);
+  lost.connectToHost(QHostAddress::LocalHost, withholding.serverPort());
+  wait([&] { return lost.state() == QAbstractSocket::ConnectedState; });
+  lost.write(
+      "CONNECT 127.0.0.1:" + QByteArray::number(destination.serverPort()) +
+      " HTTP/1.1\r\n\r\n");
+  reply.clear();
+  wait([&] {
+    reply += lost.readAll();
+    return reply.contains("\r\n\r\n");
+  });
+  received = 0;
+  lost.write("hello");
+  reply.clear();
+  wait([&] {
+    reply += lost.readAll();
+    return reply.size() >= 5;
+  });
+  require(reply == "hello", "withholding relay lost the first server flight");
+  lost.write("request");
+  wait([&] { return received == 12; });
+  QEventLoop settle;
+  QTimer::singleShot(200, &settle, &QEventLoop::quit);
+  settle.exec();
+  require(lost.bytesAvailable() == 0 &&
+              lost.state() == QAbstractSocket::ConnectedState,
+          "withholding relay delivered the reply to a delivered request");
+  failed = true;
+  wait([&] { return lost.state() == QAbstractSocket::UnconnectedState; });
+  QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+  require(!witness, "failed withholding relay retained its recipient");
 }
 } // namespace
 
@@ -127,8 +171,9 @@ int main(int argc, char **argv) {
   QCoreApplication app(argc, argv);
   try {
     relay();
-    std::puts("PASS bounded CONNECT authority, opaque forwarding, active fault "
-              "and relay teardown");
+    std::puts(
+        "PASS bounded CONNECT authority, opaque forwarding, active fault, "
+        "withheld reply and relay teardown");
     return 0;
   } catch (const std::exception &e) {
     std::fprintf(stderr, "%s\n", e.what());

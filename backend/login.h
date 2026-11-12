@@ -82,6 +82,12 @@ public:
   /// -1 no automatic retry). Returns: false when nothing was committed; the
   /// flow then sends no further request.
   std::function<bool(qint64)> throttled;
+  /// held durably records (true) or clears (false) that the acquired
+  /// password's DELETE is only delayed by the server and none is in flight, so
+  /// a restarted daemon may send it once. Returns: false when nothing was
+  /// committed. Notes: never called for a borrowed credential; a failed clear
+  /// sends no DELETE, because a later boot could then send a second one.
+  std::function<bool(bool)> held;
 
 private:
   /// request sends a bounded, nonredirecting request within the approved server
@@ -100,6 +106,8 @@ private:
   /// revoke asks the server once to retire the acquired password. Notes: an
   /// unanswered DELETE is uncertain and is never replayed.
   void revoke();
+  /// hold records a server-delayed revocation once, if the owner keeps one.
+  void hold() { heldRecorded_ = heldRecorded_ || (held && held(true)); }
   /// now reads the injected or owned monotonic millisecond clock.
   qint64 now() const { return clock_ ? clock_() : elapsed_.elapsed(); }
   /// gated reports a server delay that still forbids any request.
@@ -121,6 +129,7 @@ private:
   QString state_ = "starting", reason_;
   QString discardReason_;
   bool ownedPassword_ = false;
+  bool heldRecorded_ = false;
   bool rootVerified_ = false;
   QByteArray token_, authorization_;
   QNetworkAccessManager network_;

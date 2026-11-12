@@ -15,9 +15,15 @@ public:
   /// real active fault is observable. An optional hold suppresses responses
   /// only after substantial upstream traffic, leaving metadata probes
   /// independent.
+  /// Inputs: withholdReplies makes this relay deliver the client's request
+  /// but never its reply: downstream stops once the client sends again after
+  /// the server's first flight (TLS 1.3: its Finished, then the request).
+  /// Notes: with a four-flight handshake the request is never sent, so a
+  /// fixture waiting for the server-side effect fails instead of passing.
   NetworkTunnel(QTcpSocket *client, QUrl primary, QUrl alternate,
                 std::function<bool(bool)> failed,
-                std::function<bool(bool)> held = {});
+                std::function<bool(bool)> held = {},
+                bool withholdReplies = false);
   /// ~NetworkTunnel removes this relay from process-local diagnostic
   /// observation.
   ~NetworkTunnel() override;
@@ -35,6 +41,13 @@ public:
   /// in each direction, bounded by the relay buffer. Notes: the default keeps
   /// small transfers observable; large chunk fixtures raise it.
   static void setThroughput(qint64 bytes);
+  /// setStallAfter makes every relay of one origin (the primary by default)
+  /// stop forwarding in a direction once it has carried this many bytes that
+  /// way (counted over its relays past their first MiB), until cleared with 0.
+  /// Notes: a larger transfer then stays unfinished with positive bytes for as
+  /// long as a fixture needs, without throttling; requests below 1 MiB and the
+  /// other origin are unaffected.
+  static void setStallAfter(qint64 bytes, bool primary = true);
   /// setTarget makes every relay connect to this host instead of resolving the
   /// admitted authority; the port still comes from the authority. Notes: Qt
   /// never proxies loopback destinations, so an isolated loopback server is
@@ -57,7 +70,8 @@ private:
   std::function<bool(bool)> failed_;
   std::function<bool(bool)> held_;
   QByteArray header_;
-  quint64 upstreamBytes_ = 0;
+  quint64 upstreamBytes_ = 0, downstreamBytes_ = 0;
   bool primaryOrigin_ = false, connecting_ = false, ready_ = false,
-       closed_ = false, remoteEnded_ = false;
+       closed_ = false, remoteEnded_ = false, withholdReplies_ = false,
+       replied_ = false, withheld_ = false;
 };

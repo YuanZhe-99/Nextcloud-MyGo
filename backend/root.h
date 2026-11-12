@@ -11,7 +11,9 @@ class RootLease {
 public:
   /// RootLease rejects reparse ancestors, nonlocal/non-NTFS paths and existing
   /// upstream journals before publishing an identity-based hierarchical lease.
-  explicit RootLease(const QString &path);
+  /// Inputs: onDemand admits Cloud Files placeholders on the root and in the
+  /// tree; the caller checks that the sync root is this folder's own.
+  explicit RootLease(const QString &path, bool onDemand = false);
   /// ~RootLease releases only its own process handles; it never removes a
   /// journal or user directory.
   ~RootLease();
@@ -27,13 +29,16 @@ public:
   /// cycle starts.
   bool verify() const;
   /// validateTree rejects unreadable directories, reparse objects and cloud
-  /// placeholders before discovery/propagation.
+  /// placeholders before discovery/propagation. Notes: an on-demand lease
+  /// admits Cloud Files placeholders and does not enter unpopulated
+  /// directories, which would ask this process's own provider to populate them.
   bool validateTree() const;
 
 private:
   /// Handles owns the process-scoped kernel objects; process death releases all
   /// ownership without persistent records or PID-based recovery.
   struct Handles;
+  bool onDemand_ = false;
   QString path_, identity_;
   std::unique_ptr<Handles> handles_;
 };

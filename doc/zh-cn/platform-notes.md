@@ -8,6 +8,105 @@
 
 ## Windows
 
+同一 ARM64 主机上 0.1.0 的后端完成工作（2026-11-12），协议 1.9 与 Control schema 11，SyncD 基于
+`build/at-D0C17DFD07B7`（`build/syncd-ARM64`）和 `build/xt-5F1D91E19629`（`build/syncd-x64`，模拟运行）重新
+构建，使用一次性 Nextcloud 35.0.2 容器（`wslc`）：
+
+| 运行 | 原生 ARM64 | 模拟 x64 |
+|---|---|---|
+| `tools/test-all.ps1 -Tier fast` | 通过，35.0 s：格式与 vet 2.7 s，含真实管道的 Go 测试 19.4 s，22 个 CTest 目标 12.8 s | 通过，42.0 s：Go 测试 21.7 s，22 个 CTest 目标 20.2 s（第一次尝试中 `internal/syncd` 失败一次，原因未捕获；随后 x64 Go 套件重复三次均通过） |
+| `tools/test-all.ps1 -Tier server` | 通过，459.5 s：服务器启动 62.0 s；运行中上传 108.4 s、下载 65.8 s、PUT 回复丢失 104.3 s；MOVE 回复丢失 115.7 s、DELETE 68.1 s、最终 MOVE 119.1 s；在 prepared 杀进程 133.6 s、quiescing 135.0 s、verifying 125.9 s、committed 137.6 s、reconciling 137.8 s；文件安全 64.4 s；分块续传 147.8 s；被搁置的撤销 62.5 s；网络 135.8 s；生命周期 4.7 s；**两个账号 × 两个目录 64.1 s**；移除 1.9 s | 通过，162.5 s：服务器启动 60.7 s，`switch-kill` 在 `committed` 100.0 s，移除 1.8 s |
+
+两个账号的用例是 `multi-account` 场景（[开发](development.md)）。六次并行 CTest 中有一次
+`SyncDDurableConstraintContracts` 失败，之后单独运行 3/3 通过，再并行运行三次也通过；原因尚未确定。最终重新构建后，x64 快速层在 `SyncDNetworkContracts` 中失败一次：
+它按类名查找网络监视器的仅消息窗口，找到了同时运行的夹具守护进程的窗口；测试现在只取本进程的窗口，之后两层
+再次通过（ARM64 34.8 s，x64 33.7 s）。
+
+针对共享服务器的配对守护进程夹具 `tools/test-login.ps1 -SyncFolders -Reauthenticate` 在原生 ARM64 上以
+561.7 s 通过，覆盖每个阶段（策略、含重启与杀进程的切换、监听器、带删除确认的两个目录、运行中传输的杀进程与
+取消、含取消的续期、旧密码撤销与重启、登录清理）。当天更早的七次运行失败：第一次在 HTTP 507（测试账号的配额被
+遗留集合占满），两次在续期后的重启时（客户端失去了守护进程），两次在续期后目录仍在同步、凭据重新加载的
+切换未结束且客户端的调用都回答忙碌，两次在续期自身的 150 s 等待上；该等待现为步骤预算加三分钟，因为共享服务器每个带身份验证的请求需要
+2.5–3 s，并且至少搁置旧密码的撤销 60 s。
+
+
+同一台 ARM64 主机上的按需文件（2026-11-12）：`build/at-D0C17DFD07B7` 中带补丁 0001–0017 的 Desktop v35.0.3
+（原生 ARM64）、`build/syncd-cfapi-ARM64` 中的 SyncD、一次性 Nextcloud 35.0.2 容器（`wslc`）；x64 使用已登记补丁构建于
+`build/xt-5F1D91E19629`，在同一主机上以模拟方式运行（[按需文件](on-demand.md)）：
+
+| 运行 | 结果 |
+|---|---|
+| 上游套件，排除 `SyncCfApiTest` | 96 项通过 95 项，518.0 秒；`CfApiShellExtensionsIPCTest` 在与一次 `SyncCfApiTest` 运行重叠时失败，随后单独经 CTest 运行 3/3 通过。插件构建后，它会注册一个自己的临时 `Nextcloud!` 同步根，结束后移除 |
+| 模拟 x64 上的上游套件，排除 `SyncCfApiTest` | 96/96，594.6 秒（`build/xt-5F1D91E19629`，已登记的补丁） |
+| `tools/test-cfapi-upstream.ps1` | 50 通过、2 跳过、0 失败：ARM64 上 97.1 秒，模拟 x64 上 102.9 秒（40 个用例中运行 39 个；跳过会打开资源管理器的用例），包括补丁 0017 的 `testSyncRootAccountIdWithoutShellExtension` 和 `testRefusedRequestsFail`；未遗留 `OC-TEST` 注册项或 Shell 扩展类 |
+| SyncD CTest | ARM64 上 22/22，33.3 秒（`SyncDOnDemandContracts` 12.6 秒）；模拟 x64 上 22/22，46.8 秒（`build/syncd-cfapi-x64`，基于 `build/xt-5F1D91E19629`，14.1 秒） |
+| 真实 Go↔C++ 管道（`go test ./internal/syncd`、`SYNCD_TEST_EXE`） | 以协议 1.8 通过，无跳过的测试：ARM64 上 13.9 秒，模拟 x64（`GOARCH=amd64`）上 18.0 秒 |
+| `tools/test-ondemand.ps1` | 最终运行，每次自行启动并移除服务器：ARM64 65.8 秒（夹具 30.7 秒），模拟 x64 59.2 秒（夹具 32.3 秒）；[按需文件](on-demand.md)中列出的每一步；终止进程发生在一个 64 MiB 文件部分下载时，重启后的重试与其哈希一致；清理移除了远程集合、凭据库条目、本地目录和注册项，未遗留同步根。此前 ARM64 上 13 次运行通过、1 次在切换步骤失败：该步骤开始时正在运行的轮询周期在应用的请求到达之前就关闭了同步根，这是夹具自身的竞态，该步骤现在先等待运行时空闲 |
+| `tools/package.ps1 -Arch ARM64` | 插件通过导入闭包被纳入；29 个 PE 文件均为原生 ARM64，所有导入均已解析 |
+
+`testRefusedRequestsFail` 起初失败，因为 `cmd /c type` 在读取失败时仍以 0 退出；补丁改用 `copy` 读取。这个仅涉及测试的修正
+通过在本构建树中对其源码做同样修改并重建 `SyncCfApiTest` 来验证，因此该构建树的指纹对应修正之前的补丁；库代码完全相同。
+x64 构建使用已登记的补丁。在 x64 模拟下，容器只监听 IPv4 回环时，引擎对 `https://localhost:<port>` 报告
+`NETWORK_UNAVAILABLE`；夹具改为访问夹具证书中列出的 `127.0.0.1`。
+
+同一台 ARM64 主机上的测试重新设计（2026-11-12），使用由本工作树构建的 `build/syncd-ARM64` 和
+`build/syncd-x64` 中的 SyncD 二进制。下文配对守护进程夹具失败的原因：任何一次非正常退出之后，守护进程都会一直停留在崩溃退避中，
+因为 `main.cpp` 传入的是准入时钟的固定启动时间（`msecsSinceReference()`）而不是当前时间；夹具自己的杀进程每次都会造成一次非正常退出，
+所以探针一直等待一个永远不会到来的连接。已改为传入当前时间；`TestRealPipeCrashBackoffActivates` 在旧二进制上失败，
+在两种架构上都通过。`tools/test-all.ps1` 的运行，每次都使用一个一次性的 Nextcloud 35.0.2 容器
+（`wslc`，由本次运行拉取并删除）：
+
+| 层 | 原生 ARM64 | 模拟 x64 |
+|---|---|---|
+| `fast` | 通过，39.9 秒：格式与 vet 17.0 秒，Go 测试 15.9 秒，21 个 CTest 目标 6.9 秒 | 通过，41.0 秒：Go 测试 30.8 秒，21 个 CTest 目标 10.2 秒 |
+| `server` | 通过，471.0 秒，六个通道：服务器启动 61.3 秒；活动上传 113.2 秒、下载 69.0 秒、丢失的 PUT 回复 104.3 秒；丢失的 MOVE 66.3 秒、DELETE 57.7 秒、最终 MOVE 123.5 秒；在 prepared 阶段杀进程 140.0 秒、quiescing 137.7 秒、verifying 128.5 秒、committed 142.1 秒、reconciling 136.3 秒；文件安全 69.2 秒；分块续传 148.3 秒；暂缓吊销 62.7 秒；network 124.1 秒；lifetime 5.7 秒；删除 2.5 秒 | 通过，206.2 秒：服务器启动 76.7 秒，`committed` 阶段的 `switch-kill` 127.3 秒，删除 2.1 秒 |
+
+每个杀进程阶段包含两个进程（杀死、重启），仍略高于两分钟；每个用例其余的时间是守护进程自身的故障检测、熔断打开和备用探测窗口。
+未运行：`network-large`（需显式开启）、`wrong-instance`（需要第二个实例）、`-Runtime docker`。
+同一台 Windows ARM64 主机上的可靠性工作包（2026-11-11），全程使用服务器 35.0.2。十六个已
+登记补丁从全新克隆（`build/src-809fadb79180-A58E1844371E`）构建，上游套件串行运行：
+**原生 ARM64 96/96（427.45 秒，`build/at-88D6D388A83D`），模拟 x64 96/96（496.83 秒，
+`build/xt-88D6D388A83D`）**，因注册开机启动集成而排除 `UtilityTest`；带补丁 0016 的
+`ChunkingNgTest` 在两者上均通过。PE 检查与每种架构的 103 个 EXE/DLL 构建产物相符
+（AA64 / 8664）。针对这些构建树构建的 SyncD 通过 **ARM64 21/21 个 CTest 目标（20.55 秒）和
+模拟 x64 21/21（32.28 秒）**。
+
+真实夹具（`tools/test-reauth-lifetime.ps1`，SyncD 针对全新构建树构建）。隔离服务器是回环
+端口上自有的 Nextcloud 35.0.2 容器，通过两个保留的 `.test` 名称访问，夹具本地根证书只在
+验收进程内受信任；没有修改 Windows 信任库、hosts 文件或代理设置。共享服务器是已批准的
+测试实例及其两个地址。
+
+| 场景 | 服务器 | 原生 ARM64 | 模拟 x64 |
+|---|---|---|---|
+| `network-uncertain`：已提交的 MOVE、DELETE 和分块会话最终 MOVE 的回复丢失 | 隔离 | 通过，12 分 31 秒 | 通过，10 分 27 秒 |
+| `switch-kill`：在 `prepared`、`quiescing`、`verifying`、`committed`、`reconciling` 杀进程并重启 | 隔离 | 通过，见下文 | 通过，11 分 0 秒 |
+| `switch-kill`，相同的五个阶段 | 共享 | 通过，15 分 59 秒 | 通过，见下文 |
+| `file-safety`：S04、S11、S12、S13、S14（404）、S20 | 隔离 | 通过，1 分 6 秒 | 通过，59 秒 |
+| `file-safety` | 共享 | 通过，3 分 29 秒 | 通过，3 分 24 秒 |
+| `held-revocation`：重启后只发送一次被搁置的 DELETE | 隔离 | 通过，1 分 2 秒 | 通过，1 分 2 秒 |
+| `network-chunked`（此前用例的回归） | 隔离 | 通过，2 分 55 秒 | 通过，2 分 58 秒 |
+| `network-active`（此前用例的回归） | 共享 | 通过，13 分 38 秒 | 通过，12 分 47 秒 |
+| `network`、`network-lifetime`、`lifetime`（回归） | 共享 | 通过，2 分 51 秒、32 秒、11 秒 | 通过，2 分 55 秒、36 秒、13 秒 |
+| `network-large`：4,296 MiB 分块会话在 4 GiB 之后被切断 | 隔离 | 通过，28 分 35 秒 | 未运行 |
+
+在 ARM64 上，针对全新构建树的第一次 `switch-kill` 运行通过了 `prepared` 和 `quiescing`，随后
+在 `verifying` 的夹具准备阶段停止（退出码 1，尚未请求任何切换），当时 x64 上游构建正在占用
+机器；其原因未被捕获，脚本现在也会输出准备阶段的原因。其余三个阶段在重新构建的二进制上
+再次运行时通过（6 分 47 秒）。在共享服务器上，x64 运行通过了四个阶段，随后在 `reconciling`
+的全部检查通过之后，于夹具自身的收尾步骤失败：它在下一个轮询周期运行时请求移除映射而被
+拒绝。夹具在该处不再移除映射，`reconciling` 在两种架构上再次通过（x64 2 分 46 秒，ARM64
+4 分 1 秒）。在全新构建树出现之前，相同场景已在两种架构上各通过一次，
+当时的 SyncD 基于十五补丁构建树并增量应用补丁 0016（ARM64：五个阶段分两次运行共 11 分
+38 秒，回复丢失 11 分 55 秒；x64：11 分 38 秒和 9 分 42 秒）。`network-large` 只在那次较早的
+ARM64 构建上运行；其夹具代码此后没有改动。每个回复丢失用例都检查：另一个 origin 显示已
+提交的效果时守护进程仍在等待，且恢复后已提交条目的服务器文件 ID 和 ETag 不变。每个杀进程
+阶段都把重启后的进程与杀进程前写下的记录对照：账号、凭据引用、目录行、原生 journal 文件
+身份、内容哈希、新的 epoch，以及只允许被打断的文件再次传输的传输计数。
+真实的 Go↔C++ 管道测试通过（ARM64 9.390 秒，模拟 x64 9.958 秒）。配对守护进程夹具 `tools/test-login.ps1 -SyncFolders -Reauthenticate` 在这些二进制上**没有**通过：在 ARM64 上，其 `finish` 阶段在一次守护进程启动约两分钟后撞上 15 分钟期限，`abort` 阶段撞上同一期限，它启动的守护进程在父进程退出后仍然存活；x64 运行表现出相同的模式。夹具输出未被捕获，因此原因尚未确定：要么是本工作包对登录和 Control 的改动造成的回归，要么是夹具与已改动的 Go 客户端不匹配。在查明之前，真实守护进程的登录、双目录同步和重新认证对本工作树未重新验证，该夹具在共享服务器上的应用密码和集合可能需要手动清理。 Go 测试套件、`CGO_ENABLED=0` 套件、`go vet`、MyGo vet、i18n（401 条消息）和文档
+镜像检查通过。未运行：真实的 429、超过 4 GiB 的下载、`wrong-instance`（需要第二个实例；其
+代码路径只改了场景的命名方式）、原生 x64 硬件和 clang-tidy。自有容器、卷、镜像、引导凭据和
+TLS 文件已在事后移除；原有容器未被触碰。
+
 协议 1.7 最终启动/恢复集成仍在进行。独立 S19 根所有权
 回归在修复前失败（`cross-process descendant root admitted`）。随后基于内核句柄的分层
 准入在原生 ARM64（18.27 秒）和模拟 x64（26.27 秒）均通过三次重复/144 次竞争，包括
@@ -276,6 +375,7 @@ Desktop v35.0.3 的九补丁无 GUI 引擎随后在原生 ARM64 的
 | Go 模块 | `go vet ./...`、`go test ./...`、`go tool mygo vet .` 与 `go tool mygo i18n check` 通过 |
 | 文档镜像 | `go run ./tools/checkdocs` 通过 |
 | 界面 | `go build` 生成原生 ARM64 可执行文件，连接 Mock 启动窗口和托盘，运行无错误；每个页面都以浅色和深色、英文和简体中文渲染（视图测试与截图） |
+| 安装器 | ARM64 与 x64 包通过架构检查；ARM64 包为当前用户安装、原地重装和卸载后不留残余，其界面与 SyncD 从版本目录以 ARM64 运行；x64 安装器在 ARM64 上拒绝运行（[打包](packaging.md)） |
 
 ## 已知限制
 
@@ -323,5 +423,5 @@ PE machine 全部为 AA64。QtKeychain 0.14.0 和 KDSingleApplication 1.2.1 构�
 
 - 已证明上游原生基本同步可运行；产品 ARM64 支持仍需通过剩余 M0 和发布门槛。
 - 界面连接的是 `syncd.Mock` 而不是 SyncD：不会同步任何文件，登录也不会到达服务器。
-- 托盘图标和标志都是占位图，正式图标在之后从上游发行版取得 Nextcloud 图标。
+- 托盘图标和标志都是占位图，正式图标在之后从上游发行版取得 Nextcloud 图标；可执行文件、快捷方式与应用列表条目已使用该图标（`resources/icon.png`）。
 - 托盘浮出面板、通知、登录时启动和更新检查尚未手动实际操作验证；未签名构建中应用更新处于关闭状态。

@@ -2,6 +2,22 @@
 
 ## 0.1.0 (in progress)
 
+- Windows on-demand files (M6, 2026-11-12): upstream's CFAPI plugin serves on-demand folders through
+  SyncD; patch 0017 (plugin without shell extension, endpoint-independent sync-root identity, no
+  unregistered handler classes, a request gate for the switch boundary). Protocol 1.8 adds the
+  folder `mode`; Control schema 10 stores it. Real on-demand runs against server 35.0.2 passed on
+  native ARM64 and emulated x64; `virtualFiles` stays `false`. Go 1.27.4 / MyGo v0.9.0 / Desktop
+  v35.0.3 / server v35.0.2 checked, unchanged. No commit, tag or push.
+
+- Reliability package (2026-11-11): fresh sixteen-patch upstream builds with the full suite on
+  both architectures; real lost-reply recovery for a MOVE and a DELETE of existing entries and for
+  a chunk session's final MOVE; process kills at five durable switch stages with restart recovery;
+  real file-safety cases; a chunk session above 4 GiB on native ARM64. Control schema 9 lets a
+  restarted daemon send a new login's held revocation once. Protocol 1.7 and the sixteen patches
+  are unchanged; `fullSync` and `endpointAutoSwitch` stay `false`. Go 1.27.4 / MyGo v0.9.0 (moved
+  by the interface work; `migrate-ui` reported no changes) / Desktop v35.0.3 (checked, unchanged) /
+  server v35.0.2 (previous major v34.0.5; checked, unchanged). No commit, tag or push.
+
 - LoginFlow classifies 403/423/429 with the shared metadata rules, gates requests behind a
   confirmed server delay, never extends its 20-minute validity and keeps an acquired password owned
   while its revocation is throttled. A successful half-open probe no longer fails a verified switch

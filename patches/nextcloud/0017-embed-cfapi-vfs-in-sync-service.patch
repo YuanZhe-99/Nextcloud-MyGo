@@ -1,0 +1,428 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 01b6fbc..0490a6b 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -200,6 +200,9 @@ endif()
+ # this option builds the shell integration
+ option(BUILD_SHELL_INTEGRATION "BUILD_SHELL_INTEGRATION" ON)
+ 
++# this option builds the Windows Cloud Files VFS plugin, also without the Explorer shell extension
++option(BUILD_CFAPI_VFS "BUILD_CFAPI_VFS" ${BUILD_SHELL_INTEGRATION})
++
+ # this option builds/installs the generic shell integration icons
+ option(BUILD_SHELL_INTEGRATION_ICONS "BUILD_SHELL_INTEGRATION_ICONS" ON)
+ 
+diff --git a/src/common/vfs.h b/src/common/vfs.h
+index 4860322..aa926e4 100644
+--- a/src/common/vfs.h
++++ b/src/common/vfs.h
+@@ -93,6 +93,14 @@ struct OCSYNC_EXPORT VfsSetupParams
+      */
+     bool multipleAccountsRegistered = false;
+ 
++    /** Account part of the platform sync root identity
++     *
++     * Empty means the account's display name, which contains the server host.
++     * An embedding service that changes the server address of one account sets a
++     * value here that does not depend on the address.
++     */
++    QString syncRootAccountId;
++
+     [[nodiscard]] const FileSystem::Path &root() const;
+ };
+ 
+@@ -202,6 +210,18 @@ public:
+      */
+     [[nodiscard]] virtual bool isHydrating() const = 0;
+ 
++    /** Make platform requests arriving from now on fail
++     *
++     * Covers hydration and placeholder population requests from the operating
++     * system. The owner calls this before waiting for hasRequestsInFlight() to
++     * become false and then calling stop(), for example before it replaces the
++     * account the requests would use.
++     */
++    virtual void refuseNewRequests() { }
++
++    /// Whether a platform request is still being served. Callable from any thread.
++    [[nodiscard]] virtual bool hasRequestsInFlight() const { return false; }
++
+     /** Update placeholder metadata during discovery.
+      *
+      * If the remote metadata changes, the local placeholder's metadata should possibly
+diff --git a/src/libsync/vfs/cfapi/CMakeLists.txt b/src/libsync/vfs/cfapi/CMakeLists.txt
+index 9389390..846b8ca 100644
+--- a/src/libsync/vfs/cfapi/CMakeLists.txt
++++ b/src/libsync/vfs/cfapi/CMakeLists.txt
+@@ -14,7 +14,7 @@ if(WIN32 AND NOT BUILD_SHELL_INTEGRATION)
+         ${CMAKE_CURRENT_BINARY_DIR}/shellext/configvfscfapishellext.h)
+ endif()
+ 
+-if (WIN32 AND BUILD_SHELL_INTEGRATION)
++if (WIN32 AND (BUILD_SHELL_INTEGRATION OR BUILD_CFAPI_VFS))
+     add_definitions(-D_WIN32_WINNT=_WIN32_WINNT_WIN10)
+ 
+     add_library(nextcloudsync_vfs_cfapi SHARED
+@@ -26,7 +26,9 @@ if (WIN32 AND BUILD_SHELL_INTEGRATION)
+         vfs_cfapi.cpp
+     )
+     
++    if (BUILD_SHELL_INTEGRATION)
+ 	add_subdirectory(shellext)
++    endif()
+ 
+     target_link_libraries(nextcloudsync_vfs_cfapi PRIVATE
+         Nextcloud::sync
+diff --git a/src/libsync/vfs/cfapi/cfapiwrapper.cpp b/src/libsync/vfs/cfapi/cfapiwrapper.cpp
+index f538c4c..e3741e7 100644
+--- a/src/libsync/vfs/cfapi/cfapiwrapper.cpp
++++ b/src/libsync/vfs/cfapi/cfapiwrapper.cpp
+@@ -222,6 +222,25 @@ void cfApiSendPlaceholdersTransferInfo(const CF_CONNECTION_KEY &connectionKey,
+     qCInfo(lcCfApiWrapper()) << "number of processes entries:" << opParams.TransferPlaceholders.EntriesProcessed;
+ }
+ 
++// Counts a data or placeholder request for the lifetime of its callback, so the owner can wait for none to be running.
++class CfApiRequestScope
++{
++public:
++    explicit CfApiRequestScope(OCC::VfsCfApi *vfs)
++        : _vfs(vfs)
++        , _admitted(vfs->beginRequest())
++    {
++    }
++    ~CfApiRequestScope() { _vfs->endRequest(); }
++    CfApiRequestScope(const CfApiRequestScope &) = delete;
++    CfApiRequestScope &operator=(const CfApiRequestScope &) = delete;
++    [[nodiscard]] bool admitted() const { return _admitted; }
++
++private:
++    OCC::VfsCfApi *_vfs;
++    bool _admitted;
++};
++
+ void CALLBACK cfApiFetchDataCallback(const CF_CALLBACK_INFO *callbackInfo, const CF_CALLBACK_PARAMETERS *callbackParameters)
+ {
+     qCDebug(lcCfApiWrapper) << "Fetch data callback called. File size:" << callbackInfo->FileSize.QuadPart;
+@@ -252,6 +271,13 @@ void CALLBACK cfApiFetchDataCallback(const CF_CALLBACK_INFO *callbackInfo, const
+     const auto path = QString(QString::fromWCharArray(callbackInfo->VolumeDosName) + QString::fromWCharArray(callbackInfo->NormalizedPath));
+     const auto requestId = QString::number(callbackInfo->TransferKey.QuadPart, 16);
+ 
++    const CfApiRequestScope requestScope(vfs);
++    if (!requestScope.admitted()) {
++        qCWarning(lcCfApiWrapper) << "Hydration refused, the sync root is closing" << path << requestId;
++        sendTransferError();
++        return;
++    }
++
+     if (!callbackInfo->ProcessInfo) {
+         qCCritical(lcCfApiWrapper) << "Callback parameters did not contain required process info required for the implicit hydration check, aborting" << path
+                                    << requestId;
+@@ -574,6 +600,13 @@ void CALLBACK cfApiFetchPlaceHolders(const CF_CALLBACK_INFO *callbackInfo, const
+     Q_ASSERT(vfs->metaObject()->className() == QByteArrayLiteral("OCC::VfsCfApi"));
+     const auto requestId = QString::number(callbackInfo->TransferKey.QuadPart, 16);
+ 
++    const CfApiRequestScope requestScope(vfs);
++    if (!requestScope.admitted()) {
++        qCWarning(lcCfApiWrapper) << "Placeholder request refused, the sync root is closing" << path << requestId;
++        sendTransferError();
++        return;
++    }
++
+     if (QCoreApplication::applicationPid() == callbackInfo->ProcessInfo->ProcessId) {
+         qCCritical(lcCfApiWrapper) << "implicit hydration triggered by the client itself. Will lead to a deadlock. Cancel" << path << requestId;
+         sendTransferError();
+@@ -794,7 +827,8 @@ bool createSyncRootRegistryKeys(const QString &providerName,
+                                 const QString &navigationPaneClsid,
+                                 const QString &displayName,
+                                 const QString &accountDisplayName,
+-                                const QString &syncRootPath)
++                                const QString &syncRootPath,
++                                bool withShellExtensions)
+ {
+     // We must set specific Registry keys to make the progress bar refresh correctly and also add status icons into Windows Explorer
+     // More about this here: https://docs.microsoft.com/en-us/windows/win32/shell/integrate-cloud-storage
+@@ -824,17 +858,22 @@ bool createSyncRootRegistryKeys(const QString &providerName,
+ 
+     qCDebug(lcCfApiWrapper) << "syncRootPath" << syncRootPath << " will use DisplayNameResource" << displayName;
+ 
+-    const QVector<RegistryKeyInfo> registryKeysToSet = {
++    auto registryKeysToSet = QVector<RegistryKeyInfo>{
+         {providerSyncRootIdRegistryKey, QStringLiteral("Flags"), REG_DWORD, flags},
+         {providerSyncRootIdRegistryKey, QStringLiteral("DisplayNameResource"), REG_EXPAND_SZ, displayName},
+         {providerSyncRootIdRegistryKey,
+          QStringLiteral("IconResource"),
+          REG_EXPAND_SZ,
+          QString(QDir::toNativeSeparators(qApp->applicationFilePath()) + QStringLiteral(",0"))},
+-        {providerSyncRootIdUserSyncRootsRegistryKey, windowsSid, REG_SZ, syncRootPath},
+-        {providerSyncRootIdRegistryKey, QStringLiteral("CustomStateHandler"), REG_SZ, CFAPI_SHELLEXT_CUSTOM_STATE_HANDLER_CLASS_ID_REG},
+-        {providerSyncRootIdRegistryKey, QStringLiteral("ThumbnailProvider"), REG_SZ, CFAPI_SHELLEXT_THUMBNAIL_HANDLER_CLASS_ID_REG},
+-        {providerSyncRootIdRegistryKey, QStringLiteral("NamespaceCLSID"), REG_SZ, QString(navigationPaneClsid)}};
++        {providerSyncRootIdUserSyncRootsRegistryKey, windowsSid, REG_SZ, syncRootPath}};
++    // Without its shell extension the sync root must not name handler classes, which could belong to another installed client.
++    if (withShellExtensions) {
++        registryKeysToSet.append({providerSyncRootIdRegistryKey, QStringLiteral("CustomStateHandler"), REG_SZ, CFAPI_SHELLEXT_CUSTOM_STATE_HANDLER_CLASS_ID_REG});
++        registryKeysToSet.append({providerSyncRootIdRegistryKey, QStringLiteral("ThumbnailProvider"), REG_SZ, CFAPI_SHELLEXT_THUMBNAIL_HANDLER_CLASS_ID_REG});
++    }
++    if (!navigationPaneClsid.isEmpty()) {
++        registryKeysToSet.append({providerSyncRootIdRegistryKey, QStringLiteral("NamespaceCLSID"), REG_SZ, QString(navigationPaneClsid)});
++    }
+ 
+     for (const auto &registryKeyToSet : std::as_const(registryKeysToSet)) {
+         if (!OCC::Utility::registrySetKeyValue(HKEY_LOCAL_MACHINE,
+@@ -894,10 +933,12 @@ OCC::Result<void, QString> OCC::CfApiWrapper::registerSyncRoot(const QString &pa
+                                                                const QString &folderAlias,
+                                                                const QString &navigationPaneClsid,
+                                                                const QString &displayName,
+-                                                               const QString &accountDisplayName)
++                                                               const QString &accountDisplayName,
++                                                               bool withShellExtensions)
+ {
+     // even if we fail to register our sync root with shell, we can still proceed with using the VFS
+-    const auto createRegistryKeyResult = createSyncRootRegistryKeys(providerName, folderAlias, navigationPaneClsid, displayName, accountDisplayName, path);
++    const auto createRegistryKeyResult =
++        createSyncRootRegistryKeys(providerName, folderAlias, navigationPaneClsid, displayName, accountDisplayName, path, withShellExtensions);
+     Q_ASSERT(createRegistryKeyResult);
+ 
+     if (!createRegistryKeyResult) {
+diff --git a/src/libsync/vfs/cfapi/cfapiwrapper.h b/src/libsync/vfs/cfapi/cfapiwrapper.h
+index f25ac0e..3fd4ace 100644
+--- a/src/libsync/vfs/cfapi/cfapiwrapper.h
++++ b/src/libsync/vfs/cfapi/cfapiwrapper.h
+@@ -70,7 +70,7 @@ private:
+     std::vector<char> _data;
+ };
+ 
+-NEXTCLOUD_CFAPI_EXPORT Result<void, QString> registerSyncRoot(const QString &path, const QString &providerName, const QString &providerVersion, const QString &folderAlias, const QString &navigationPaneClsid, const QString &displayName, const QString &accountDisplayName);
++NEXTCLOUD_CFAPI_EXPORT Result<void, QString> registerSyncRoot(const QString &path, const QString &providerName, const QString &providerVersion, const QString &folderAlias, const QString &navigationPaneClsid, const QString &displayName, const QString &accountDisplayName, bool withShellExtensions = true);
+ NEXTCLOUD_CFAPI_EXPORT void unregisterSyncRootShellExtensions(const QString &providerName, const QString &folderAlias, const QString &accountDisplayName);
+ NEXTCLOUD_CFAPI_EXPORT Result<void, QString> unregisterSyncRoot(const QString &path, const QString &providerName, const QString &accountDisplayName);
+ 
+diff --git a/src/libsync/vfs/cfapi/vfs_cfapi.cpp b/src/libsync/vfs/cfapi/vfs_cfapi.cpp
+index 87b1fd3..f8fb911 100644
+--- a/src/libsync/vfs/cfapi/vfs_cfapi.cpp
++++ b/src/libsync/vfs/cfapi/vfs_cfapi.cpp
+@@ -22,6 +22,8 @@
+ 
+ #include <QCoreApplication>
+ 
++#include <atomic>
++
+ Q_LOGGING_CATEGORY(lcCfApi, "nextcloud.sync.vfs.cfapi", QtInfoMsg)
+ 
+ namespace cfapi
+@@ -32,15 +34,19 @@ constexpr auto appIdRegKey = R"(Software\Classes\AppID\)";
+ constexpr auto clsIdRegKey = R"(Software\Classes\CLSID\)";
+ const auto rootKey = HKEY_CURRENT_USER;
+ 
++QString shellExtensionDllPath()
++{
++    // assume CFAPI_SHELL_EXTENSIONS_LIB_NAME is always in the same folder as the main executable
++    return QDir::toNativeSeparators(
++        QString(QCoreApplication::applicationDirPath() + QStringLiteral("/") + CFAPI_SHELL_EXTENSIONS_LIB_NAME + QStringLiteral(".dll")));
++}
++
+ bool registerShellExtension()
+ {
+     const QList<QPair<QString, QString>> listExtensions = {
+         {CFAPI_SHELLEXT_THUMBNAIL_HANDLER_DISPLAY_NAME, CFAPI_SHELLEXT_THUMBNAIL_HANDLER_CLASS_ID_REG},
+         {CFAPI_SHELLEXT_CUSTOM_STATE_HANDLER_DISPLAY_NAME, CFAPI_SHELLEXT_CUSTOM_STATE_HANDLER_CLASS_ID_REG}};
+-    // assume CFAPI_SHELL_EXTENSIONS_LIB_NAME is always in the same folder as the main executable
+-    // assume CFAPI_SHELL_EXTENSIONS_LIB_NAME is always in the same folder as the main executable
+-    const auto shellExtensionDllPath = QDir::toNativeSeparators(
+-        QString(QCoreApplication::applicationDirPath() + QStringLiteral("/") + CFAPI_SHELL_EXTENSIONS_LIB_NAME + QStringLiteral(".dll")));
++    const auto shellExtensionDllPath = cfapi::shellExtensionDllPath();
+     if (!OCC::FileSystem::fileExists(shellExtensionDllPath)) {
+         Q_ASSERT(false);
+         qCWarning(lcCfApi) << "Register CfAPI shell extensions failed. Dll does not exist in " << QCoreApplication::applicationDirPath();
+@@ -103,8 +109,15 @@ class VfsCfApiPrivate
+ public:
+     QList<HydrationJob *> hydrationJobs;
+     CF_CONNECTION_KEY connectionKey = {};
++    std::atomic<int> requestsInFlight = 0;
++    std::atomic<bool> refusingRequests = false;
+ };
+ 
++static QString syncRootAccountId(const VfsSetupParams &params)
++{
++    return params.syncRootAccountId.isEmpty() ? params.account->displayName() : params.syncRootAccountId;
++}
++
+ VfsCfApi::VfsCfApi(QObject *parent)
+     : Vfs(parent)
+     , d(new VfsCfApiPrivate)
+@@ -125,7 +138,8 @@ QString VfsCfApi::fileSuffix() const
+ 
+ void VfsCfApi::startImpl(const VfsSetupParams &params)
+ {
+-    cfapi::registerShellExtension();
++    // A build without the shell extension does not register it, nor name its handlers for the sync root.
++    const auto withShellExtensions = OCC::FileSystem::fileExists(cfapi::shellExtensionDllPath()) && cfapi::registerShellExtension();
+     const auto localPath = QDir::toNativeSeparators(params.filesystemPath);
+ 
+     const auto registerResult = cfapi::registerSyncRoot(localPath,
+@@ -134,7 +148,8 @@ void VfsCfApi::startImpl(const VfsSetupParams &params)
+                                                         params.alias,
+                                                         params.navigationPaneClsid,
+                                                         params.displayName,
+-                                                        params.account->displayName());
++                                                        syncRootAccountId(params),
++                                                        withShellExtensions);
+     if (!registerResult) {
+         qCCritical(lcCfApi) << "Initialization failed, couldn't register sync root:" << registerResult.error();
+         return;
+@@ -162,16 +177,38 @@ void VfsCfApi::stop()
+ void VfsCfApi::unregisterFolder()
+ {
+     const auto localPath = QDir::toNativeSeparators(params().filesystemPath);
+-    const auto result = cfapi::unregisterSyncRoot(localPath, params().providerName, params().account->displayName());
++    const auto result = cfapi::unregisterSyncRoot(localPath, params().providerName, syncRootAccountId(params()));
+     if (!result) {
+         qCCritical(lcCfApi) << "Unregistration failed for" << localPath << ":" << result.error();
+     }
+ 
+-    if (!cfapi::isAnySyncRoot(params().providerName, params().account->displayName())) {
++    if (!cfapi::isAnySyncRoot(params().providerName, syncRootAccountId(params()))) {
+         cfapi::unregisterShellExtensions();
+     }
+ }
+ 
++void VfsCfApi::refuseNewRequests()
++{
++    d->refusingRequests = true;
++}
++
++bool VfsCfApi::hasRequestsInFlight() const
++{
++    return d->requestsInFlight > 0;
++}
++
++bool VfsCfApi::beginRequest()
++{
++    // Count before reading the refusal, so an owner that refuses and then sees no request in flight cannot miss one.
++    ++d->requestsInFlight;
++    return !d->refusingRequests;
++}
++
++void VfsCfApi::endRequest()
++{
++    --d->requestsInFlight;
++}
++
+ bool VfsCfApi::socketApiPinStateActionsShown() const
+ {
+     return true;
+diff --git a/src/libsync/vfs/cfapi/vfs_cfapi.h b/src/libsync/vfs/cfapi/vfs_cfapi.h
+index 8b860ff..c9a6a34 100644
+--- a/src/libsync/vfs/cfapi/vfs_cfapi.h
++++ b/src/libsync/vfs/cfapi/vfs_cfapi.h
+@@ -62,6 +62,13 @@ public:
+     int finalizeNewPlaceholders(const QList<OCC::PlaceholderCreateInfo> &newEntries,
+                                 const QString &pathString);
+ 
++    void refuseNewRequests() override;
++    [[nodiscard]] bool hasRequestsInFlight() const override;
++    /// Counts a starting request callback; returns false when requests are refused. Called on Cloud Files callback threads.
++    bool beginRequest();
++    /// Counts a finished request callback. Called on Cloud Files callback threads.
++    void endRequest();
++
+ public Q_SLOTS:
+     void requestHydration(const QString &requestId, const QString &path);
+     void fileStatusChanged(const QString &systemFileName, OCC::SyncFileStatus fileStatus) override;
+diff --git a/test/testsynccfapi.cpp b/test/testsynccfapi.cpp
+index bb81740..876d972 100644
+--- a/test/testsynccfapi.cpp
++++ b/test/testsynccfapi.cpp
+@@ -16,6 +16,8 @@
+ #include "syncengine.h"
+ #include "vfs/cfapi/cfapiwrapper.h"
+ 
++#include <QProcess>
++#include <QSettings>
+ #include <QtTest>
+ 
+ using namespace Qt::StringLiterals;
+@@ -2031,6 +2033,83 @@ private Q_SLOTS:
+         QVERIFY(!subFolderNewName.exists());
+     }
+ 
++    // A caller-supplied account identity names the sync root; without the shell extension no handler class is registered for it.
++    void testSyncRootAccountIdWithoutShellExtension()
++    {
++        FakeFolder fakeFolder{FileInfo{}};
++        const auto syncRoots = u"HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\SyncRootManager"_s;
++        const auto findSyncRoot = [&] {
++            const auto groups = QSettings(syncRoots, QSettings::NativeFormat).childGroups();
++            const auto found = std::find_if(groups.cbegin(), groups.cend(), [](const QString &name) {
++                return name.startsWith(u"OC-TEST!"_s) && name.endsWith(u"!stable-account!stable-alias"_s);
++            });
++            return found == groups.cend() ? QString{} : *found;
++        };
++        QVERIFY(findSyncRoot().isEmpty());
++
++        auto vfs = QSharedPointer<Vfs>(createVfsFromPlugin(Vfs::WindowsCfApi).release());
++        VfsSetupParams params;
++        params.filesystemPath = fakeFolder.localPath();
++        params.rootPath = FileSystem::Path{fakeFolder.localPath()};
++        params.remotePath = u"/"_s;
++        params.account = fakeFolder.account();
++        params.journal = &fakeFolder.syncJournal();
++        params.providerName = u"OC-TEST"_s;
++        params.providerVersion = u"0.1"_s;
++        params.alias = u"stable-alias"_s;
++        params.syncRootAccountId = u"stable-account"_s;
++        vfs->start(params);
++
++        const auto syncRoot = findSyncRoot();
++        QVERIFY(!syncRoot.isEmpty());
++        QSettings key(syncRoots + u"\\"_s + syncRoot, QSettings::NativeFormat);
++        QVERIFY(!key.contains(u"CustomStateHandler"_s));
++        QVERIFY(!key.contains(u"ThumbnailProvider"_s));
++        QVERIFY(!key.contains(u"NamespaceCLSID"_s));
++        QVERIFY(!syncRoot.contains(fakeFolder.account()->displayName()));
++
++        vfs->stop();
++        vfs->unregisterFolder();
++        QVERIFY(findSyncRoot().isEmpty());
++    }
++
++    // After refuseNewRequests() an application opening an online-only file gets an error instead of a download.
++    void testRefusedRequestsFail()
++    {
++        FakeFolder fakeFolder{FileInfo{}};
++        auto vfs = setupVfs(fakeFolder);
++        fakeFolder.remoteModifier().insert("a", 64);
++        fakeFolder.remoteModifier().insert("b", 64);
++        QVERIFY(fakeFolder.syncOnce());
++        CFVERIFY_VIRTUAL(fakeFolder, "a");
++        CFVERIFY_VIRTUAL(fakeFolder, "b");
++
++        // The client itself may not hydrate its own files, so another process reads them;
++        // copy sets an error level when the read fails, unlike type.
++        const auto readInChild = [&](const QString &name) {
++            QProcess reader;
++            reader.setProgram(u"cmd.exe"_s);
++            reader.setNativeArguments(u"/d /c copy /b /y \"%1\" nul > nul"_s.arg(QDir::toNativeSeparators(fakeFolder.localPath() + name)));
++            QSignalSpy finished(&reader, &QProcess::finished);
++            reader.start();
++            if (!finished.wait(30000)) {
++                reader.kill();
++                reader.waitForFinished();
++                return -1;
++            }
++            return reader.exitStatus() == QProcess::NormalExit ? reader.exitCode() : -1;
++        };
++
++        QCOMPARE(readInChild(u"a"_s), 0);
++        QVERIFY(!cfapi::isSparseFile(fakeFolder.localPath() + "a"));
++        QVERIFY(!vfs->hasRequestsInFlight());
++
++        vfs->refuseNewRequests();
++        QVERIFY(readInChild(u"b"_s) != 0);
++        QVERIFY(cfapi::isSparseFile(fakeFolder.localPath() + "b"));
++        QVERIFY(!vfs->hasRequestsInFlight());
++    }
++
+     void testServer_caseClash_createConflict()
+     {
+         FakeFolder fakeFolder{ FileInfo{} };

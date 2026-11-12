@@ -14,6 +14,10 @@ import (
 	"time"
 )
 
+// protocolMinor is the protocol 1.x minor version this client speaks
+// (protocol/contract.json).
+const protocolMinor = 9
+
 // Remote projects a real SyncD connection into the existing UI Client contract.
 // Side effects: reconnects and bootstraps; Close never shuts down the daemon.
 type Remote struct {
@@ -35,6 +39,10 @@ type Remote struct {
 	// legacyState is enabled only by an explicit pre-1.7 hello response.
 	legacyState bool
 	bootstrapID string
+	// minor is the protocol minor version the current connection negotiated.
+	minor int
+	// cause is why the last connection ended or could not start (Disconnect).
+	cause string
 }
 
 // rpcReply holds a response or a transport failure, neither of which implies rollback.
@@ -71,8 +79,10 @@ func (e *rpcError) Is(target error) bool {
 		return target == ErrCredentialCleanup
 	case "REVISION_CONFLICT", "OPERATION_KEY_CONFLICT":
 		return target == ErrStale
-	case "QUIESCE_STALLED", "PAUSED", "REMOTE_LOCKED", "SERVER_THROTTLED":
+	case "QUIESCE_STALLED", "PAUSED", "REMOTE_LOCKED", "SERVER_THROTTLED", "DECISION_PENDING":
 		return target == ErrBusy
+	case "ACCOUNT_EXISTS":
+		return target == ErrAccountExists
 	case "NOT_FOUND":
 		return target == ErrNotFound
 	default:
@@ -89,14 +99,29 @@ type projection struct {
 }
 
 // NewRemote starts the reconnect loop using the platform's authenticated local pipe.
+// Side effects: starts SyncD once when its pipe does not exist.
 func NewRemote(ctx context.Context, profile, executable string) *Remote {
+	return newRemote(ctx, profile, executable, true)
+}
+
+// ConnectRemote is NewRemote that never starts SyncD: it only connects to a
+// running one, for the installer (packaging.md).
+// Notes: executable may be relative here; it is only compared with the
+// pipe server's own path.
+func ConnectRemote(ctx context.Context, profile, executable string) *Remote {
+	return newRemote(ctx, profile, executable, false)
+}
+
+// newRemote starts the reconnect loop; launch says whether a missing pipe
+// starts SyncD.
+func newRemote(ctx context.Context, profile, executable string, launch bool) *Remote {
 	ctx, cancel := context.WithCancel(ctx)
 	r := &Remote{ctx: ctx, cancel: cancel, pending: map[string]chan rpcReply{}, listeners: map[uint64]func(){}}
-	var launch sync.Once
+	var once sync.Once
 	r.dial = func(ctx context.Context) (io.ReadWriteCloser, error) {
 		conn, err := dialPipe(ctx, profile, executable)
-		if errors.Is(err, os.ErrNotExist) {
-			launch.Do(func() { _ = startDaemon(profile, executable) })
+		if launch && errors.Is(err, os.ErrNotExist) {
+			once.Do(func() { _ = startDaemon(profile, executable) })
 		}
 		return conn, err
 	}
@@ -122,6 +147,7 @@ func (r *Remote) Snapshot() Snapshot {
 	var s Snapshot
 	_ = json.Unmarshal(b, &s)
 	s.Daemon.Connected = r.state.Daemon.Connected
+	s.Daemon.ProtocolMinor = r.state.Daemon.ProtocolMinor
 	return s
 }
 
@@ -151,6 +177,11 @@ func (r *Remote) notify() {
 func (r *Remote) run() {
 	for r.ctx.Err() == nil {
 		conn, err := r.dial(r.ctx)
+		if err != nil {
+			r.mu.Lock()
+			r.cause = "dial: " + dialCause(err)
+			r.mu.Unlock()
+		}
 		if err == nil {
 			r.mu.Lock()
 			r.conn = conn
@@ -164,16 +195,25 @@ func (r *Remote) run() {
 					Minor *int `json:"minor"`
 				} `json:"protocol"`
 			}
-			err = r.call(r.ctx, "session.hello", map[string]any{"protocol": map[string]int{"major": 1, "minor": 7}}, &hello)
+			err = r.call(r.ctx, "session.hello", map[string]any{"protocol": map[string]int{"major": 1, "minor": protocolMinor}}, &hello)
 			if err == nil && hello.Protocol.Major == 1 {
 				r.mu.Lock()
 				r.legacyState = hello.Protocol.Minor != nil && *hello.Protocol.Minor >= 0 && *hello.Protocol.Minor < 7
+				r.minor = 0
+				if hello.Protocol.Minor != nil {
+					r.minor = *hello.Protocol.Minor
+				}
 				r.mu.Unlock()
 				err = r.call(r.ctx, "state.bootstrap", map[string]any{}, nil)
 			} else if err == nil {
 				err = ErrRefused
 			}
 			if err != nil {
+				r.mu.Lock()
+				if r.cause == "" {
+					r.cause = "handshake: " + dialCause(err)
+				}
+				r.mu.Unlock()
 				conn.Close()
 			}
 			select {
@@ -229,7 +269,11 @@ func (r *Remote) apply(p projection, bootstrap bool) error {
 	r.revision = p.Revision
 	r.state = p.Snapshot
 	r.state.Daemon.Connected = r.state.Daemon.StateAvailable
+	r.state.Daemon.ProtocolMinor = r.minor
 	r.ready = true
+	if bootstrap {
+		r.cause = ""
+	}
 	r.mu.Unlock()
 	r.notify()
 	return nil
@@ -237,9 +281,13 @@ func (r *Remote) apply(p projection, bootstrap bool) error {
 
 // read dispatches replies and ordered projections, failing pending calls on disconnect.
 func (r *Remote) read(conn io.ReadWriteCloser) {
+	cause := "eof"
 	defer func() {
 		conn.Close()
 		r.mu.Lock()
+		if r.cause == "" {
+			r.cause = cause
+		}
 		r.conn = nil
 		r.ready = false
 		r.state.Daemon.Connected = false
@@ -262,6 +310,7 @@ func (r *Remote) read(conn io.ReadWriteCloser) {
 		if err != nil {
 			return
 		}
+		cause = "invalid frame"
 		var fields map[string]json.RawMessage
 		if json.Unmarshal(b, &fields) != nil || string(fields["jsonrpc"]) != `"2.0"` {
 			return
@@ -278,12 +327,15 @@ func (r *Remote) read(conn io.ReadWriteCloser) {
 				return
 			}
 			var p projection
-			if json.Unmarshal(header.Params, &p) != nil {
+			if err := json.Unmarshal(header.Params, &p); err != nil {
+				cause = "event: " + decodeCause(err)
 				return
 			}
 			if r.apply(p, false) != nil {
+				cause = "event refused"
 				return
 			}
+			cause = "eof"
 			continue
 		}
 		if header.Method != "" || fields["id"] == nil || (fields["result"] == nil) == (fields["error"] == nil) {
@@ -298,14 +350,21 @@ func (r *Remote) read(conn io.ReadWriteCloser) {
 		bootstrap := reply.ID == r.bootstrapID
 		r.mu.Unlock()
 		if ch == nil {
+			cause = "unknown reply"
 			return
 		}
 		if bootstrap && reply.Error == nil {
 			var p projection
-			if json.Unmarshal(reply.Result, &p) != nil || r.apply(p, true) != nil {
+			if err := json.Unmarshal(reply.Result, &p); err != nil {
+				cause = "bootstrap: " + decodeCause(err)
+				return
+			}
+			if r.apply(p, true) != nil {
+				cause = "bootstrap refused"
 				return
 			}
 		}
+		cause = "eof"
 		r.mu.Lock()
 		delete(r.pending, reply.ID)
 		r.mu.Unlock()
@@ -546,7 +605,10 @@ func (r *Remote) WaitLogin(ctx context.Context, id string) (string, error) {
 			if result.Reason == "APP_PASSWORD_REVOCATION_UNCONFIRMED" {
 				return "", ErrCredentialCleanup
 			}
-			return "", ErrRefused
+			// Keeps the reason (expired, cancelled) for the interface's words; still ErrRefused.
+			failure := &rpcError{Code: -32000}
+			failure.Data.Reason = result.Reason
+			return "", failure
 		}
 		select {
 		case <-ctx.Done():
@@ -590,14 +652,20 @@ func (r *Remote) RemoteFolders(id string) ([]RemoteFolder, error) {
 }
 
 // AddFolder binds an inspection token to a separately revalidated add command.
-func (r *Remote) AddFolder(account, remote, local string) error {
+// Notes: without a mode SyncD adds a full-file folder; FolderOnDemand needs
+// protocol 1.8 and answers UNSUPPORTED_CAPABILITY where Cloud Files is missing.
+func (r *Remote) AddFolder(account, remote, local string, mode ...FolderMode) error {
 	var inspection struct {
 		Token string `json:"inspectToken"`
 	}
 	if err := r.call(r.ctx, "folders.inspect", map[string]any{"accountId": account, "remotePath": remote, "localPath": local}, &inspection); err != nil {
 		return err
 	}
-	return r.mutate("folders.add", map[string]any{"inspectToken": inspection.Token}, nil)
+	params := map[string]any{"inspectToken": inspection.Token}
+	if len(mode) > 0 && mode[0] != "" {
+		params["mode"] = mode[0]
+	}
+	return r.mutate("folders.add", params, nil)
 }
 
 // RequestPolicy returns durable policy acceptance separately from potentially user-paused reconciliation.
@@ -623,9 +691,13 @@ func (r *Remote) SetPolicy(account string, p Policy, fixed string) error {
 }
 
 // StageEndpoint inspects an address without account credentials.
-func (r *Remote) StageEndpoint(account, name, url string) (Staging, error) {
+func (r *Remote) StageEndpoint(account, name, url string, kind ...EndpointKind) (Staging, error) {
 	var staging Staging
-	err := r.mutate("endpoints.stage", map[string]any{"accountId": account, "name": name, "baseUrl": url}, &staging)
+	params := map[string]any{"accountId": account, "name": name, "baseUrl": url}
+	if len(kind) > 0 {
+		params["kind"] = string(kind[0])
+	}
+	err := r.mutate("endpoints.stage", params, &staging)
 	return staging, err
 }
 
@@ -711,3 +783,40 @@ func (r *Remote) Shutdown() error {
 }
 
 var _ Client = (*Remote)(nil)
+
+// Disconnect says, for Diagnostics, why the last connection to SyncD ended
+// or could not start: a stable phrase that names at most a field, never data.
+// Returns: "" while connected and before any connection ended.
+func (r *Remote) Disconnect() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.cause
+}
+
+// decodeCause names a projection decoding failure by field and kind only.
+func decodeCause(err error) string {
+	if e, ok := errors.AsType[*json.UnmarshalTypeError](err); ok {
+		return "field " + e.Field + " is " + e.Value
+	}
+	return "invalid JSON"
+}
+
+// dialCause names a transport or handshake failure without paths or names.
+func dialCause(err error) string {
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return "no pipe"
+	case errors.Is(err, ErrRefused):
+		return "refused"
+	case errors.Is(err, ErrStale), errors.Is(err, ErrBusy):
+		return "busy"
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		return "deadline"
+	case errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, io.EOF):
+		return "eof"
+	}
+	if _, ok := errors.AsType[*rpcError](err); ok {
+		return "rejected"
+	}
+	return "other"
+}

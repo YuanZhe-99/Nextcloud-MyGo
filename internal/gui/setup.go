@@ -1,6 +1,7 @@
 package gui
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,12 +38,15 @@ type setupState struct {
 	atLogin   bool
 	notify    bool
 	failed    string
+	// remoteErr says why the server's folders could not be listed, or "".
+	remoteErr string
 }
 
 // setupShown tells whether the window shows setup instead of the pages:
-// while it runs, and always while there is no account.
+// while it runs, and always while SyncD reports no account (an unknown
+// list is not an empty one).
 func (a *App) setupShown() bool {
-	return a.setup.active || len(a.snap.Accounts) == 0
+	return a.setup.active || (stateKnown(a.snap) && len(a.snap.Accounts) == 0)
 }
 
 // startSetup begins setup at its first step.
@@ -157,12 +161,10 @@ func (a *App) setupServer(c *ui.Context) {
 	p := pal(c)
 	st := &a.setup
 	setupTitle(c, L.SetupWelcomeTitle(), L.SetupWelcomeBody())
-	if !a.snap.Daemon.Demo {
-		if !a.snap.Daemon.Connected {
-			muted(c, L.DaemonDisconnected(), fontBody).Wrap()
-		} else if !a.snap.Daemon.Capabilities["login"] {
-			muted(c, L.LoginUnavailable(), fontBody).Wrap()
-		}
+	if !a.snap.Daemon.Connected {
+		muted(c, L.DaemonDisconnected(), fontBody).Wrap()
+	} else if !a.snap.Daemon.Capabilities["login"] {
+		muted(c, L.LoginUnavailable(), fontBody).Wrap()
 	}
 	ui.Column(c).Gap(6).MaxWidth(480).Margin(8, 0, 0, 0).Children(func() {
 		ui.Text(c, L.ServerAddressLabel()).FontSize(13).FontWeight(600)
@@ -186,9 +188,9 @@ func (a *App) setupServer(c *ui.Context) {
 	a.setupFoot(c, back, L.ActionContinue(), strings.TrimSpace(st.server) == "" || a.busy["login"] || !a.loginAvailable(), a.beginLogin)
 }
 
-// loginAvailable requires a live negotiated capability, except in explicit demo mode.
+// loginAvailable requires a live negotiated login capability.
 func (a *App) loginAvailable() bool {
-	return a.snap.Daemon.Demo || (a.snap.Daemon.Connected && a.snap.Daemon.Capabilities["login"])
+	return a.snap.Daemon.Connected && a.snap.Daemon.Capabilities["login"]
 }
 
 // beginLogin starts Login Flow v2 and waits for the browser step.
@@ -214,6 +216,9 @@ func (a *App) beginLogin() {
 			}
 			if err != nil {
 				a.setup.step, a.setup.failed = stepServer, L.SignInFailed()
+				if t := reasonText(syncd.ReasonOf(err)); t != "" {
+					a.setup.failed += " " + t
+				}
 				return
 			}
 			a.setup.accountID, a.setup.step = id, stepFolders
@@ -223,6 +228,9 @@ func (a *App) beginLogin() {
 	}, func(err error) {
 		if err != nil {
 			a.setup.failed = L.AddressInvalid()
+			if t := reasonText(syncd.ReasonOf(err)); t != "" {
+				a.setup.failed = t
+			}
 		}
 	})
 }
@@ -265,31 +273,45 @@ func (a *App) setupSignIn(c *ui.Context) {
 // loadRemote lists an account's folders for step 3; the user's home and
 // documents folders start chosen when they exist on the server.
 func (a *App) loadRemote(accountID string) {
+	a.setup.remoteErr = ""
 	a.do("remote", func() error {
 		list, err := a.client.RemoteFolders(accountID)
 		a.later(func() {
 			a.setup.remote = list
+			if err != nil {
+				a.setup.remoteErr = errText(err)
+			}
 			for _, r := range list {
 				if !r.Encrypted && (r.Path == "/Documents" || r.Path == "/Photos") {
 					a.setup.chosen[r.Path] = true
 				}
 			}
 		})
-		return err
+		return nil // shown in the step itself
 	}, nil)
 }
 
-// setupFolders offers mappings only when the backend can actually synchronize them.
+// setupFolders lists the server's folders to choose from; while file sync
+// is not a supported capability, it says so first.
 func (a *App) setupFolders(c *ui.Context) {
 	p := pal(c)
 	st := &a.setup
 	setupTitle(c, L.SetupFoldersTitle(), L.SetupFoldersBody())
-	if !a.snap.Daemon.Demo && !a.snap.Daemon.Capabilities["fullSync"] {
-		muted(c, L.SyncUnavailable(), fontBody).Wrap()
-		if button(c, "setup-unavailable-back", L.ActionBack(), nil).Clicked() {
-			a.setup = setupState{}
-		}
-		return
+	if !a.snap.Daemon.Capabilities["fullSync"] {
+		// File sync is not a supported capability yet: it says so before
+		// anything is chosen, and never as supported.
+		ui.Row(c).Gap(10).MaxWidth(620).Padding(12, 14).Radius(radiusCard).Background(p.warnBg).Border(1, p.warnBorder).Children(func() {
+			ui.Icon(c, icWarn).FontSize(18).TextColor(p.warn)
+			ui.Text(c, L.SyncPreview()).FontSize(13).Wrap().Grow(1).MinWidth(0)
+		})
+	}
+	if st.remoteErr != "" {
+		ui.Row(c).Gap(10).Children(func() {
+			ui.Text(c, st.remoteErr).FontSize(13).TextColor(p.danger).Wrap().Grow(1).MinWidth(0)
+			if button(c, "setup-retry", L.ActionTryAgain(), nil).Disabled(a.busy["remote"]).Clicked() {
+				a.loadRemote(st.accountID)
+			}
+		})
 	}
 	ui.Row(c).Gap(10).Children(func() {
 		muted(c, L.InsideLabel(), 13)
@@ -423,15 +445,40 @@ func (a *App) finishSetup() {
 	}
 	a.setup = setupState{}
 	a.page = pageOverview
+	demo := a.snap.Daemon.Demo
 	a.do("add-folders", func() error {
 		for _, f := range add {
+			// SyncD inspects an existing local folder only: make the empty
+			// one chosen, never anything inside it; sample data makes none.
+			if !demo {
+				if err := os.MkdirAll(f[1], 0o700); err != nil {
+					return err
+				}
+			}
 			if err := a.client.AddFolder(st.accountID, f[0], f[1]); err != nil {
-				return err
+				return folderError{name: filepath.Base(f[1]), err: err}
 			}
 		}
 		return nil
-	}, nil)
+	}, func(err error) {
+		var fe folderError
+		switch {
+		case errors.As(err, &fe):
+			a.setToast(L.AddFolderFailed(fe.name) + " " + errText(fe.err))
+		case err != nil:
+			a.setToast(errText(err))
+		}
+	})
 }
+
+// folderError is a folder that could not be added, by name.
+type folderError struct {
+	name string
+	err  error
+}
+
+func (e folderError) Error() string { return e.name + ": " + e.err.Error() }
+func (e folderError) Unwrap() error { return e.err }
 
 // languageSelect chooses the interface's language; empty follows Windows.
 func (a *App) languageSelect(c *ui.Context, key string) {

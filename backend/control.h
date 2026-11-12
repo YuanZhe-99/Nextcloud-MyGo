@@ -9,6 +9,7 @@
 #include <QString>
 #include <map>
 #include <memory>
+#include <source_location>
 class Startup;
 #ifdef SYNCD_WITH_ENGINE
 #include "engine_runtime.h"
@@ -19,6 +20,11 @@ class Startup;
 /// control thread (INV-12).
 class Control {
 public:
+  /// schemaVersion is the Control database version this build writes; the
+  /// `PRAGMA user_version=` statement in control.cpp must name the same.
+  static constexpr int schemaVersion = 11;
+  /// protocolMinor is the protocol 1.x minor version this build speaks.
+  static constexpr int protocolMinor = 9;
   /// StartupMode selects immediate fixtures, deferred admission or DB-less IPC.
   enum class StartupMode {
     Immediate,
@@ -250,7 +256,10 @@ private:
   void recoverSwitches();
   /// stopForStorageFailure freezes admission and exits only after active engine
   /// teardown.
-  void stopForStorageFailure();
+  /// Notes: logs, for the support record, the calling file and line and the
+  /// stable code of the exception being handled, never data.
+  void stopForStorageFailure(
+      std::source_location from = std::source_location::current());
   /// endpointMutation reserves staged origin consent and read-only verification
   /// before network work.
   QJsonObject endpointMutation(const QString &method, const QJsonObject &params,
@@ -290,9 +299,27 @@ private:
   /// credentialReference derives an owned vault key without trusting arbitrary
   /// persisted key names.
   QString credentialReference(const QString &account) const;
+  /// releaseAccount stops everything a removed account still runs, then
+  /// removes its mappings and hands over to removeAccount.
+  /// Side effects: cancels its sign-ins, blocks and waits out its engines,
+  /// ends on-demand registrations, fails an unfinished switch and deletes
+  /// mapping rows; local files and engine journals stay untouched.
+  /// Notes: retries on the control thread until idle; an on-demand
+  /// registration that cannot end by the deadline fails the removal and keeps
+  /// the account.
+  void releaseAccount(const QString &account, const QString &operation,
+                      QDeadlineTimer deadline);
   /// removeAccount attempts remote app-password revocation, then removes only
   /// owned local account state.
   void removeAccount(const QString &account, const QString &operation);
+  /// retireHeldPassword sends, once and only after the restored server delay,
+  /// the DELETE a previous process had to leave held for an interrupted login.
+  /// Notes: the durable record is removed before the request leaves, so an
+  /// unanswered DELETE is never sent again by a later boot (N18).
+  void retireHeldPassword(const QString &account);
+  /// finishHeldPassword removes the interrupted login's local state and says
+  /// whether the server confirmed the revocation.
+  void finishHeldPassword(const QString &account, bool revoked);
   /// finishRemoval records local completion and whether server-side revocation
   /// was confirmed.
   void finishRemoval(const QString &account, const QString &operation,
@@ -320,6 +347,27 @@ private:
   /// attachFolder revalidates a persisted root and registers it with the serial
   /// engine runtime.
   void attachFolder(const QString &id);
+  /// publishState commits a new snapshot event without a configuration edit.
+  void publishState();
+  /// startupReport says what this start migrated from and whether its
+  /// self-check passed, for the installer after an update (PLAN §16.2).
+  QJsonObject startupReport() const;
+  /// selfCheck verifies the migrated database, every account's credential
+  /// and every mapping's attachment once restoration ran, then publishes.
+  void selfCheck();
+  /// prepareUpdate reserves the update safe point: no new cycle starts and
+  /// nothing that holds credentials or an address choice is in flight.
+  /// Notes: refuses DECISION_PENDING while a deletion waits for the user and
+  /// QUIESCE_STALLED while a switch, renewal, check or sign-in runs.
+  QJsonObject prepareUpdate(const QJsonObject &params,
+                            const QByteArray &digest);
+  /// advanceUpdate waits for running work to end naturally, then backs up
+  /// Control and reports the safe point; the hold lasts ten minutes.
+  void advanceUpdate(const QString &operation, QDeadlineTimer deadline);
+  /// finishUpdate records the safe point or why it was not reached.
+  void finishUpdate(const QString &operation, const QString &reason);
+  /// releaseUpdate lets sync admission continue when no update follows.
+  void releaseUpdate();
   /// operationFinished durably records asynchronous completion and publishes
   /// its snapshot.
   void operationFinished(const QString &id, const QString &reason = {});
@@ -350,6 +398,14 @@ private:
   std::map<QString, Inspection> inspections_;
   QString directory_, shutdownOperation_;
   bool dispatching_ = false;
+  // The update safe point being held, if any (in memory: a new start is the
+  // new version).
+  QString updateOperation_;
+  // What this start migrated from, and its self-check (startupReport).
+  QString previousVersion_;
+  int previousSchema_ = 0;
+  bool selfChecked_ = false;
+  QStringList selfCheckReasons_;
 #ifdef SYNCD_WITH_ENGINE
   std::unique_ptr<EngineRuntime> runtime_;
 #endif

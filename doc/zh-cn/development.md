@@ -31,6 +31,10 @@ go run ./tools/checkdocs           # doc/en-us and doc/zh-cn mirror each other
 `go test ./internal/syncd -count=1 -v` 验证真实 Go 到 C++ 管道契约。
 测试使用唯一 profile 并在结束后删除；这些命令不安装或注册应用。
 
+用 `tools/package.ps1 -Arch ARM64`（或 `x64`）打包已构建的 SyncD；`go run ./tools/pkg check -arch
+ARM64 <package dir>` 重新运行架构检查。`tools/package-smoke.ps1 -Setup <installer>` 以一次性 profile
+为当前用户真实安装、重装和卸载该包，并再次删除所有内容；已有安装时拒绝运行。见[打包](packaging.md)。
+
 M0 的仅上游构建入口为 `tools/build-upstream.ps1`。在 PowerShell 中传入
 `-Architecture ARM64`（或 `x64`）、`-Mode engine`（或 `tests`）、`-QtPrefix`、`-QtHostPrefix`
 及 `-DependencyPrefix`。前缀参数为 SDK 或依赖的绝对目录；DependencyPrefix 可包含多个目录。
@@ -70,15 +74,15 @@ DAV 验证期间执行取消/新会话替换。它仅将批准的凭据作为借
 方式借用凭据，只认可提供的两个 HTTPS origin，并以进程局部 Qt 代理故障拒绝选定连接。
 不更改系统代理、DNS、路由、防火墙、注册表或 Explorer 设置。它通过实际 HTTPS 检查验证
 自动故障选择、全坏等待及固定目标拒绝；不使用 HTTP 模拟代替 DAV 验收。
-配对守护进程夹具还在批准的配额内创建 16 MiB 随机自有上传/下载对象。仅在诊断观察到
+配对守护进程夹具还在批准的配额内创建 4 MiB 随机自有上传/下载对象。仅在诊断观察到
 未结束的内容回复及正内容字节后，才杀死它自己启动的子进程；重启后检查恢复内容哈希及
 原生 journal 文件身份。未观察到活动传输的运行会失败，不凭界面状态宣称崩溃验收通过。
 全部对象位于夹具预留的集合下，由既有清理流程删除。
-扩展还观察正字节、未结束的 16 MiB 传输，显式暂停/取消它，将整个暂停账号切换到另一
+扩展还观察正字节、未结束的 4 MiB 传输，显式暂停/取消它，将整个暂停账号切换到另一
 认可 origin，恢复后重新核对。双向检查恢复哈希和原生 journal 身份。这是取消加手动跨
 origin 恢复，不证明映射目录活动传输期间的自动故障选择。
-独立的 `-Scenario network-active` 验收模式使用自有本地 CONNECT 中继限制加密流吞吐量并
-打断真实未结束传输。TLS 仍在认可的真实服务器终止，不在中继终止。普通守护进程探测和
+独立的 `-Scenario network-active` 验收模式使用自有本地 CONNECT 中继在某个字节偏移处保持
+真实传输未完成，然后将其打断。TLS 仍在认可的真实服务器终止，不在中继终止。普通守护进程探测和
 策略必须完成取消、排空、故障切换，并使用原 journal 核对映射根。仅创建一个唯一预留的
 远程集合；即使子进程崩溃，父进程清理也验证其清单并删除它。不更改系统网络或重放结果
 不明的用户写入。此模式处于实现/验收中。
@@ -99,6 +103,39 @@ Qt 对 `127.0.0.1` 或 `localhost` 的请求从不经过代理，这会绕过故
 `.test` 名称访问回环服务器，这两个名称须出现在它的证书和 `trusted_domains` 中，并把
 `NEXTCLOUD_TEST_CLEANUP_URL` 设为直接的回环 origin，供不经过中继的清理步骤使用。失败时
 脚本输出已到达的 `PASS` 行和一条脱敏原因。
+隔离夹具服务器由 `NEXTCLOUD_TEST_CLEANUP_URL`（中继连接到该主机）和 `SYNCD_TEST_CA_CERT`
+（已认可的根证书）识别；两者都设置时，下面的每个传输场景和 `network-active` 都可以对它运行。
+
+`-Scenario network-uncertain` 丢弃真实服务器已提交的写入的回复，需要同样的隔离服务器。夹具
+把它指名路径的那一个请求送过一个只转发请求、绝不转发回复的中继，等到另一个 origin 已显示
+写入效果而守护进程仍在等待时，再切断主地址。它覆盖对既有条目的 MOVE 和 DELETE（恢复前由
+另一个客户端在原路径重新创建对象），以及 112 MiB 分块会话的最终 MOVE。恢复必须让重新创建的
+对象和已提交的目标保持不变（服务器文件 ID 和 ETag 相同），且不重发任何分块；夹具绝不告诉
+守护进程服务器做了什么。
+
+`-Scenario switch-kill` 在真实切换的某个持久阶段结束它自己的子进程，再在同一配置目录上重启：
+`prepared`（意图已保存）、`quiescing`（旧地址上仍有上传在进行）、`verifying`（即将发送对
+目标的带凭据检查）、`committed`（绑定已发布，新 epoch 尚未发出任何请求）和 `reconciling`
+（文件的一部分已发送到新地址）。`-Stage` 选择阶段；每个阶段使用全新的配置目录。重启后的
+子进程除自身存储外得不到任何提示：前三个阶段必须停在原绑定上，后两个阶段必须停在已提交的
+绑定上，并使用新的 epoch、相同的凭据引用、目录绑定和原生 journal 文件，哈希一致，且已核对
+的文件不再次传输。它的内容为 8 MiB，因此也可以对共享测试服务器运行。
+
+`-Scenario multi-account` 针对一次性服务器，在一个守护进程上运行两个账号、每个账号两个目录（`PLAN.md` §2.1、
+R05）。它再次登录夹具用户并要求得到 `ACCOUNT_EXISTS`，用随机密码创建第二个服务器用户（先记录在 profile
+的 `owned-user.json` 中，由本次运行和父进程的 `--cleanup` 删除），通过生产登录路径添加两个账号，为每个
+账号映射两个目录（其中一个本地目录尚不存在），在全部四个目录中双向传输内容，在第二个账号的目录持续上传
+时把第一个账号切换到另一个地址（这些目录都不得出现 `switchInProgress` 阻断或暂停，其绑定与 epoch 不得
+改变），并在第一个账号继续同步时移除第二个账号。它需要允许夹具用户创建用户的服务器，因此只在服务器层运行。
+
+`-Scenario file-safety` 在真实服务器上运行无故障用例：双向重命名和目录移动且保留服务器文件
+ID、对含十二个后代的单个目录的删除确认（方向和数量）、后续变化之后的过期批准、被租约持有
+的本地根，以及返回 404 的远程根。`-Scenario network-large` 在超过 4 GiB 的文件越过 4 GiB
+边界之后切断其分块会话，并要求它在另一个 origin 上续传；内容以流的方式写入、发送和校验，
+需要有约 9 GiB 可用空间的隔离服务器。
+`-Scenario held-revocation` 同样需要隔离服务器：它用夹具自己的密码签发一个应用密码，把它
+记录为被中断登录的搁置撤销，重启 Control，并要求在 60 秒下限之后只发送一次 DELETE、得到
+服务器确认，且该密码此后被拒绝。夹具自己的密码绝不会被撤销。
 
 `tools/build-syncd.ps1` 运行 CTest 时只把 Qt 的 `bin` 加入 PATH。集成测试还需要相同架构的
 对应上游构建 `bin/Release` 和原生依赖 `bin` 目录；请在调用前加入，直接运行已构建的可执行
@@ -111,10 +148,60 @@ M0 发现生命周期回归测试使用 `./tools/test-discovery-lifetime.ps1 -Ex
 
 M0 CTest 运行排除 `UtilityTest`，因为其中的启动测试会实际创建开机启动注册项。
 必须明确报告此排除项；此配置不验证启动集成。
+它们还排除 `SyncCfApiTest`，该测试会注册临时同步根，且有一个用例会打开资源管理器窗口。请用
+`tools/test-cfapi-upstream.ps1 -Build <上游测试构建树>` 运行它（PATH 中需有目标 Qt 和依赖的 `bin` 目录）：
+它跳过该用例，若遗留 `OC-TEST` 注册项或上游的 Shell 扩展类注册项则失败。
+
+`tools/test-ondemand.ps1 -Architecture ARM64|x64 [-Build <SyncD 构建树>]` 是真实的按需运行
+（[按需文件](on-demand.md)）。它用 `tools/test-server.ps1` 启动一次性服务器，在 150 秒内运行
+`syncd_ondemand_acceptance`（其中每一步都有各自的期限），移除服务器，并在运行期间注册的
+`Nextcloud-MyGo!` 同步根仍存在时失败。`-State` 复用已在运行的服务器。CTest 目标 `SyncDOnDemandContracts`
+不需要服务器。
 
 复用的构建源码通过临时 Git 索引检查：按相反顺序撤销记录补丁，再与记录的上游提交比较。
 这样可处理重叠补丁，且不修改源码工作目录及其真实索引。
 
+## 测试分层
+
+`tools/test-all.ps1 -Tier fast|server -Architecture ARM64|x64` 是唯一的入口。它运行
+`build/syncd-<arch>` 中构建的 SyncD，并使用其 CMake 缓存记录的 Qt 和上游 DLL；每个场景输出一行
+`PASS`/`FAIL` 及其耗时，最后输出一行 `TOTAL`；遇到第一个失败即停止，总时长超出该层预算时判为失败。
+失败的场景不会重跑，无论是在同一架构还是另一架构上。
+
+| 层 | 预算 | ARM64（原生） | x64（在 ARM64 主机上模拟） |
+|---|---|---|---|
+| `fast` | 2 分钟，无服务器 | `gofmt`、`go vet`、包含真实 Go↔C++ 管道测试的 `go test ./...`、全部 SyncD CTest 目标 | 为 amd64 构建的 `go test ./...`、全部 SyncD CTest 目标 |
+| `server` | 10 分钟，含容器 | 下文所有真实服务器场景，分六个并行通道 | 一个冒烟场景（在 `committed` 阶段的 `switch-kill`） |
+
+服务器层用 `tools/test-server.ps1 -Start` 启动自己的一次性 Nextcloud（默认 `wslc`，托管运行器上用
+`-Runtime docker`），结束后用 `-Stop` 删除：一个带标签、使用匿名卷、只监听回环端口的容器；仅当本次运行拉取了镜像时才删除镜像；
+夹具本地根证书和管理员密码在此之前保存在被忽略的 `build/test-server-<id>/` 中。该根证书只在各验收进程内部受信任
+（`SYNCD_TEST_CA_*`）；不修改任何信任存储、hosts 文件或代理设置，TLS 检查始终开启。客户端通过夹具中继以
+`primary.syncd.test` 和 `alternate.syncd.test` 访问服务器，清理步骤和 `lifetime` 用例使用直接回环源。
+该层不需要私有服务器。
+
+每个用例都在独立的进程和配置目录中运行，因此每个用例都从健康的端点开始，而不必等待前一个用例留下的熔断历史：
+`network-active` 将 `upload`、`download` 和 `unacknowledged-upload` 作为独立用例运行，`network-uncertain`
+运行 `move`、`delete` 和 `final-move`（在 `tools/test-reauth-lifetime.ps1` 中用 `-Case` 选择），
+`switch-kill` 逐个运行 `-Stage`。相互独立的用例共享容器并在并行通道中运行。中继不再限速：
+传输在某个字节偏移处被保持为未完成（`NetworkTunnel::setStallAfter`，仅作用于主地址或备用地址的中继，
+小于 1 MiB 的请求不受影响），再由用例指定的故障打断。用例剩余的大部分时间是守护进程自身的故障切换、
+熔断和协调时序，测试不缩短这些时序。
+
+每一步都有自己的截止时间，失败时给出步骤名称：C++ 等待默认 60 秒，并输出一行 `STEP <ms> <name>`，
+子进程超出 150 秒预算时由包装脚本报告该行（`network` 为 240 秒，因为它要等待两个熔断打开窗口）；
+`SYNCD_TEST_STEPS=1` 输出所有步骤时间。Go 探针为每次等待留 90 秒、每次命令重试留 30 秒，失败时给出步骤名称
+和守护进程脱敏后的状态；即使某一步忽略了自己的 context，看门狗也会在阶段预算之后不久输出 goroutine 位置并退出。
+所有包装脚本都会在一个拥有关闭即终止 Job Object 的子 `pwsh` 中重新启动自身（`tools/test-job.ps1`），
+探针也把自己放入一个这样的 Job Object，因此失败、被终止或被中断的运行不会留下守护进程、探针或测试可执行文件。
+清理是直接的：探针的 `abort` 先通过守护进程删除自有账户（最多等待其 60 秒崩溃退避），再删除自有集合和根目录；
+它从不重放流程。守护进程拒绝删除账户时，`abort` 保留配置目录、根目录和状态文件并说明原因，
+因为只有根目录存在时，被中断的切换才能完成。
+
+预算之外、需显式开关的项目：`-Large` 加入 `network-large`（一个超过 4 GiB 的分块会话在 4 GiB 边界之后被切断，
+约 30 分钟，服务器需约 9 GiB 可用空间）；`-SharedServer` 加入针对 `NEXTCLOUD_TEST_*` 中已批准共享服务器的配对守护进程夹具
+`tools/test-login.ps1`：配对守护进程只信任公共受信任的证书链，因此不能使用一次性服务器。`wrong-instance`
+需要第二个实例，单独运行。
 ## 运行界面
 
 ```bash

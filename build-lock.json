@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "status": "m0-audit-in-progress-not-a-verified-build",
-  "checkedAt": "2026-11-09",
+  "checkedAt": "2026-11-11",
   "earlyHandoff": {
     "date": "2026-11-09",
     "product": "0.1.0",
@@ -14,6 +14,50 @@
     "handoffReady": false,
     "cleanup": "subagents-interrupted-owned-native-test-credentials-removed-zero-remote-owned-collections-zero-n02-containers-volumes-listeners-no-test-root-1168-temp-test-dirs-removed-explorer-test-clsid-and-namespace-removed-stale-nextcloud-run-and-config-removed",
     "see": "doc/en-us/backend-progress.md"
+  },
+  "reliabilityPackage": {
+    "date": "2026-11-11",
+    "product": "0.1.0",
+    "protocol": "1.7",
+    "controlSchema": 9,
+    "controlSchemaChange": "adds-held_revocations-table-only",
+    "upstreamPatches": 16,
+    "upstreamPatchesAdded": 0,
+    "freshSource": "build/src-809fadb79180-A58E1844371E",
+    "arm64UpstreamTests": "passed-96-of-96-427.45s-build/at-88D6D388A83D-UtilityTest-excluded",
+    "x64UpstreamTests": "passed-emulated-96-of-96-496.83s-build/xt-88D6D388A83D-UtilityTest-excluded",
+    "peInspection": "103-exe-dll-per-architecture-AA64-and-8664",
+    "arm64SyncdContracts": "passed-21-of-21-ctest-20.55s",
+    "x64SyncdContracts": "passed-emulated-21-of-21-ctest-32.28s",
+    "realPipe": "passed-arm64-9.390s-and-emulated-x64-9.958s",
+    "realFixtures": "passed-both-architectures-lost-reply-move-delete-final-move-switch-kill-five-stages-file-safety-held-revocation-and-regressions-large-file-above-4GiB-arm64-only",
+    "capabilities": "fullSync-and-endpointAutoSwitch-remain-false",
+    "serverTested": "35.0.2",
+    "cleanup": "owned-isolated-container-volume-image-credentials-and-tls-files-removed-preexisting-container-untouched",
+    "handoffReady": false,
+    "see": "doc/en-us/platform-notes.md"
+  },
+  "onDemandPackage": {
+    "date": "2026-11-12",
+    "product": "0.1.0",
+    "protocol": "1.8",
+    "controlSchema": 10,
+    "upstreamPatches": 17,
+    "upstreamPatchesAdded": 1,
+    "arm64UpstreamTree": "build/at-D0C17DFD07B7-patch-0017-before-its-test-only-copy-fix-SyncCfApiTest-rebuilt-with-it",
+    "x64UpstreamTree": "build/xt-5F1D91E19629",
+    "arm64UpstreamTests": "95-of-96-518.02s-SyncCfApiTest-and-UtilityTest-excluded-CfApiShellExtensionsIPCTest-failed-while-overlapping-a-SyncCfApiTest-run-then-3-of-3-alone",
+    "arm64SyncCfApiTest": "50-passed-2-skipped-0-failed-97.1s-39-of-40-cases-explorer-case-excluded",
+    "x64UpstreamTests": "passed-emulated-96-of-96-594.57s-SyncCfApiTest-and-UtilityTest-excluded",
+    "x64SyncCfApiTest": "passed-emulated-50-passed-2-skipped-0-failed-102.9s-39-of-40-cases",
+    "arm64SyncdContracts": "passed-22-of-22-ctest-33.33s",
+    "x64SyncdContracts": "passed-emulated-22-of-22-ctest-46.84s",
+    "realPipe": "passed-arm64-13.9s-and-emulated-x64-18.0s",
+    "realOnDemand": "passed-arm64-65.8s-and-emulated-x64-59.2s-each-with-its-own-server",
+    "capabilities": "virtualFiles-fullSync-and-endpointAutoSwitch-remain-false",
+    "serverTested": "35.0.2",
+    "cleanup": "owned-containers-volumes-vault-entries-remote-collections-local-roots-and-sync-root-registrations-removed-preexisting-container-untouched",
+    "see": "doc/en-us/platform-notes.md"
   },
   "nextcloudDesktop": {
     "repository": "https://github.com/nextcloud/desktop",
@@ -101,11 +145,16 @@
         "path": "patches/nextcloud/0016-prove-chunk-recovery-across-origins.patch",
         "sha256": "3cb68bc2563fb3bac08318ca60eb2ceb77d0489255f78754cae2d1ad40b5c5ed",
         "reason": "Test-only: prove that an interrupted chunk session resumes after the account moves to another origin of the same server without resending chunks or contacting the previous origin, and that a committed final MOVE with a lost reply is adopted there without download, chunk or second MOVE. No library source changes."
+      },
+      {
+        "path": "patches/nextcloud/0017-embed-cfapi-vfs-in-sync-service.patch",
+        "sha256": "4dd16b323793e690f270b66c39c1adcefe69b8787914467bdd32209f49298244",
+        "reason": "Build the Windows CFAPI plugin without its Explorer shell extension (BUILD_CFAPI_VFS); register sync roots under a caller-supplied account identity that does not contain the server host; name no shell-extension handler class or navigation-pane CLSID that was not registered; let the owner refuse new hydration/placeholder callbacks and observe running ones (Vfs::refuseNewRequests, Vfs::hasRequestsInFlight) before stopping. Default upstream behavior is unchanged."
       }
     ]
   },
-  "go": "1.27.3",
-  "mygo": "v0.8.3",
+  "go": "1.27.4",
+  "mygo": "v0.9.0",
   "observedToolchain": {
     "hostArchitecture": "arm64",
     "visualStudio": "18.11.12306.390",

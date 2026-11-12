@@ -2,10 +2,12 @@ package gui
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/egoist/mygo"
 
+	"github.com/YuanZhe-99/Nextcloud-MyGo/internal/syncd"
 	L "github.com/YuanZhe-99/Nextcloud-MyGo/locales"
 )
 
@@ -106,9 +108,14 @@ func (a *App) installUpdate() {
 		}
 		a.later(func() {
 			a.upd.installing = false
-			if err != nil {
+			switch {
+			case errors.Is(err, syncd.ErrBusy):
+				// Not at a safe point: postponed, tried again later.
+				a.setToast(L.UpdateWaits())
+				return
+			case err != nil:
 				a.upd.failedFor = u.Version
-				a.setToast(errText(err))
+				a.setToast(L.UpdateFailed())
 				return
 			}
 			a.quitting = true

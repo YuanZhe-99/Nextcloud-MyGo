@@ -1,6 +1,6 @@
 {
   "jsonrpc": "2.0", "id": "diagnostics",
-  "result": {"version": "0.1.0", "protocol": "1.7", "stateAvailable": true, "startupState": "normal", "reasonCode": "", "networkGeneration": "3", "folders": [{
+  "result": {"version": "0.1.0", "protocol": "1.8", "stateAvailable": true, "startupState": "normal", "reasonCode": "", "networkGeneration": "3", "folders": [{
     "folderId": "11111111-1111-4111-8111-111111111111",
     "accountId": "22222222-2222-4222-8222-222222222222", "epoch": "4",
     "activeUploads": "1", "activeDownloads": "0", "activeRequests": "1", "retainedReplies": "1",

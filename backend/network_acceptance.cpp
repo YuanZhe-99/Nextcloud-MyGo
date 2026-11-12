@@ -1,32 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#include "network_acceptance.h"
+
 #include "control.h"
 #include "namespace.h"
 #include "network_tunnel.h"
 #include "switch_state.h"
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QMutex>
 #include <QNetworkProxyFactory>
 #include <QRegularExpression>
 #include <QSqlQuery>
 #include <QTcpServer>
 #include <QTcpSocket>
+#include <QThread>
 #include <QUuid>
 #include <cstdio>
 #include <stdexcept>
-
-/// networkTransferAcceptance exercises automatic switching with real content
-/// and parent-reserved cleanup.
-void networkTransferAcceptance(Control &, const QString &, const QString &,
-                               const QString &, const QString &,
-                               const QString &,
-                               const std::function<void(bool)> &,
-                               const std::function<bool()> &,
-                               const std::function<void(bool)> &);
 
 /// NetworkTestAccess observes the real coordinator while keeping fault controls
 /// out of production IPC.
@@ -115,7 +111,52 @@ struct NetworkTestAccess {
   static bool stable(Control &c, const QString &a) {
     return !SwitchState(c.db_).gated(a);
   }
+  /// facts reads the durable switch identities through the Control connection.
+  static SwitchFacts facts(Control &c, const QString &account) {
+    SwitchFacts facts;
+    const auto bound = SwitchState(c.db_).binding(account);
+    facts.endpoint = bound.endpoint;
+    facts.epoch = bound.epoch;
+    QSqlQuery q(c.db_);
+    const auto run = [&](const QString &sql) {
+      q.prepare(sql);
+      q.addBindValue(account);
+      if (!q.exec())
+        throw std::runtime_error("owned switch facts unavailable");
+    };
+    run("SELECT phase FROM switch_intents WHERE account_id=?");
+    if (q.next())
+      facts.phase = q.value(0).toString();
+    run("SELECT credential_ref FROM accounts WHERE id=?");
+    if (q.next())
+      facts.credential = q.value(0).toString();
+    run("SELECT id,journal_path,local_identity,remote_identity FROM folders "
+        "WHERE account_id=? ORDER BY id");
+    while (q.next())
+      for (int column = 0; column < 4; ++column)
+        facts.folders.append(q.value(column).toString());
+    q.finish();
+    if (!q.exec("SELECT receipt FROM operations WHERE method IN "
+                "('endpoints.requestSwitch','endpoints.setPolicy')"))
+      throw std::runtime_error("owned switch receipts unavailable");
+    while (q.next()) {
+      const auto receipt =
+          QJsonDocument::fromJson(q.value(0).toByteArray()).object();
+      if (receipt.value("state") == "failed")
+        facts.interrupted.append(receipt.value("error")
+                                     .toObject()
+                                     .value("data")
+                                     .toObject()
+                                     .value("reasonCode")
+                                     .toString());
+    }
+    return facts;
+  }
 };
+
+SwitchFacts switchFacts(Control &c, const QString &account) {
+  return NetworkTestAccess::facts(c, account);
+}
 
 namespace {
 /// require keeps real acceptance checks enabled in optimized builds.
@@ -141,6 +182,13 @@ QJsonObject call(Control &c, const QString &method, QJsonObject params = {}) {
 /// waitFor drives real Qt networking with an explicit overall deadline and no
 /// retry of mutating requests.
 void waitFor(const std::function<bool()> &condition, const char *message) {
+  // The parent names the last step a killed child was in; the text is fixed.
+  static QElapsedTimer clock;
+  if (!clock.isValid())
+    clock.start();
+  std::printf("STEP %lld %s\n", static_cast<long long>(clock.elapsed()),
+              message);
+  std::fflush(stdout);
   QEventLoop loop;
   QTimer poll, deadline;
   poll.setInterval(25);
@@ -194,6 +242,13 @@ struct FaultState {
   std::atomic<quint64> capabilityRequests{0};
   std::atomic_bool holdPrimaryResponses{false};
   bool tunnel = false;
+  // Requests to the primary whose path ends with this suffix lose their reply.
+  QMutex withholdLock;
+  QString withholdSuffix;
+  quint16 withholdPort = 0;
+  std::atomic<quint64> withheld{0};
+  // Control-thread observer of requests about to be created for the alternate.
+  std::function<void(const QString &)> targetRequest;
 };
 /// FaultProxy refuses selected HTTPS tunnels through a process-local closed
 /// proxy without TLS interception.
@@ -208,11 +263,23 @@ public:
     const auto host = query.url().host();
     if (query.url().path().contains("/cloud/capabilities"))
       ++state_->capabilityRequests;
+    if (host == state_->alternate && state_->targetRequest &&
+        QThread::currentThread() == QCoreApplication::instance()->thread())
+      state_->targetRequest(query.url().path());
     if ((host == state_->primary && state_->failPrimary) ||
         (host == state_->alternate && state_->failAlternate)) {
       ++state_->refused;
       return {
           QNetworkProxy(QNetworkProxy::HttpProxy, "127.0.0.1", state_->port)};
+    }
+    if (host == state_->primary) {
+      QMutexLocker lock(&state_->withholdLock);
+      if (!state_->withholdSuffix.isEmpty() &&
+          query.url().path().endsWith(state_->withholdSuffix)) {
+        ++state_->withheld;
+        return {QNetworkProxy(QNetworkProxy::HttpProxy, "127.0.0.1",
+                              state_->withholdPort)};
+      }
     }
     if (state_->tunnel)
       return {
@@ -230,6 +297,58 @@ struct ProxyScope {
   /// setting.
   ~ProxyScope() { QNetworkProxyFactory::setApplicationProxyFactory(nullptr); }
 };
+/// borrowedLogin adds one more account with a fixture user's own credentials
+/// through the production login path; its vault slot enters the parent's
+/// cleanup manifest before it exists. Returns: the terminal login status.
+QJsonObject borrowedLogin(Control &c, const QString &root, const QUrl &base,
+                          const QString &user, const QString &password) {
+  const auto operation =
+      call(c, "accounts.login.start", {{"canonicalBaseUrl", base.toString()}})
+          .value("result")
+          .toObject()
+          .value("operationId")
+          .toString();
+  require(!operation.isEmpty(), "owned additional login reservation failed");
+  const auto connection = QUuid::createUuid().toString();
+  QString session;
+  {
+    auto db = QSqlDatabase::addDatabase("QSQLITE", connection);
+    db.setDatabaseName(QDir(root).filePath("control.sqlite"));
+    require(db.open(), "owned additional login DB unavailable");
+    QSqlQuery q(db);
+    q.prepare("SELECT session_id,credential_ref FROM accounts WHERE "
+              "operation_id=?");
+    q.addBindValue(operation);
+    require(q.exec() && q.next(), "owned additional reservation absent");
+    session = q.value(0).toString();
+    const auto reference = q.value(1).toString();
+    q.finish();
+    db.close();
+    QFile manifest(QDir(root).filePath("owned-refs.json"));
+    require(manifest.open(QIODevice::ReadOnly), "owned manifest unreadable");
+    auto refs = QJsonDocument::fromJson(manifest.readAll()).array();
+    manifest.close();
+    refs.append(reference);
+    require(manifest.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+                manifest.write(
+                    QJsonDocument(refs).toJson(QJsonDocument::Compact)) > 0 &&
+                manifest.flush(),
+            "owned manifest update failed");
+  }
+  QSqlDatabase::removeDatabase(connection);
+  NetworkTestAccess::flow(c, session).verifyCredentials(user, password);
+  QJsonObject status;
+  waitFor(
+      [&] {
+        status = call(c, "accounts.login.status", {{"loginSessionId", session}})
+                     .value("result")
+                     .toObject();
+        return status.value("state") == "succeeded" ||
+               status.value("state") == "failed";
+      },
+      "owned additional login did not finish");
+  return status;
+}
 /// hold drives a bounded observation interval to prove no bad-endpoint
 /// ping-pong or fixed fallback.
 void hold(int milliseconds) {
@@ -239,14 +358,37 @@ void hold(int milliseconds) {
 }
 } // namespace
 
-void networkAcceptance(bool lifetimeOnly, bool activeTransfers,
-                       bool wrongInstance) {
+void networkAcceptance(const QString &scenario) {
 #ifndef SYNCD_WITH_ENGINE
-  Q_UNUSED(lifetimeOnly);
-  Q_UNUSED(activeTransfers);
-  Q_UNUSED(wrongInstance);
+  Q_UNUSED(scenario);
   throw std::runtime_error("network acceptance requires an engine build");
 #else
+  const bool lifetimeOnly = scenario == "network-lifetime",
+             wrongInstance = scenario == "wrong-instance",
+             killing = scenario.startsWith("switch-kill="),
+             recovering = scenario.startsWith("switch-recover="),
+             activeTransfers =
+                 killing || recovering ||
+                 scenario.section('=', 0, 0) == "network-active" ||
+                 scenario == "network-chunked" ||
+                 scenario.section('=', 0, 0) == "network-uncertain" ||
+                 scenario == "network-large" || scenario == "file-safety";
+  const bool multi = scenario == "multi-account";
+  const auto stage = scenario.section('=', 1);
+  // One transfer case per process: each starts on healthy endpoints, with no
+  // circuit history (and its growing open time) left by an earlier fault.
+  if (!killing && !recovering)
+    selectTransferCase(stage);
+  // An isolated loopback fixture is addressed through reserved names that
+  // only the relay maps back; its direct origin is the cleanup address. The
+  // relay then carries every request, also those of the network scenario.
+  const bool relayed =
+      activeTransfers || multi ||
+      (scenario == "network" &&
+       qEnvironmentVariableIsSet("NEXTCLOUD_TEST_CLEANUP_URL"));
+  if (relayed && qEnvironmentVariableIsSet("NEXTCLOUD_TEST_CLEANUP_URL"))
+    NetworkTunnel::setTarget(
+        QUrl(qEnvironmentVariable("NEXTCLOUD_TEST_CLEANUP_URL")).host());
   const auto root = QDir::cleanPath(QDir::fromNativeSeparators(
       qEnvironmentVariable("SYNCD_REAUTH_LIFETIME_ROOT")));
   require(QDir::isAbsolutePath(root) && QDir(root).exists() &&
@@ -262,14 +404,14 @@ void networkAcceptance(bool lifetimeOnly, bool activeTransfers,
   auto faults = std::make_shared<FaultState>();
   faults->primary = base.host();
   faults->alternate = alternate.host();
-  faults->tunnel = activeTransfers;
+  faults->tunnel = relayed;
   QTcpServer rejecting;
   require(rejecting.listen(QHostAddress::LocalHost, 0),
           "owned rejecting proxy unavailable");
   faults->port = rejecting.serverPort();
   QObject::connect(&rejecting, &QTcpServer::newConnection, &rejecting, [&] {
     while (auto *socket = rejecting.nextPendingConnection()) {
-      if (activeTransfers)
+      if (relayed)
         new NetworkTunnel(
             socket, base, alternate,
             [faults](bool primary) {
@@ -285,9 +427,35 @@ void networkAcceptance(bool lifetimeOnly, bool activeTransfers,
       }
     }
   });
+  QTcpServer withholding;
+  require(withholding.listen(QHostAddress::LocalHost, 0),
+          "owned withholding proxy unavailable");
+  faults->withholdPort = withholding.serverPort();
+  QObject::connect(&withholding, &QTcpServer::newConnection, &withholding, [&] {
+    while (auto *socket = withholding.nextPendingConnection())
+      new NetworkTunnel(
+          socket, base, alternate,
+          [faults](bool primary) {
+            return primary ? faults->failPrimary.load()
+                           : faults->failAlternate.load();
+          },
+          {}, true);
+  });
   ProxyScope proxy;
   QNetworkProxyFactory::setApplicationProxyFactory(new FaultProxy(faults));
   Control c(QDir(root).filePath("control.sqlite"));
+  if (recovering) {
+    // The restarted daemon gets no hint: only its own storage and the server.
+    try {
+      switchRecoverAcceptance(c, root, stage);
+    } catch (const std::exception &error) {
+      std::fprintf(stderr, "%s\n", error.what());
+      settled(c, call(c, "daemon.shutdown", {{"reason", "user"}}));
+      throw;
+    }
+    settled(c, call(c, "daemon.shutdown", {{"reason", "user"}}));
+    return;
+  }
   const auto accepted =
       call(c, "accounts.login.start", {{"canonicalBaseUrl", base.toString()}});
   const auto operation =
@@ -409,6 +577,33 @@ void networkAcceptance(bool lifetimeOnly, bool activeTransfers,
   const auto target =
       receipt.value("result").toObject().value("endpointId").toString();
   require(!target.isEmpty(), "approved alternate ID absent");
+  if (multi) {
+    const AcceptanceCalls calls{
+        [&](const QString &method, const QJsonObject &params) {
+          return call(c, method, params);
+        },
+        [&](const QJsonObject &accepted) { return settled(c, accepted); },
+        [](const std::function<bool()> &condition, const char *message) {
+          waitFor(condition, message);
+        },
+        [&](const QString &user, const QString &password) {
+          return borrowedLogin(c, root, base, user, password);
+        },
+        [&](const QString &id) {
+          const auto bound = NetworkTestAccess::binding(c, id);
+          return std::make_pair(bound.endpoint, bound.epoch);
+        },
+        [&](const QString &id) { return NetworkTestAccess::stable(c, id); }};
+    try {
+      multiAccountAcceptance(c, root, account, target, base, calls);
+    } catch (const std::exception &error) {
+      std::fprintf(stderr, "%s\n", error.what());
+      settled(c, call(c, "daemon.shutdown", {{"reason", "user"}}));
+      throw;
+    }
+    settled(c, call(c, "daemon.shutdown", {{"reason", "user"}}));
+    return;
+  }
   require(settled(c, call(c, "endpoints.setPolicy",
                           {{"accountId", account}, {"policy", "auto"}}))
                   .value("state") == "succeeded",
@@ -424,15 +619,29 @@ void networkAcceptance(bool lifetimeOnly, bool activeTransfers,
   }
   const auto original = NetworkTestAccess::binding(c, account);
   if (activeTransfers) {
+    const TransferFaults controls{
+        [&](bool failed) {
+          faults->failPrimary = failed;
+          NetworkTestAccess::changed(c);
+        },
+        [&] { return NetworkTestAccess::ready(c, account); },
+        [&](bool held) { faults->holdPrimaryResponses = held; },
+        [&](const QString &suffix) {
+          QMutexLocker lock(&faults->withholdLock);
+          faults->withholdSuffix = suffix;
+          faults->withheld = 0;
+        },
+        [&] { return faults->withheld.load(); },
+        [&](const std::function<void(const QString &)> &observer) {
+          faults->targetRequest = observer;
+        }};
     try {
-      networkTransferAcceptance(
-          c, root, account, primary, target, credential,
-          [&](bool failed) {
-            faults->failPrimary = failed;
-            NetworkTestAccess::changed(c);
-          },
-          [&] { return NetworkTestAccess::ready(c, account); },
-          [&](bool held) { faults->holdPrimaryResponses = held; });
+      if (killing)
+        switchKillAcceptance(c, root, account, primary, target, credential,
+                             stage, controls);
+      else
+        networkTransferAcceptance(c, root, account, primary, target, credential,
+                                  controls);
     } catch (const std::exception &error) {
       // Preserve the actual assertion before draining; Control must never be
       // destroyed with an active writer.
@@ -440,6 +649,8 @@ void networkAcceptance(bool lifetimeOnly, bool activeTransfers,
       faults->failPrimary = false;
       faults->failAlternate = false;
       faults->holdPrimaryResponses = false;
+      faults->targetRequest = {};
+      controls.withhold({});
       settled(c, call(c, "daemon.shutdown", {{"reason", "user"}}));
       throw;
     }

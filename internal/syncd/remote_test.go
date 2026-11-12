@@ -70,6 +70,81 @@ func TestDeletionApprovalEnvelope(t *testing.T) {
 	}
 }
 
+// TestFolderAddModeEnvelope keeps folders.add aligned with protocol 1.8's
+// addOnDemand example and sends no mode for a full-file folder (PLAN §2.3).
+func TestFolderAddModeEnvelope(t *testing.T) {
+	b, err := os.ReadFile("../../protocol/folders.examples.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var examples map[string]struct {
+		Method string
+		Params map[string]any
+	}
+	if err := json.Unmarshal(b, &examples); err != nil {
+		t.Fatal(err)
+	}
+	example := examples["addOnDemand"]
+	for _, mode := range []FolderMode{FolderOnDemand, ""} {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		client, server := net.Pipe()
+		r := &Remote{ctx: ctx, cancel: cancel, conn: client, ready: true, revision: example.Params["expectedRevision"].(string), pending: map[string]chan rpcReply{}, listeners: map[uint64]func(){}}
+		done := make(chan struct{})
+		go func() { r.read(client); close(done) }()
+		added := make(chan map[string]any, 1)
+		go func() {
+			for {
+				b, err := readFrame(server)
+				if err != nil {
+					return
+				}
+				var req map[string]any
+				if json.Unmarshal(b, &req) != nil {
+					return
+				}
+				result := map[string]any{"operationId": "test", "state": "succeeded", "result": map[string]any{}}
+				if req["method"] == "folders.inspect" {
+					result = map[string]any{"inspectToken": example.Params["inspectToken"], "localExists": true, "mergeExisting": false, "expiresInSeconds": 300}
+				} else {
+					added <- req
+				}
+				_ = writeFrame(server, map[string]any{"jsonrpc": "2.0", "id": req["id"], "result": result})
+			}
+		}()
+		var modes []FolderMode
+		if mode != "" {
+			modes = append(modes, mode)
+		}
+		if err := r.AddFolder("account", "/Example", "C:/Sync/Example", modes...); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case req := <-added:
+			params := req["params"].(map[string]any)
+			if req["method"] != example.Method {
+				t.Fatal("wrong add method")
+			}
+			for key, expected := range example.Params {
+				if key == "operationKey" || (key == "mode" && mode == "") {
+					continue
+				}
+				if params[key] != expected {
+					t.Fatalf("add field %s differs from protocol example", key)
+				}
+			}
+			if _, sent := params["mode"]; mode == "" && sent {
+				t.Fatal("full-file add sent a mode")
+			}
+		case <-ctx.Done():
+			t.Fatal("add request missing")
+		}
+		client.Close()
+		server.Close()
+		<-done
+		cancel()
+	}
+}
+
 // TestEndpointCommandEnvelopes keeps consent and manual-switch fields aligned with protocol 1.4 (INV-03/06).
 func TestEndpointCommandEnvelopes(t *testing.T) {
 	b, err := os.ReadFile("../../protocol/endpoints.examples.json")
@@ -240,6 +315,34 @@ func TestLoginSessionCleanupWarning(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("login status request missing")
+	}
+}
+
+// TestLoginFailureKeepsReason: a failed or cancelled sign-in stays
+// ErrRefused and keeps SyncD's reason, for the interface to say why.
+func TestLoginFailureKeepsReason(t *testing.T) {
+	for _, c := range []struct{ state, reason string }{{"failed", "LOGIN_SESSION_EXPIRED"}, {"cancelled", "LOGIN_CANCELLED"}, {"failed", ""}} {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		client, server := net.Pipe()
+		r := &Remote{ctx: ctx, cancel: cancel, conn: client, ready: true, pending: map[string]chan rpcReply{}, listeners: map[uint64]func(){}}
+		done := make(chan struct{})
+		go func() { r.read(client); close(done) }()
+		go func() {
+			b, err := readFrame(server)
+			var req map[string]any
+			if err != nil || json.Unmarshal(b, &req) != nil {
+				return
+			}
+			_ = writeFrame(server, map[string]any{"jsonrpc": "2.0", "id": req["id"], "result": map[string]any{"state": c.state, "reasonCode": c.reason}})
+		}()
+		_, err := r.WaitLogin(ctx, "session-test")
+		if !errors.Is(err, ErrRefused) || ReasonOf(err) != c.reason {
+			t.Errorf("%s %s: %v, reason %q", c.state, c.reason, err, ReasonOf(err))
+		}
+		client.Close()
+		server.Close()
+		<-done
+		cancel()
 	}
 }
 
@@ -422,7 +525,7 @@ func TestDiagnosticsBoundary(t *testing.T) {
 		}
 	}()
 	d, err := r.Diagnostics(ctx)
-	if err != nil || d.Protocol != "1.7" || !d.StateAvailable || d.StartupState != StartupNormal || d.ReasonCode != "" || len(d.Folders) != 1 || d.Folders[0].ActiveUploads != 1 || d.Folders[0].UploadBytes != 65536 || d.Folders[0].UncertainWrites != 2 {
+	if err != nil || d.Protocol != "1.8" || !d.StateAvailable || d.StartupState != StartupNormal || d.ReasonCode != "" || len(d.Folders) != 1 || d.Folders[0].ActiveUploads != 1 || d.Folders[0].UploadBytes != 65536 || d.Folders[0].UncertainWrites != 2 {
 		t.Fatalf("diagnostics: %+v %v", d, err)
 	}
 	path, err := r.ExportDiagnostics()
@@ -544,7 +647,7 @@ func replyTestRequest(t *testing.T, conn net.Conn, req testRPCRequest, result an
 func bootstrapTestPeer(t *testing.T, conn net.Conn, p projection) bool {
 	t.Helper()
 	req, ok := readTestRequest(t, conn, "session.hello")
-	if !ok || !replyTestRequest(t, conn, req, map[string]any{"protocol": map[string]int{"major": 1, "minor": 7}}) {
+	if !ok || !replyTestRequest(t, conn, req, map[string]any{"protocol": map[string]int{"major": 1, "minor": 8}}) {
 		return false
 	}
 	req, ok = readTestRequest(t, conn, "state.bootstrap")
@@ -929,7 +1032,7 @@ func TestUnavailableBootstrapRPCs(t *testing.T) {
 					}
 					switch method {
 					case "diagnostics.snapshot":
-						if !replyTestRequest(t, conn, req, map[string]any{"protocol": "1.7", "stateAvailable": false, "startupState": state, "reasonCode": "STATE_UNAVAILABLE"}) {
+						if !replyTestRequest(t, conn, req, map[string]any{"protocol": "1.8", "stateAvailable": false, "startupState": state, "reasonCode": "STATE_UNAVAILABLE"}) {
 							return
 						}
 					case "daemon.shutdown":
@@ -953,7 +1056,7 @@ func TestUnavailableBootstrapRPCs(t *testing.T) {
 			awaitTestSnapshot(t, r, func(s Snapshot) bool { return s.Daemon.StartupState == state })
 			assertUnknownSnapshot(t, r.Snapshot(), state)
 			d, err := r.Diagnostics(r.ctx)
-			if err != nil || d.StateAvailable || d.StartupState != state || d.ReasonCode != "STATE_UNAVAILABLE" || d.Protocol != "1.7" || d.Folders != nil {
+			if err != nil || d.StateAvailable || d.StartupState != state || d.ReasonCode != "STATE_UNAVAILABLE" || d.Protocol != "1.8" || d.Folders != nil {
 				t.Fatalf("diagnostic access: %+v %v", d, err)
 			}
 			folders, readErr := r.RemoteFolders("unknown-account")
@@ -1218,5 +1321,72 @@ func TestNonNormalStartupCannotBeHealthy(t *testing.T) {
 			}
 			assertUnknownSnapshot(t, r.Snapshot(), state)
 		})
+	}
+}
+
+// TestProtocol19StateExample decodes the 1.9 snapshot example: per-account
+// sign-in state, folder phase and progress, address latency, kind and block
+// reason, why an address was chosen, deletion groups, conflicts and the
+// start report all reach the interface's types.
+func TestProtocol19StateExample(t *testing.T) {
+	b, err := os.ReadFile("../../protocol/state.examples.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var examples struct {
+		Event struct {
+			Params projection `json:"params"`
+		} `json:"event"`
+		PrepareUpdatePostponed struct {
+			Error *rpcError `json:"error"`
+		} `json:"prepareUpdatePostponed"`
+		AccountExists struct {
+			Result struct {
+				Reason string `json:"reasonCode"`
+			} `json:"result"`
+		} `json:"accountExists"`
+		VersionReport struct {
+			Protocol struct{ Minor int } `json:"protocol"`
+		} `json:"versionReport"`
+	}
+	if err := json.Unmarshal(b, &examples); err != nil {
+		t.Fatal(err)
+	}
+	s := examples.Event.Params.Snapshot
+	if len(s.Accounts) != 2 || s.Accounts[0].Auth != AuthSignedIn || s.Accounts[1].Auth != AuthRevoked || s.Accounts[1].SignedIn {
+		t.Fatalf("account sign-in state: %+v", s.Accounts)
+	}
+	if f := s.Folders[0]; f.Phase != PhaseUploading || f.FilesDone != 12 || s.Folders[1].Phase != "" {
+		t.Fatalf("folder phase and progress: %+v", s.Folders)
+	}
+	if e := s.Endpoints[1]; e.Kind != KindHome || e.LatencyMs != 6 || e.Blocked || e.BlockedReason != "" {
+		t.Fatalf("address latency and kind: %+v", e)
+	}
+	if e := s.Endpoints[2]; !e.Blocked || e.BlockedReason != "ENDPOINT_IDENTITY_MISMATCH" {
+		t.Fatalf("address block reason: %+v", e)
+	}
+	if n := s.Networks[0]; len(n.Why) != 1 || n.Why[0] != ReasonFaster || n.SwitchReason != ReasonFaster || n.Switched.IsZero() {
+		t.Fatalf("why an address was chosen: %+v", n)
+	}
+	d := s.Decisions[0]
+	if d.Kind != DecisionBulkDeletions || len(d.Groups) != 2 || d.Groups[0].Name != "2024" || d.Groups[0].Files != 12 || !d.Groups[1].Loose {
+		t.Fatalf("deletion groups: %+v", d)
+	}
+	if c := s.Decisions[1]; c.Kind != DecisionConflict || c.File != "Budget.xlsx" || c.Copy == "" {
+		t.Fatalf("conflict decision: %+v", c)
+	}
+	if r := s.Daemon.StartupReport; r.PreviousSchema != 10 || r.Schema != 11 || r.SelfCheck != "failed" || len(r.ReasonCodes) != 1 || !s.Daemon.Capabilities["engine"] {
+		t.Fatalf("start report and engine capability: %+v", s.Daemon)
+	}
+	if !errors.Is(examples.PrepareUpdatePostponed.Error, ErrBusy) {
+		t.Fatal("a deletion waiting for the user does not postpone an update as busy")
+	}
+	if !errors.Is(&rpcError{Data: struct {
+		Reason string `json:"reasonCode"`
+	}{examples.AccountExists.Result.Reason}}, ErrAccountExists) {
+		t.Fatal("ACCOUNT_EXISTS is not ErrAccountExists")
+	}
+	if examples.VersionReport.Protocol.Minor != protocolMinor {
+		t.Fatal("version report example does not name this client's protocol")
 	}
 }
