@@ -49,11 +49,11 @@ func realDaemon(t *testing.T, ctx context.Context, name string) (profile, exe st
 	return profile, exe, start
 }
 
-// removeProfileDir removes a test profile after its daemon exited, retrying for up to 10 s:
-// a scanner such as Defender may still hold a just-closed file (seen on hosted runners).
+// removeProfileDir removes a test profile after its daemon exited, retrying for up to 30 s:
+// a scanner such as Defender may still hold a just-closed file (seen past 10 s on hosted runners).
 func removeProfileDir(dir string) error {
 	var err error
-	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(200 * time.Millisecond) {
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(250 * time.Millisecond) {
 		if err = os.RemoveAll(dir); err == nil || time.Now().After(deadline) {
 			return err
 		}

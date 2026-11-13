@@ -49,10 +49,17 @@ static LONG WINAPI soakCrashed(EXCEPTION_POINTERS *e) {
   SymInitialize(p, nullptr, TRUE);
   CONTEXT c = *e->ContextRecord;
   STACKFRAME64 f{};
+#if defined(_M_ARM64)
   const DWORD machine = IMAGE_FILE_MACHINE_ARM64;
   f.AddrPC.Offset = c.Pc;
   f.AddrFrame.Offset = c.Fp;
   f.AddrStack.Offset = c.Sp;
+#else
+  const DWORD machine = IMAGE_FILE_MACHINE_AMD64;
+  f.AddrPC.Offset = c.Rip;
+  f.AddrFrame.Offset = c.Rbp;
+  f.AddrStack.Offset = c.Rsp;
+#endif
   f.AddrPC.Mode = f.AddrFrame.Mode = f.AddrStack.Mode = AddrModeFlat;
   std::fprintf(stderr, "CRASH code %08lx at %p\n",
                e->ExceptionRecord->ExceptionCode,
