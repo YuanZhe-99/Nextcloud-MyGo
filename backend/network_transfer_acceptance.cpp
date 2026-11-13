@@ -39,8 +39,8 @@ int contentSize = 8 * 1024 * 1024;
 // Upstream sends files above its default 100 MiB threshold as a chunking-v2
 // session whose first chunk is that size.
 constexpr qint64 firstChunk = 100LL * 1024 * 1024;
-bool chunked = false, uncertain = false, fileSafety = false, large = false,
-     sleepResume = false;
+bool chunked = false, uncertain = false, fileSafety = false,
+     fileSafetyBulk = false, large = false, sleepResume = false;
 // A standby endpoint is probed about once a minute once its health is stable,
 // and readiness needs a fresh success on both: allow one full probe period.
 constexpr int readyMilliseconds = 90000;
@@ -773,9 +773,10 @@ void spin(int milliseconds) {
 /// fileSafetyAcceptance runs fault-free cases against the real server: renames
 /// and directory moves in both directions (S04), deletion protection for one
 /// directory with many descendants with its direction and count (S11, S12),
-/// 100 server deletions held by the absolute threshold alone (S11), a
-/// proposal invalidated by a later change (S20), a leased local root (S13)
-/// and a remote root that answers 404 (S14).
+/// a proposal invalidated by a later change (S20), a leased local root (S13)
+/// and a remote root that answers 404 (S14); or, as file-safety-bulk on a
+/// profile of its own, only 100 server deletions held by the absolute
+/// threshold alone (S11).
 void fileSafetyAcceptance(Control &c, const QString &credential,
                           const Mapping &m) {
   constexpr int size = 4096;
@@ -820,6 +821,70 @@ void fileSafetyAcceptance(Control &c, const QString &credential,
     dav(m.base, m.uid, m.collection, "MOVE", credential, {}, from, nullptr,
         path(to));
   };
+  if (fileSafetyBulk) {
+    // S11 at scale: another client deletes 100 single files, under a fifth
+    // of a baseline above 500, so only the absolute threshold applies; they
+    // are held as local deletions and no local file goes before approval.
+    constexpr int bulk = 510, removed = 100;
+    const auto bulkName = [](int i) {
+      return QString("bulk/item-%1.bin").arg(i, 3, 10, QChar('0'));
+    };
+    require(QDir().mkpath(m.local + "/bulk"), "owned bulk directory failed");
+    QHash<int, QByteArray> contents;
+    for (int i = 0; i < bulk; ++i) {
+      contents.insert(i, randomContent(64));
+      writeLocal(m.local + '/' + bulkName(i), contents.value(i));
+    }
+    sync();
+    converge(
+        [&] {
+          for (int i = 0; i < bulk; i += 51)
+            if (remoteHash(bulkName(i)) != sha256(contents.value(i)))
+              return false;
+          return remoteHash(bulkName(bulk - 1)) ==
+                 sha256(contents.value(bulk - 1));
+        },
+        "owned bulk files did not reach the real server");
+    // Paused while the other client deletes: a poll in the middle of the
+    // deletions would see fewer than 100 and apply them without review.
+    settle(c, call(c, "folders.pause", {{"folderId", m.folder}}));
+    for (int i = 0; i < removed; ++i)
+      dav(m.base, m.uid, m.collection, "DELETE", credential, {},
+          bulkName(i * 5));
+    settle(c, call(c, "folders.resume", {{"folderId", m.folder}}));
+    const auto localCount = [&] {
+      return QDir(m.local + "/bulk").entryList(QDir::Files).size();
+    };
+    sync();
+    wait([&] { return folder().value("state") == "needsReview"; },
+         "owned 100 server deletions were not held for review", 250);
+    const auto proposal = decisions().first().toObject();
+    require(decisions().size() == 1 &&
+                proposal.value("localDeletes").toInteger() == removed &&
+                proposal.value("remoteDeletes").toInteger() == 0,
+            "owned 100-deletion proposal has the wrong direction or count");
+    require(localCount() == bulk &&
+                localHash(m.local + '/' + bulkName(0)) ==
+                    sha256(contents.value(0)),
+            "owned local files were removed before the decision");
+    require(call(c, "decisions.resolve",
+                 {{"decisionId", proposal.value("id")},
+                  {"proposalDigest", proposal.value("digest")},
+                  {"action", "approveDeletion"}})
+                .contains("result"),
+            "owned 100-deletion approval refused");
+    converge([&] { return localCount() == bulk - removed; },
+             "owned approved server deletions did not reach the local root");
+    require(QFile::exists(m.local + '/' + bulkName(1)) &&
+                !QFile::exists(m.local + '/' + bulkName(5)) &&
+                decisions().isEmpty(),
+            "owned approved deletion removed other local files");
+    std::printf("PASS real 100 server deletions under a fifth of a %d-file "
+                "baseline held as 100 local deletions before propagation, "
+                "applied after approval\n",
+                bulk);
+    return;
+  }
   QHash<QString, QByteArray> hashes;
   QStringList names{"single.bin", "moved/a.bin", "moved/b.bin"};
   for (int i = 0; i < 8; ++i)
@@ -948,65 +1013,6 @@ void fileSafetyAcceptance(Control &c, const QString &credential,
     std::puts("PASS real directory with twelve descendants held before "
               "propagation with direction and count, stale approval after a "
               "later change refused, matching approval applied");
-  }
-  {
-    // S11 at scale: another client deletes 100 single files, under a fifth
-    // of a baseline above 500, so only the absolute threshold applies; they
-    // are held as local deletions and no local file goes before approval.
-    constexpr int bulk = 510, removed = 100;
-    const auto bulkName = [](int i) {
-      return QString("bulk/item-%1.bin").arg(i, 3, 10, QChar('0'));
-    };
-    require(QDir().mkpath(m.local + "/bulk"), "owned bulk directory failed");
-    QHash<int, QByteArray> contents;
-    for (int i = 0; i < bulk; ++i) {
-      contents.insert(i, randomContent(64));
-      writeLocal(m.local + '/' + bulkName(i), contents.value(i));
-    }
-    sync();
-    converge(
-        [&] {
-          for (int i = 0; i < bulk; i += 51)
-            if (remoteHash(bulkName(i)) != sha256(contents.value(i)))
-              return false;
-          return remoteHash(bulkName(bulk - 1)) ==
-                 sha256(contents.value(bulk - 1));
-        },
-        "owned bulk files did not reach the real server");
-    for (int i = 0; i < removed; ++i)
-      dav(m.base, m.uid, m.collection, "DELETE", credential, {},
-          bulkName(i * 5));
-    const auto localCount = [&] {
-      return QDir(m.local + "/bulk").entryList(QDir::Files).size();
-    };
-    sync();
-    wait([&] { return folder().value("state") == "needsReview"; },
-         "owned 100 server deletions were not held for review", 250);
-    const auto proposal = decisions().first().toObject();
-    require(decisions().size() == 1 &&
-                proposal.value("localDeletes").toInteger() == removed &&
-                proposal.value("remoteDeletes").toInteger() == 0,
-            "owned 100-deletion proposal has the wrong direction or count");
-    require(localCount() == bulk &&
-                localHash(m.local + '/' + bulkName(0)) ==
-                    sha256(contents.value(0)),
-            "owned local files were removed before the decision");
-    require(call(c, "decisions.resolve",
-                 {{"decisionId", proposal.value("id")},
-                  {"proposalDigest", proposal.value("digest")},
-                  {"action", "approveDeletion"}})
-                .contains("result"),
-            "owned 100-deletion approval refused");
-    converge([&] { return localCount() == bulk - removed; },
-             "owned approved server deletions did not reach the local root");
-    require(QFile::exists(m.local + '/' + bulkName(1)) &&
-                !QFile::exists(m.local + '/' + bulkName(5)) &&
-                decisions().isEmpty(),
-            "owned approved deletion removed other local files");
-    std::printf("PASS real 100 server deletions under a fifth of a %d-file "
-                "baseline held as 100 local deletions before propagation, "
-                "applied after approval\n",
-                bulk + 10);
   }
   {
     // S13: the mapped root cannot be taken away under the daemon.
@@ -1206,8 +1212,9 @@ void sleepResumeAcceptance() { sleepResume = true; }
 
 void selectTransferCase(const QString &name) { transferCase = name; }
 
-void fileSafetyTransferAcceptance() {
+void fileSafetyTransferAcceptance(bool bulk) {
   fileSafety = true;
+  fileSafetyBulk = bulk;
   NetworkTunnel::setThroughput(65536);
 }
 

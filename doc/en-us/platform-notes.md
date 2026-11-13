@@ -621,6 +621,153 @@ being the longest.
 No product defect was found by these tests. Cross-user and cross-session pipe connections, a second
 logon session and native x64 hardware remain outside this machine ([acceptance](acceptance.md#known-limitations-for-010)).
 
+### Data-safety and recovery cases
+
+Same ARM64 host, 2026-11-13, disposable Nextcloud 35.0.2 (`tools/test-server.ps1`), SyncD built from
+the recorded commit plus these changes (native ARM64); each case ran alone through
+`tools/test-reauth-lifetime.ps1 -Scenario data-safety -Case <name>` ([development](development.md)).
+x64e did not run these cases.
+
+| Case | Cases covered | Result, ARM64 |
+|---|---|---|
+| `watcher` | S09, S10 | passed, 104.1 s |
+| `root-denied` | S13 | passed, 38.2 s |
+| `maintenance` | S14 | passed, 80.4 s (runs alone: maintenance is instance-wide) |
+| `partial-listing` | S14 | passed three times, 16.3–19.7 s; before the fix the vanished storage's local copy was deleted |
+| `root-replaced` | S15 | passed, 50.0 s |
+| `journal` | S16 | passed, 54.1 s |
+| `names` | S17 | passed, 58.0 s |
+| `excluded` | S18, S21 | passed, 43.1 s (local halves only) |
+| `discovery-kill` | R02 | passed, 62.8 s |
+| `revocation` | R07, R22 | passed, 45.4 s |
+| `interrupted-change` | S05 | passed three times, 79.3–82.0 s, with the upload and the download both cut; before the fixes the server kept a truncated file, and the folder never left discovery once the network came back |
+| `TestRealPipeConcurrentSourceR12` (real pipe) | R12 | passed, 2.5 s |
+| `SyncDRootContracts` long path (`root_tests.cpp`) | S17 regression | passed, 6.1 s; failed before the fix |
+
+What they showed. A change written after discovery while the cycle's upload was held started the
+next cycle on its own three times, and a burst of 300 long names written while the control thread was
+busy overflowed the 64 KiB watch buffer (a probe watcher of the same size saw the overflow) and the
+audit found every change, both within the daemon's 48–72 s poll. A root whose listing is denied, a
+root replaced by an empty folder while the daemon was stopped, a journal whose header was damaged and
+a junction or offline file in the tree all stop the folder before propagation (`UNSUPPORTED_FOLDER_MODE`,
+`FOLDER_ROOT_CHANGED`, `JOURNAL_ERROR`) with nothing deleted, uploaded or downloaded and the journal
+kept byte for byte; these blocks hold until the daemon restarts (see below). A drive alias defined with
+`DefineDosDevice` is refused as a root. Maintenance mode reads as `NETWORK_UNAVAILABLE`, not as an
+empty server. Case clashes, names Windows cannot hold, NFD names (stored as NFC by the server),
+non-BMP names, paths above 300 characters and a locked file follow upstream's rules without holding
+other files back. A kill during remote discovery restarts on the same journal and finishes the
+waiting changes once. An app password revoked on the server puts the account into `revoked`; no
+secret is in any profile file, and the support bundle and the daemon's log hold no user, server, path,
+file name or content.
+
+Found and fixed: the pre-propagation scan (`RootLease::validateTree`, `backend/root_windows.cpp`)
+called `GetFileAttributesW` and `FindFirstFileW` with plain paths, so any directory past `MAX_PATH`
+refused the whole folder as unsupported, while upstream syncs such paths; it now uses
+extended-length paths, and `SyncDRootContracts` checks a tree with a path above 400 characters.
+
+Found and fixed afterwards (data integrity; same host, server and procedure, SyncD built against
+the upstream engine with patch 0018, ARM64; each case three times through the wrapper):
+- S05, server side: Nextcloud 35.0.2 writes any PUT that replaces an existing file over it in place
+  ([upstream](upstream.md#nextcloud-server-apis)). A short PUT sent by hand to an existing 1 MiB file
+  left it at 294,912 bytes with the old size and ETag still listed, until a GET made the server
+  correct its cache and give it a new ETag; the same PUT to a new path left nothing, and one cut into
+  a chunk session left the target intact. The earlier hand test had not reproduced it because the
+  truncation shows only while the cut request is still running on the server or after something
+  reads the file. Once the ETag changes, the next cycle sees a change on both sides and upstream's
+  conflict handling puts the truncated copy at the path, keeping the good content only in a local
+  conflict copy. Patch 0018 sends modifications as chunked uploads; in the three runs the cut chunk
+  was answered 400 in the session, the server kept the previous version, and the next cycle resent
+  it and assembled it with one MOVE.
+- S05, SyncD side: after both addresses were refused and given back, the next cycle's first listing
+  was never sent (no connection was opened for it) and the folder stayed in discovery until the
+  case gave up. The cycle after an unsuccessful one now starts on a new network access manager.
+- S14: SyncD deleted the local copy of the external storage: the vanished mount point is left out
+  of the parent's listing for the engine's properties, and two removals stayed below the deletion
+  thresholds. A cycle that would remove a mount point or all of its content now stops as
+  `DISCOVERY_INCOMPLETE` and retries ([engine](engine.md#completion-and-safety)).
+
+Found, not fixed:
+- The interrupted download's temporary file (`.remote.bin.~<id>`, 3 MiB of the new remote content)
+  was uploaded as a new file by the recovery cycle, although `]*.~*` is in the exclude list; in some
+  runs a later cycle deleted it from the server again. Seen in every S05 run with an
+  interrupted download.
+- Hard folder blocks (`UNSUPPORTED_FOLDER_MODE`, `JOURNAL_ERROR`, `FOLDER_ROOT_CHANGED`) stay after
+  their cause is gone until a restart, and "Sync now" does not clear them. This follows `PLAN.md`
+  §12.2 (a manual retry never bypasses a safety block); whether an explicit retry should re-run
+  the check is for the user to decide.
+
+With these fixes, `tools/test-all.ps1 -Tier fast -Build` on SyncD built against the patched engine
+passed on ARM64 (format and vet 20.0 s, Go tests with real pipes 39.5 s, CTest 21.4 s, while upstream
+builds ran beside it) and on emulated x64 (Go tests 42.4 s, CTest 24.0 s).
+
+With these changes `tools/test-all.ps1 -Tier fast` passed on x64e in 65.2 s; on ARM64 the Go steps
+passed (40.1 s) and CTest stopped only because `syncd_reauth_tests` did not link another session's
+switching work in progress; `SyncDRootContracts` passed on both.
+
+### Automatic switching acceptance
+
+Same ARM64 host, 2026-11-12, SyncD of `build/syncd-ARM64-sw` and `build/syncd-x64-sw` (emulated),
+a disposable Nextcloud 35.0.2 started with `tools/test-server.ps1`. Each case below is
+`tools/test-reauth-lifetime.ps1 -Scenario switching -Case <name>` in its own process and profile
+(`backend/switching_acceptance.cpp`, [development](development.md#commands)); the contracts and
+properties are `SyncDSwitchingContracts` (`backend/switching_tests.cpp`, ARM64 9.1 s, x64e 10.9 s); with it the fast tier passed in
+54.4 s on ARM64 and 65.3 s on x64e.
+
+| Case | Cases covered | Native ARM64 | Emulated x64 |
+|---|---|---|---|
+| `auto-switch` | N08, N09, N11 | passed, 81.0 s | passed, 83.4 s |
+| `auto-fallback` | N14 | passed, 70.5 s | passed, 72.7 s |
+| `tls-trust` | N03, N04 | passed, 54.8 s | passed, 82.1 s |
+| `tls-auth` | N16, N18 | passed, 111.2 s | passed, 115.3 s |
+| `tls-circuit` | N10, N15, N22 | passed, 108.1 s | passed, 108.7 s |
+| `redirect` | N05 | passed, 54.9 s | passed, 55.8 s |
+| `subpath` | N06 | passed, 41.3 s | passed, 44.0 s |
+| `revoke-switch` | N17 | passed, 41.0 s | passed, 45.5 s |
+| `new-folder` | N19 | passed, 96.6 s | passed, 70.3 s |
+| `root-change` | N20 | passed, 40.7 s | passed, 43.4 s |
+| `late-epoch` | N13 | passed, 47.4 s | passed, 51.3 s |
+
+How they run. The relay maps `primary.syncd.test` and `alternate.syncd.test` to the server as in
+the other server cases. Where a case needs an answer the real server does not give, a loopback
+TLS-terminating proxy inside the test process takes the address: it presents a certificate from a
+throwaway CA made with `openssl` under the profile and trusted only in that process, and forwards
+HTTP/1.1 to the server over TLS verified against the fixture root. No trust store, hosts file or
+proxy setting changes. The 120 s dwell is the only threshold the cases shorten, by aging the
+policy's activation time through the test's access to Control; the switching contracts prove it on a
+caller clock. Margin, stability, freshness, circuits and every trust check are the daemon's own.
+
+What they showed. With a home address (priority 90 against 50) the automatic policy waited 32 s,
+past the 30 s drain window, for a 12 MiB upload held unfinished on the primary, never cancelling
+it, then switched with reason `faster` and one new epoch; 20 interface changes in 8 s moved nothing.
+A better address that passed verification and failed its first business request after the commit
+sent the account back to the freshly verified primary with a further epoch, journals and credential
+unchanged. Answers held 6 s late on the old address delayed the commit until every old-epoch DAV
+request was answered; late probe answers changed nothing on the new one. Expired, wrong-host and
+unknown-CA certificates failed registration and, on the approved alternate, quarantined it
+(`TLS_ERROR`) until an explicit review, and the account never moved to it while the primary was
+down; an unregistered reachable address got its public check and nothing else. Redirects of the
+address in use to an unknown domain and to plain HTTP were never followed and quarantined it
+(`ENDPOINT_UNTRUSTED`); with a fixed policy the account then waits for that address, as `PLAN.md`
+§8.5 requires. An entry under `/nc/` mapped DAV paths, MOVE Destination and PROPFIND hrefs. A 401
+from the alternate alone blocked that address only; a 429 with Retry-After 20 on the address in use
+stopped every request to both addresses for its duration without a switch. Three refused
+connections spaced 5 s apart opened the circuit (12 attempts, Qt retrying each); 30 notifications
+in 3 s gave one half-open probe in 18 s; with both addresses refused for 45 s the probes stayed at
+5 and 3 and nothing switched. The server revoking the app password while a switch waited for an
+upload failed the switch with `AUTH_REQUIRED`, asked for sign-in and tried no other address. An
+alternate that could not check a new folder's root took no switch until it had verified it. A
+remote root replaced by another with the same path stopped writes as `ENDPOINT_IDENTITY_MISMATCH`.
+
+Found while running them. The kind chosen for an address (`home`, `vpn`, `internet`) never reached
+the policy, so every address scored with priority 50 and only probe times could make one better; it
+now sets `PLAN.md` §8.4's default priorities (90, 70, 50) in `Control::refreshNetwork` and never
+trust. A replaced remote root is reported as the address's identity mismatch rather than as the
+folder's own root change; writes stop either way. `revoke-switch` leaves four failed sign-ins on
+the server's brute-force record for the relay's address (about 1.6 s of delay for every later
+sign-in from it, growing with each run); the runs above reset it between rounds with
+`occ security:bruteforce:reset` on the disposable server. An earlier emulated x64 round that ran
+after several revocations failed every later case at sign-in for that reason.
+
 ## Known limitations
 
 Upstream CTest on native Windows ARM64 passed SyncJournalDBTest, ConcatUrlTest,

@@ -871,10 +871,13 @@ int main(int argc, char **argv) {
                           scenario == "wrong-instance";
     if (isolated || scenario == "network" || scenario == "network-lifetime" ||
         scenario.section('=', 0, 0) == "network-active" ||
-        scenario == "file-safety" || scenario == "multi-account" ||
+        scenario == "file-safety" || scenario == "file-safety-bulk" ||
+        scenario == "multi-account" ||
         scenario == "switch-quota" || scenario == "slow-server" ||
         scenario == "sleep-resume" || scenario.startsWith("switch-kill=") ||
-        scenario.startsWith("switch-recover=")) {
+        scenario.startsWith("switch-recover=") ||
+        scenario.startsWith("data-safety=") ||
+        scenario.startsWith("data-recover=") || switchingScenario(scenario)) {
       // Chunk sessions and destructive lost-reply cases need a server of
       // their own; the others accept one when its root is acknowledged.
       if (isolated || qEnvironmentVariableIsSet("SYNCD_TEST_CA_CERT"))
@@ -885,8 +888,8 @@ int main(int argc, char **argv) {
         uncertainTransferAcceptance();
       if (scenario == "network-large")
         largeTransferAcceptance();
-      if (scenario == "file-safety")
-        fileSafetyTransferAcceptance();
+      if (scenario.startsWith("file-safety"))
+        fileSafetyTransferAcceptance(scenario == "file-safety-bulk");
       if (scenario == "sleep-resume")
         sleepResumeAcceptance();
       networkAcceptance(scenario);

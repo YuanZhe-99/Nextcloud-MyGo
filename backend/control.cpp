@@ -51,11 +51,13 @@ QJsonObject capabilities(bool available = true) {
   constexpr bool engine = false;
 #endif
   // multiAccount: two accounts with two folders each passed on a real server
-  // (multi-account acceptance, 2026-11-12).
+  // (multi-account acceptance, 2026-11-12). endpointAutoSwitch: the
+  // automatic policy's cases passed on real runs (switching acceptance,
+  // 2026-11-12); it needs the engine that switches.
   return {{"multiAccount", available},
           {"login", available},
           {"fullSync", false},
-          {"endpointAutoSwitch", false},
+          {"endpointAutoSwitch", engine && available},
           {"virtualFiles", false},
           {"endToEndEncryption", false},
           {"engine", engine && available}};

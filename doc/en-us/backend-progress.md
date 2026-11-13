@@ -5,7 +5,7 @@
 Read this section first; everything below it is the dated record, newest first.
 
 The backend is **not complete** and no milestone has passed its exit criteria. Product 0.1.0,
-protocol 1.9, Control schema 11, Desktop v35.0.3 with seventeen recorded patches.
+protocol 1.9, Control schema 11, Desktop v35.0.3 with eighteen recorded patches.
 
 Built and verified on native ARM64 and emulated x64 (evidence in [platform notes](platform-notes.md)):
 
@@ -36,7 +36,7 @@ Not done:
 |---|---|
 | Uncertain writes | Downloads above 4 GiB and the above-4-GiB case on x64, other chunk cut points, kills during discovery and at the end of a cycle (R02) |
 | File safety on a real server | S05 with a modified existing file, S09, S10, S15, S16 with a corrupt journal under the daemon, S17, S18, S21, and the maintenance-page and partial-207 parts of S14 |
-| Network and trust on a real path | N04, N05 on the engine path, N06, N07, N08, N11, N13, N14 after a first business failure, N16, N17, N19, N20, N22, N23, and R15 |
+| Network and trust on a real path | N07 and N23 (no VPN path on this machine) and a real sleep for R15; the other §20.3 cases ran on the disposable server on 2026-11-12 ([platform notes](platform-notes.md#automatic-switching-acceptance)) |
 | Paired-daemon fixture | On 2026-11-12, after the lane split, `tools/test-login.ps1 -SyncFolders -Reauthenticate` passed against the shared server three times in a row on native ARM64 (253.3 s, 259.6 s, 279.9 s), each run four parallel lanes; one emulated x64 run failed (262.9 s): its renewal lane's fixed-policy reconciliation ended `NETWORK_UNAVAILABLE`, and its abort then lost the pipe to the live daemon during account removal (a second abort removed the account with confirmed revocation; why the connection dropped is not established); the single-flow version took 527–562 s. The earlier "every call busy" runs were a daemon that had stopped itself (exit 0 after a storage failure, with the quota full) while the Go client reported its own missing connection as busy; it now reports `ErrDisconnected`. Every request that authenticates afresh costs the shared server about 2.3 s, and more than about five at once exceed the daemon's 4-second metadata deadline, which a lane sees as a 60 s `NETWORK_UNAVAILABLE` stall |
 | Login throttling | No real-server 429 acceptance. A renewal's candidate password still ends unconfirmed when the daemon restarts during its held revocation |
 | Packaging and update (B13) | Setup calls `daemon.prepareUpdate` and signed in-app updates exist ([packaging](packaging.md)); not verified: installing the x64 package (needs x64 hardware), an upgrade between versions with a signed-in account, the installed interface itself starting an update, a release signed with the project key and read from GitHub; no Authenticode signature |
@@ -45,10 +45,10 @@ Not done:
 
 What the interface must respect until those pass:
 
-- The `fullSync`, `endpointAutoSwitch` and `virtualFiles` capabilities stay `false`; never present
-  them as supported.
-  Both were assessed on 2026-11-11 against the cases they depend on: the first three rows above
-  name what `fullSync` still lacks, the fourth what `endpointAutoSwitch` lacks.
+- The `fullSync` and `virtualFiles` capabilities stay `false`; never present them as supported.
+  `fullSync` was assessed on 2026-11-11 against the cases it depends on: the first three rows above
+  name what it still lacks. `endpointAutoSwitch` is `true` for engine builds since 2026-11-12, by the
+  user's decision once its cases passed on real runs ([acceptance](acceptance.md#capability-evidence)).
 - While `daemon.stateAvailable` is `false` nothing is shown as healthy, and a missing collection is
   unknown, not empty.
 - The interface goes only through IPC ([IPC](ipc.md)); the account and engine rules are in

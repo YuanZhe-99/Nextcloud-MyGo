@@ -4,11 +4,16 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$Executable,
-    [ValidateSet('lifetime','held-revocation','network','network-lifetime','network-active','network-chunked','network-uncertain','network-large','file-safety','multi-account','switch-quota','slow-server','sleep-resume','switch-kill','wrong-instance')][string]$Scenario = 'lifetime',
+    [ValidateSet('lifetime','held-revocation','network','network-lifetime','network-active','network-chunked','network-uncertain','network-large','file-safety','file-safety-bulk','multi-account','switch-quota','slow-server','sleep-resume','switch-kill','wrong-instance','data-safety','switching')][string]$Scenario = 'lifetime',
     [ValidateSet('prepared','quiescing','verifying','committed','reconciling')][string[]]$Stage = @('prepared','quiescing','verifying','committed','reconciling'),
     # network-active and network-uncertain run each case in its own process and profile, so every case
     # starts on healthy endpoints instead of waiting out the circuit history of the case before it.
-    [ValidateSet('upload','download','unacknowledged-upload','move','delete','final-move')][string[]]$Case = @()
+    # data-safety runs its cases the same way; journal, root-replaced and discovery-kill end their
+    # first process (exit 75) and check the restarted one on the same profile.
+    [ValidateSet('upload','download','unacknowledged-upload','move','delete','final-move',
+        'interrupted-change','watcher','root-denied','maintenance','partial-listing','names','excluded','revocation',
+        'journal','root-replaced','discovery-kill',
+        'auto-switch','auto-fallback','tls-trust','tls-auth','tls-circuit','redirect','subpath','revoke-switch','new-folder','root-change','late-epoch')][string[]]$Case = @()
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'test-job.ps1')
@@ -77,9 +82,19 @@ if ($Scenario -eq 'switch-kill') {
     foreach ($name in $Stage) {
         RunProfile @(@{ Argument = "--switch-kill=$name"; Code = 75 }, @{ Argument = "--switch-recover=$name"; Code = 0 })
     }
+} elseif ($Scenario -eq 'data-safety') {
+    $cases = if ($Case) { $Case } else { @('interrupted-change','watcher','root-denied','maintenance','partial-listing','names','excluded','revocation','journal','root-replaced','discovery-kill') }
+    foreach ($name in $cases) {
+        if ($name -in 'journal','root-replaced','discovery-kill') { RunProfile @(@{ Argument = "--data-safety=$name"; Code = 75 }, @{ Argument = "--data-recover=$name"; Code = 0 }) }
+        else { RunProfile @(@{ Argument = "--data-safety=$name"; Code = 0 }) }
+    }
 } elseif ($Scenario -in 'network-active','network-uncertain') {
     $cases = if ($Case) { $Case } elseif ($Scenario -eq 'network-active') { @('upload','download','unacknowledged-upload') } else { @('move','delete','final-move') }
     foreach ($name in $cases) { RunProfile @(@{ Argument = "--$Scenario=$name"; Code = 0 }) }
+} elseif ($Scenario -eq 'switching') {
+    # Each switching case runs in a process and profile of its own (PLAN §20.3).
+    $cases = if ($Case) { $Case } else { @('auto-switch','auto-fallback','tls-trust','tls-auth','tls-circuit','redirect','subpath','revoke-switch','new-folder','root-change','late-epoch') }
+    foreach ($name in $cases) { RunProfile @(@{ Argument = "--switching=$name"; Code = 0 }) }
 } else {
     RunProfile @(@{ Argument = '--' + $Scenario; Code = 0 })
 }

@@ -7,7 +7,7 @@
         "daemon": {
           "version": "0.1.0", "protocol": 1, "demo": false, "allPaused": false,
           "stateAvailable": true, "startupState": "normal",
-          "capabilities": {"multiAccount": true, "login": true, "fullSync": false, "endpointAutoSwitch": false, "virtualFiles": false, "endToEndEncryption": false, "engine": true},
+          "capabilities": {"multiAccount": true, "login": true, "fullSync": false, "endpointAutoSwitch": true, "virtualFiles": false, "endToEndEncryption": false, "engine": true},
           "startupReport": {"previousVersion": "0.1.0", "previousSchema": 10, "schema": 11, "selfCheck": "failed", "reasonCodes": ["LOCAL_ROOT_UNAVAILABLE"]}
         },
         "accounts": [

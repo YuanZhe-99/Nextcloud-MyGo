@@ -290,11 +290,16 @@ struct EngineAdapter::State {
   bool active = false, stopping = false, retired = false;
   QString reason;
   QStringList baseline;
+  /// mounts are the baseline's external-storage mount points (S14).
+  QStringList mounts;
   QByteArray baselineDigest;
   QString authorization, proposal;
   QDeadlineTimer authorizationExpiry{0};
   DeleteAssessment deletion;
   bool upstreamGuard = false;
+  /// freshConnections makes the next cycle drop the account's connections:
+  /// those of a failed cycle may have died with the network (S05).
+  bool freshConnections = false;
   std::shared_ptr<Requests> requests = std::make_shared<Requests>();
   std::shared_ptr<RequestLifetime> lifetime =
       std::make_shared<RequestLifetime>();
@@ -586,6 +591,7 @@ void EngineAdapter::start() {
     return;
   }
   s.baseline.clear();
+  s.mounts.clear();
   s.proposal.clear();
   s.groups.clear();
   s.deletion = {};
@@ -595,6 +601,10 @@ void EngineAdapter::start() {
       !s.journal->getFilesBelowPath(
           {}, [&](const OCC::SyncJournalFileRecord &record) {
             s.baseline.append(QString::fromUtf8(record._path));
+            if (record.isDirectory() &&
+                record._remotePerm.hasPermission(
+                    OCC::RemotePermissions::IsMounted))
+              s.mounts.append(s.baseline.last());
             baselineHash.addData(
                 QJsonDocument(QJsonArray{QString::fromUtf8(record._path),
                                          QString::fromUtf8(record._fileId),
@@ -605,6 +615,14 @@ void EngineAdapter::start() {
     throw std::runtime_error("JOURNAL_ERROR");
   }
   s.baselineDigest = baselineHash.result();
+  // After a cycle lost its network, a reused manager queued the next listing
+  // behind connections the cut had left behind, and the folder stayed in
+  // discovery after the network came back (S05 regression).
+  // A running hydration keeps the manager it started on until a later cycle.
+  if (s.freshConnections && !(s.onDemand && s.onDemand->busy())) {
+    s.freshConnections = false;
+    s.account->resetNetworkAccessManager();
+  }
   OCC::SyncOptions options; // Keep upstream defaults and mass-deletion
                             // protection; never setIsCmd(true).
   if (s.onDemand)
@@ -671,6 +689,13 @@ void EngineAdapter::start() {
                                          QString::number(item->_size),
                                          QString::number(item->_modtime)})
                     .toJson(QJsonDocument::Compact)));
+        }
+        // An external storage the server cannot reach is listed as missing
+        // or empty: unknown, not deleted (S14). The cycle retries.
+        if (emptiesMount(s.baseline, s.mounts, actions)) {
+          s.reason = "DISCOVERY_INCOMPLETE";
+          s.engine->abort();
+          return;
         }
         std::sort(plan.begin(), plan.end());
         QCryptographicHash hash(QCryptographicHash::Sha256);
@@ -786,6 +811,7 @@ void EngineAdapter::start() {
             state_->cycleNetworkGeneration,
             retryAfter,
             state_->proposal.isEmpty() ? QByteArray{} : state_->groups};
+        state_->freshConnections = !result.success;
         result.deletedLocal = state_->deletedLocal;
         result.renamedRemote = state_->renamedRemote;
         result.renamedLocal = state_->renamedLocal;

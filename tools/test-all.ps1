@@ -171,7 +171,7 @@ try {
             Lanes @(
                 , @(@('active upload', 'network-active', 'upload'), @('active download', 'network-active', 'download'), @('active lost PUT reply', 'network-active', 'unacknowledged-upload'))
                 , @(@('lost MOVE reply', 'network-uncertain', 'move'), @('lost DELETE reply', 'network-uncertain', 'delete'), @('lost final MOVE reply', 'network-uncertain', 'final-move'), @('switch held past its window', 'switch-quota', ''))
-                , @(@('kill at prepared', 'switch-kill', 'prepared'), @('kill at quiescing', 'switch-kill', 'quiescing'), @('kill at verifying', 'switch-kill', 'verifying'))
+                , @(@('kill at prepared', 'switch-kill', 'prepared'), @('kill at quiescing', 'switch-kill', 'quiescing'), @('kill at verifying', 'switch-kill', 'verifying'), @('file safety, 100 deletions', 'file-safety-bulk', ''))
                 , @(@('kill at committed', 'switch-kill', 'committed'), @('kill at reconciling', 'switch-kill', 'reconciling'), @('file safety', 'file-safety', ''))
                 , @(@('chunk session resume', 'network-chunked', ''), @('held revocation', 'held-revocation', ''), @('slow server stays healthy', 'slow-server', ''), @('sleep and resume, simulated', 'sleep-resume', ''))
                 , @(@('network failover and fixed target', 'network', ''), @('renewal lifetime', 'lifetime', ''), @('two accounts, two folders each', 'multi-account', ''))

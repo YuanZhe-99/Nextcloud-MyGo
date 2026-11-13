@@ -87,6 +87,8 @@ macOS 扩展目标在 `shell_integration/MacOSX/NextcloudIntegration/FileProvide
 | Login Flow v2 打开系统浏览器并轮询取得应用密码 | 由 SyncD 执行登录；界面永远拿不到应用密码 | 已阅读 |
 | WebDAV `oc:id` 带有实例命名空间；`oc:fileid` 只在实例内唯一 | 身份校验比较完整的 `oc:id`，从不只比较 `fileid` | 已阅读 |
 | MOVE 保留条目的 `oc:fileid`；分块会话的最终 MOVE 在文件组装完成后才应答；已提交的写入即使回复丢失也仍然已提交 | 上游发现按文件 ID 识别已改名的条目、按校验和识别已组装的文件，因此回复丢失通过重新发现恢复，绝不通过第二个请求恢复 | 针对服务器 35.0.2 的真实运行 |
+| 替换已有文件的 PUT 直接覆盖写入原文件，不使用 part 文件（当 part 路径不可创建而目标可更新时，`File::put` 放弃 part 文件，而 `Common::isCreatable` 使每个文件都满足这一条件）；正文被截断时文件也被截断，服务器察觉后应答 `400 Expected filesize`，文件缓存在有人读取该文件之前保留旧的大小和 ETag。新文件的 PUT 使用 part 文件，不留下任何内容 | 补丁 0018 把每个非空修改都作为分块上传发送，由最终 MOVE 在服务器上组装（[引擎](engine.md#完成与安全)） | 针对服务器 35.0.2 手工发送的短 PUT：已有的 1 MiB 文件只剩 294,912 字节，新文件未被创建 |
+| 后备目录已消失的 `files_external` 存储，在客户端所请求属性的父目录列表中被省略，或以权限 `MG`、大小 0 和空 ETag 列出，其自身列表应答 207 且没有成员 | 若一个周期会在本地移除挂载点或其全部内容，SyncD 会阻止该周期（`DISCOVERY_INCOMPLETE`） | 针对服务器 35.0.2 的真实运行（`partial-listing`）和手工 PROPFIND |
 
 ## Qt
 

@@ -150,6 +150,21 @@ int main(int argc, char **argv) {
       identity = lease.identity();
       require(lease.verify(), "fresh root invalid");
       require(lease.validateTree(), "ordinary NTFS tree refused");
+      {
+        // S17 regression: a file whose path passes MAX_PATH is an ordinary
+        // file for upstream; the scan refused it as an unsupported tree.
+        QString deep = root + "/child";
+        for (int i = 0; i < 6; ++i)
+          deep += '/' + QString(60, QChar('d' + i));
+        QFile file(deep + "/long-" + QString(60, 'f') + ".txt");
+        require(QDir().mkpath(deep) && file.open(QIODevice::WriteOnly) &&
+                    file.write("x") == 1 && file.fileName().size() > 400,
+                "long-path fixture missing");
+        file.close();
+        require(lease.validateTree(), "S17 tree with a long path refused");
+        require(QDir(root + "/child/" + QString(60, 'd')).removeRecursively(),
+                "long-path fixture not removed");
+      }
       require(refused(root),
               "same-thread recursive mutex allowed a second writer");
       require(refused(root + "/child"), "nested mapping accepted");

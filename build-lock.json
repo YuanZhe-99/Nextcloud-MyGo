@@ -150,6 +150,11 @@
         "path": "patches/nextcloud/0017-embed-cfapi-vfs-in-sync-service.patch",
         "sha256": "4dd16b323793e690f270b66c39c1adcefe69b8787914467bdd32209f49298244",
         "reason": "Build the Windows CFAPI plugin without its Explorer shell extension (BUILD_CFAPI_VFS); register sync roots under a caller-supplied account identity that does not contain the server host; name no shell-extension handler class or navigation-pane CLSID that was not registered; let the owner refuse new hydration/placeholder callbacks and observe running ones (Vfs::refuseNewRequests, Vfs::hasRequestsInFlight) before stopping. Default upstream behavior is unchanged."
+      },
+      {
+        "path": "patches/nextcloud/0018-chunk-uploads-that-replace-a-server-file.patch",
+        "sha256": "4d12844e0b3e62e71fd219798348a79c25871d6dc050bd0806a2bae2cd591779",
+        "reason": "Send every nonempty upload that replaces a server file as a chunked (v2) upload when the server supports it, not as one PUT: Nextcloud 35 writes an update over the existing file in place, so a PUT cut mid-body left the server copy truncated (S05), and once the server re-read it the next cycle's conflict put the truncated copy at the user's path. The final MOVE assembles on the server. New files below the chunk size still use one PUT; testSmallModificationIsChunked covers both; connectionDroppedBeforeEtagRecieved keeps its single-PUT case on a server without chunking."
       }
     ]
   },

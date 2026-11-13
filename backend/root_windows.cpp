@@ -248,15 +248,19 @@ bool RootLease::validateTree() const {
   QSet<QString> placeholders; // directories admitted with a cloud tag
   while (!pending.isEmpty()) {
     const auto path = QDir::toNativeSeparators(pending.takeLast());
+    // The scan sees every path upstream syncs, also those past MAX_PATH: an
+    // extended-length path is not limited to 260 characters (S17 regression:
+    // one long path refused the whole folder as unsupported).
+    const auto extended = "\\\\?\\" + path;
     const auto attributes =
-        GetFileAttributesW(reinterpret_cast<LPCWSTR>(path.utf16()));
+        GetFileAttributesW(reinterpret_cast<LPCWSTR>(extended.utf16()));
     // verify() already admitted the root's own tag.
     if (attributes == INVALID_FILE_ATTRIBUTES ||
         ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) &&
          !(onDemand_ && (path == QDir::toNativeSeparators(path_) ||
                          placeholders.contains(path)))))
       return false;
-    const auto pattern = path + "\\*";
+    const auto pattern = extended + "\\*";
     WIN32_FIND_DATAW entry{};
     auto search =
         FindFirstFileW(reinterpret_cast<LPCWSTR>(pattern.utf16()), &entry);

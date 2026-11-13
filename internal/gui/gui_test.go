@@ -487,6 +487,26 @@ func TestRealDaemonCapabilities(t *testing.T) {
 	shoot(t, tt, "real-setup-folders")
 }
 
+// TestAutomaticChoiceFollowsCapability: the Network page offers Automatic
+// and Fixed exactly when SyncD advertises endpointAutoSwitch, and says why
+// it does not otherwise.
+func TestAutomaticChoiceFollowsCapability(t *testing.T) {
+	for _, auto := range []bool{false, true} {
+		s := realSnapshot()
+		s.Daemon.Capabilities["endpointAutoSwitch"] = auto
+		a := snapApp(t, s)
+		a.page = pageNetwork
+		tt := ui.NewTester(a.view, 1200, 780)
+		tt.Frame()
+		if tt.HasText(L.NetworkModeFixed()) != auto || (auto && !tt.HasText(L.NetworkModeAuto())) {
+			t.Fatalf("capability %v: the Automatic/Fixed choice shown is %v", auto, !auto)
+		}
+		if tt.HasText(L.AutoUnavailable()) == auto {
+			t.Fatalf("capability %v: the unavailable note is wrong", auto)
+		}
+	}
+}
+
 // TestRefusedPasswordAsksToSignIn: an account whose server refused the app
 // password (Auth revoked) puts its Sign in in browser where the user looks,
 // and its folder says why it waits.

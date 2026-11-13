@@ -425,9 +425,9 @@ void Control::refreshNetwork(const QString &account) {
                             q.value(2).toString(), q.value(3).toString()});
   q.finish();
   const auto identity = QJsonDocument(roots).toJson(QJsonDocument::Compact);
-  q.prepare("SELECT endpoint_id,base_url,'verified' FROM accounts WHERE id=? "
-            "AND state='ready' UNION ALL SELECT id,base_url,state FROM "
-            "endpoints WHERE account_id=? AND approved=1");
+  q.prepare("SELECT endpoint_id,base_url,'verified','internet' FROM accounts "
+            "WHERE id=? AND state='ready' UNION ALL SELECT id,base_url,state,"
+            "kind FROM endpoints WHERE account_id=? AND approved=1");
   q.addBindValue(account);
   q.addBindValue(account);
   execute(q);
@@ -455,6 +455,10 @@ void Control::refreshNetwork(const QString &account) {
         q.value(2).toString() != "rejected" && !blocked.next();
     node.config.tlsValid = node.verified;
     node.config.namespaceVerified = node.verified;
+    // PLAN §8.4's default priorities: a preference among trusted addresses,
+    // never a trust input.
+    const auto kind = q.value(3).toString();
+    node.config.priority = kind == "home" ? 90 : kind == "vpn" ? 70 : 50;
     node.config.endpointRevision = revision(signature);
     node.config.bindingRevision = quint64(binding.epoch);
     node.config.policyRevision = state.policyRevision;

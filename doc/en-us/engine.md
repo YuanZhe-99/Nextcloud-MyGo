@@ -110,7 +110,30 @@ upload body is still being written, which Qt reports as an unknown network error
 as `NETWORK_UNAVAILABLE`: that drops the active address's recent business success and probes every
 address at once. Cancellation, TLS, permission and HTTP errors are not transport evidence. Before
 the mid-body reset counted, a dead upload after a sleep read as `SYNC_FAILED` (sleep-resume
-regression).
+regression). The cycle after any unsuccessful one starts on a new network access manager for the
+account (`Account::resetNetworkAccessManager`), never on connections the failure may have left
+behind: with the old manager, the first listing after the network came back was never sent and the
+folder stayed in discovery (S05 regression, `interrupted-change`).
+
+Nextcloud writes a PUT that replaces an existing file over it in place, so a body cut short
+leaves the server copy truncated ([upstream](upstream.md#nextcloud-server-apis)). Its file cache
+keeps the old ETag until something reads the file; after that, the next cycle saw a change on
+both sides and upstream's conflict handling put the truncated copy at the user's path, leaving the
+good content only in a local conflict copy. Patch 0018 therefore sends every nonempty upload that
+replaces a server file as a chunked (v2) upload when the server offers chunking: the final MOVE
+assembles the file on the server, and a cut before it leaves the previous version whole. New files
+below the chunk size still use one PUT (a cut one leaves nothing). The cost is two more requests
+per modified file (the session's MKCOL and the final MOVE) and one more server-side copy; servers
+without chunking v2 keep the single PUT and its risk.
+
+The server lists an external storage it cannot reach (`files_external` whose backing directory is
+gone) as missing or as an empty folder, the same as one that was emptied. A cycle whose local
+removals would take away a mount point recorded in the journal (permission `M`), or every baseline
+entry below one, stops before propagation as `DISCOVERY_INCOMPLETE` and retries; however few
+entries it has, nothing is deleted (S14, `emptiesMount` in `syncd_deletion_tests`). Removing part
+of a storage's content stays an ordinary deletion under the thresholds. A storage that was really
+emptied or unmounted on the server keeps the folder in that state until its local copies are
+removed by hand or the storage has content again.
 
 Only a failed probe blocks the active endpoint. While its circuit is still recovering (half-open), a
 successful probe is recovery evidence and never blocks the account or fails the switch that just
@@ -288,7 +311,8 @@ filesystem ancestors are refused. Ownership uses kernel handles rather than pers
 PIDs; release and process termination drop ownership, and kernel-object failures fail closed. This
 does not detect future official-client registration. Recursive preflight and pre-propagation scans
 continue rejecting reparse points, offline/recall objects, unreadable directories and upstream journals
-inside the tree.
+inside the tree. The scan uses extended-length paths, so a path past `MAX_PATH`, which upstream syncs, is
+not mistaken for an unreadable directory (S17 regression in `SyncDRootContracts`).
 
 An on-demand folder's lease (`RootLease(path, true)`) also admits the Cloud Files reparse tag on the
 root itself and Cloud Files placeholders in the tree, and does not list unpopulated directories;

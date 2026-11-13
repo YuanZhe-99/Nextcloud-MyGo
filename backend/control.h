@@ -104,7 +104,9 @@ private:
   /// switch coordinator.
   void evaluateNetwork();
   /// refreshNetwork imports current consent, policy, binding and root
-  /// identities without reusing stale evidence.
+  /// identities without reusing stale evidence. Notes: an endpoint's kind
+  /// sets its default priority (home 90, vpn 70, internet 50; PLAN §8.4),
+  /// never its trust.
   void refreshNetwork(const QString &account);
   /// networkOutcome consumes only a matching generation/revision-bound health
   /// result.

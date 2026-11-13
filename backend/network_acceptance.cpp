@@ -108,6 +108,26 @@ struct NetworkTestAccess {
   }
   /// failed requires observed independent failure/circuit evidence, not merely
   /// an offline hint.
+  /// age makes the active address count as serving ms longer and the switch
+  /// cooldown as ms older; the thresholds themselves are proven on a caller
+  /// clock (syncd_switching_tests).
+  static void age(Control &c, const QString &account, qint64 ms) {
+    auto &state = c.network_->accounts.at(account);
+    state.policy.activated(state.active, c.network_->clock.elapsed() - ms);
+    state.nextSwitch -= ms;
+  }
+  /// fresh requires full-root verification and fresh repeated health of one
+  /// endpoint.
+  static bool fresh(Control &c, const QString &account,
+                    const QString &endpoint) {
+    if (!c.network_ || !c.network_->accounts.contains(account))
+      return false;
+    const auto &state = c.network_->accounts.at(account);
+    const auto node = state.nodes.find(endpoint);
+    const auto h = state.policy.health(endpoint, c.network_->clock.elapsed());
+    return node != state.nodes.end() && node->second.verified && h.fresh &&
+           h.successes >= 2;
+  }
   static bool failed(Control &c, const QString &account,
                      const QString &endpoint) {
     return c.network_ && c.network_->accounts.contains(account) &&
@@ -263,6 +283,11 @@ struct FaultState {
   std::atomic<quint64> withheld{0};
   // Control-thread observer of requests about to be created for the alternate.
   std::function<void(const QString &)> targetRequest;
+  // Switching scenarios: host names served by a loopback TLS-terminating
+  // proxy, and alternate requests refused by path (both under withholdLock).
+  std::map<QString, quint16> routes;
+  QString refuseAlternate;
+  quint16 abortPort = 0; // a listener that aborts every connection
 };
 /// FaultProxy refuses selected HTTPS tunnels through a process-local closed
 /// proxy without TLS interception.
@@ -285,6 +310,19 @@ public:
       ++state_->refused;
       return {
           QNetworkProxy(QNetworkProxy::HttpProxy, "127.0.0.1", state_->port)};
+    }
+    {
+      QMutexLocker lock(&state_->withholdLock);
+      if (host == state_->alternate && !state_->refuseAlternate.isEmpty() &&
+          query.url().path().contains(state_->refuseAlternate)) {
+        ++state_->refused;
+        return {QNetworkProxy(QNetworkProxy::HttpProxy, "127.0.0.1",
+                              state_->abortPort)};
+      }
+      if (const auto route = state_->routes.find(host);
+          route != state_->routes.end())
+        return {QNetworkProxy(QNetworkProxy::HttpProxy, "127.0.0.1",
+                              route->second)};
     }
     if (host == state_->primary) {
       QMutexLocker lock(&state_->withholdLock);
@@ -494,10 +532,15 @@ void networkAcceptance(const QString &scenario) {
                  scenario.section('=', 0, 0) == "network-active" ||
                  scenario == "network-chunked" ||
                  scenario.section('=', 0, 0) == "network-uncertain" ||
-                 scenario == "network-large" || scenario == "file-safety";
+                 scenario == "network-large" ||
+                 scenario.startsWith("file-safety");
   const bool multi =
                  scenario == "multi-account" || scenario == "switch-quota",
-             slow = scenario == "slow-server";
+             slow = scenario == "slow-server",
+             dataSafety = scenario.startsWith("data-safety="),
+             dataRecover = scenario.startsWith("data-recover=");
+  QString alternateKind = QStringLiteral("internet");
+  const bool switching = switchingScenario(scenario, &alternateKind);
   const auto stage = scenario.section('=', 1);
   // One transfer case per process: each starts on healthy endpoints, with no
   // circuit history (and its growing open time) left by an earlier fault.
@@ -507,7 +550,8 @@ void networkAcceptance(const QString &scenario) {
   // only the relay maps back; its direct origin is the cleanup address. The
   // relay then carries every request, also those of the network scenario.
   const bool relayed =
-      activeTransfers || multi || slow ||
+      activeTransfers || multi || slow || dataSafety || dataRecover ||
+      switching ||
       (scenario == "network" &&
        qEnvironmentVariableIsSet("NEXTCLOUD_TEST_CLEANUP_URL"));
   if (relayed && qEnvironmentVariableIsSet("NEXTCLOUD_TEST_CLEANUP_URL"))
@@ -565,6 +609,16 @@ void networkAcceptance(const QString &scenario) {
           },
           {}, true);
   });
+  QTcpServer aborting;
+  require(aborting.listen(QHostAddress::LocalHost, 0),
+          "owned aborting proxy unavailable");
+  faults->abortPort = aborting.serverPort();
+  QObject::connect(&aborting, &QTcpServer::newConnection, &aborting, [&] {
+    while (auto *socket = aborting.nextPendingConnection()) {
+      socket->abort();
+      socket->deleteLater();
+    }
+  });
   // A suspended process cannot drop its own connections: for the simulated
   // sleep every tunnel runs in a child relay that keeps running meanwhile.
   QProcess relay;
@@ -587,7 +641,48 @@ void networkAcceptance(const QString &scenario) {
   }
   ProxyScope proxy;
   QNetworkProxyFactory::setApplicationProxyFactory(new FaultProxy(faults));
+  // Switching scenarios put their TLS-terminating proxies on the route before
+  // the sign-in, so every request of the run can pass them.
+  const auto fixture =
+      switching ? switchingFixture(scenario, root,
+                                   [faults](const QString &host, quint16 port) {
+                                     QMutexLocker lock(&faults->withholdLock);
+                                     if (port)
+                                       faults->routes[host] = port;
+                                     else
+                                       faults->routes.erase(host);
+                                   })
+                : nullptr;
+  if (dataRecover)
+    dataSafetyBeforeRestart(root, stage);
   Control c(QDir(root).filePath("control.sqlite"));
+  const AcceptanceCalls calls{
+      [&](const QString &method, const QJsonObject &params) {
+        return call(c, method, params);
+      },
+      [&](const QJsonObject &accepted) { return settled(c, accepted); },
+      [](const std::function<bool()> &condition, const char *message) {
+        waitFor(condition, message);
+      },
+      [&](const QString &user, const QString &password) {
+        return borrowedLogin(c, root, base, user, password);
+      },
+      [&](const QString &id) {
+        const auto bound = NetworkTestAccess::binding(c, id);
+        return std::make_pair(bound.endpoint, bound.epoch);
+      },
+      [&](const QString &id) { return NetworkTestAccess::stable(c, id); }};
+  if (dataRecover) {
+    try {
+      dataSafetyRecover(c, root, stage, calls);
+    } catch (const std::exception &error) {
+      std::fprintf(stderr, "%s\n", error.what());
+      settled(c, call(c, "daemon.shutdown", {{"reason", "user"}}));
+      throw;
+    }
+    settled(c, call(c, "daemon.shutdown", {{"reason", "user"}}));
+    return;
+  }
   if (recovering) {
     // The restarted daemon gets no hint: only its own storage and the server.
     try {
@@ -652,7 +747,8 @@ void networkAcceptance(const QString &scenario) {
   auto receipt = settled(c, call(c, "endpoints.stage",
                                  {{"accountId", account},
                                   {"name", "Owned alternate"},
-                                  {"baseUrl", alternate.toString()}}));
+                                  {"baseUrl", alternate.toString()},
+                                  {"kind", alternateKind}}));
   require(receipt.value("state") == "succeeded",
           "real alternate public probe failed");
   const auto staging =
@@ -721,25 +817,16 @@ void networkAcceptance(const QString &scenario) {
   const auto target =
       receipt.value("result").toObject().value("endpointId").toString();
   require(!target.isEmpty(), "approved alternate ID absent");
-  if (multi) {
-    const AcceptanceCalls calls{
-        [&](const QString &method, const QJsonObject &params) {
-          return call(c, method, params);
-        },
-        [&](const QJsonObject &accepted) { return settled(c, accepted); },
-        [](const std::function<bool()> &condition, const char *message) {
-          waitFor(condition, message);
-        },
-        [&](const QString &user, const QString &password) {
-          return borrowedLogin(c, root, base, user, password);
-        },
-        [&](const QString &id) {
-          const auto bound = NetworkTestAccess::binding(c, id);
-          return std::make_pair(bound.endpoint, bound.epoch);
-        },
-        [&](const QString &id) { return NetworkTestAccess::stable(c, id); }};
+  if (multi || dataSafety) {
     try {
-      if (scenario == "switch-quota")
+      if (dataSafety)
+        // A plain network loss refuses both addresses: nowhere to fail over.
+        dataSafetyAcceptance(c, root, account, stage, calls, [&](bool cut) {
+          faults->failPrimary = cut;
+          faults->failAlternate = cut;
+          NetworkTestAccess::changed(c);
+        });
+      else if (scenario == "switch-quota")
         switchQuotaAcceptance(c, root, base, calls);
       else
         multiAccountAcceptance(c, root, account, target, base, calls);
@@ -748,6 +835,48 @@ void networkAcceptance(const QString &scenario) {
       settled(c, call(c, "daemon.shutdown", {{"reason", "user"}}));
       throw;
     }
+    settled(c, call(c, "daemon.shutdown", {{"reason", "user"}}));
+    return;
+  }
+  if (switching) {
+    const SwitchingControls controls{
+        calls,
+        account,
+        primary,
+        target,
+        credential,
+        base,
+        alternate,
+        [&](bool failed) { faults->failPrimary = failed; },
+        [&](bool failed) { faults->failAlternate = failed; },
+        [&](const QString &path) {
+          QMutexLocker lock(&faults->withholdLock);
+          faults->refuseAlternate = path;
+        },
+        [&](const std::function<void(const QString &)> &observer) {
+          faults->targetRequest = observer;
+        },
+        [&] { NetworkTestAccess::changed(c); },
+        [&] { return NetworkTestAccess::ready(c, account); },
+        [&](const QString &endpoint) {
+          return NetworkTestAccess::failed(c, account, endpoint);
+        },
+        [&](const QString &endpoint) {
+          return NetworkTestAccess::fresh(c, account, endpoint);
+        },
+        [&](qint64 ms) { NetworkTestAccess::age(c, account, ms); },
+        [&] { return NetworkTestAccess::facts(c, account); }};
+    try {
+      switchingAcceptance(scenario, fixture.get(), controls);
+    } catch (const std::exception &error) {
+      std::fprintf(stderr, "%s\n", error.what());
+      faults->failPrimary = false;
+      faults->failAlternate = false;
+      faults->targetRequest = {};
+      settled(c, call(c, "daemon.shutdown", {{"reason", "user"}}));
+      throw;
+    }
+    faults->targetRequest = {};
     settled(c, call(c, "daemon.shutdown", {{"reason", "user"}}));
     return;
   }

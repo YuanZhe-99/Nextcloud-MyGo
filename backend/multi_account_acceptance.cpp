@@ -27,13 +27,11 @@ void require(bool value, const char *message) {
   if (!value)
     throw std::runtime_error(message);
 }
-/// davRequest sends one bounded request as the named fixture user to an
-/// approved origin and returns its status; the body comes back in body.
-/// Notes: never replays a request; credentials stay in memory.
+} // namespace
 int davRequest(const QUrl &base, const QByteArray &method, const QString &path,
                const QString &user, const QString &password,
-               const QByteArray &content = {}, QByteArray *body = nullptr,
-               const QByteArray &type = {}) {
+               const QByteArray &content, QByteArray *body,
+               const QByteArray &type) {
   const auto url = base.resolved(QUrl(path));
   require(withinServer(base, url),
           "owned multi-account request escaped origin");
@@ -60,11 +58,11 @@ int davRequest(const QUrl &base, const QByteArray &method, const QString &path,
   reply->deleteLater();
   return status;
 }
-/// home is a fixture user's DAV files root, relative to the origin.
 QString home(const QString &uid) {
   return "remote.php/dav/files/" +
          QString::fromLatin1(QUrl::toPercentEncoding(uid)) + '/';
 }
+namespace {
 /// folderState reads one mapping's projected state; empty once it is gone.
 QJsonObject folderState(Control &c, const QString &folder) {
   for (const auto &entry :
@@ -77,6 +75,8 @@ QJsonObject folderState(Control &c, const QString &folder) {
 struct Mapped {
   QString account, folder, local, remote, login, secret, uid;
 };
+} // namespace
+
 /// ownedUser creates a second user of the disposable server with a random
 /// password and returns its name and password.
 /// Side effects: reserves owned-user.json first, so this run and, after any
@@ -106,6 +106,7 @@ std::pair<QString, QString> ownedUser(const QString &root, const QUrl &base) {
           "owned second fixture user could not be created");
   return {user, password};
 }
+namespace {
 /// setQuota gives an owned user a quota through the admin provisioning API.
 void setQuota(const QUrl &base, const QString &user, const QByteArray &quota) {
   require(davRequest(base, "PUT",
@@ -117,6 +118,7 @@ void setQuota(const QUrl &base, const QString &user, const QByteArray &quota) {
                      nullptr, "application/x-www-form-urlencoded") == 200,
           "owned fixture user quota could not be set");
 }
+} // namespace
 /// removeOwnedUser deletes the owned user and its reservation.
 void removeOwnedUser(const QString &root, const QUrl &base,
                      const QString &user) {
@@ -128,7 +130,6 @@ void removeOwnedUser(const QString &root, const QUrl &base,
               QFile::remove(QDir(root).filePath("owned-user.json")),
           "owned second fixture user could not be removed");
 }
-} // namespace
 
 void multiAccountAcceptance(Control &c, const QString &root,
                             const QString &first, const QString &target,

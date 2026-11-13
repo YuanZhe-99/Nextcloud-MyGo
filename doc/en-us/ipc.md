@@ -59,8 +59,9 @@ Protocol 1.9, with Control schema 11, adds what the interface needs and what the
   otherwise; `folder.filesDone` counts the cycle's completed files. A running cycle publishes a
   snapshot event at most once a second when either changes.
 - `endpoint.latencyMs` (smoothed probe round trip, 0 before a probe succeeded), `endpoint.kind`
-  (`internet`, `home`, `vpn`, chosen at `endpoints.stage` with the optional `kind`; it never
-  affects trust) and `endpoint.blockedReason`, the one reason `blocked` is true, strongest first:
+  (`internet`, `home`, `vpn`, chosen at `endpoints.stage` with the optional `kind`; it sets the automatic
+  policy's default priority, `home` 90, `vpn` 70, `internet` 50 (`PLAN.md` §8.4), and never affects
+  trust) and `endpoint.blockedReason`, the one reason `blocked` is true, strongest first:
   a security quarantine, `AUTH_REQUIRED`, `VERIFICATION_PENDING` or `NETWORK_UNAVAILABLE`.
 - `network.why` (why the address in use was chosen), `network.switchReason` and
   `network.switched` (the last committed switch).
@@ -155,8 +156,8 @@ field. Fixed configuration commits only after all-root new-epoch reconciliation.
 Accepted operations remain observable after a caller stops waiting. `Remote.RequestPolicy` returns acceptance independently
 of `WaitOperation`. Schema/examples live in `protocol/policy.*`. Control schema 7 persists policy,
 pending policy, security quarantine and frozen switch-evidence context. Existing implicit fixed profiles
-are not silently opted into automatic selection. This connected path is under real fault acceptance;
-the automatic-switching capability remains false until the full agreed scope is verified.
+are not silently opted into automatic selection. Its cases passed real fault acceptance on
+2026-11-12 and the automatic-switching capability is true for engine builds.
 
 `diagnostics.snapshot` returns only sanitized IDs, immutable epochs and aggregate request/drainage
 counters. It never returns request URLs, headers, passwords, paths or file content, and is not a
@@ -176,8 +177,8 @@ independent switch gate. Engine builds expose `endpoints.requestSwitch` with `ac
 `expectedRevision` and `operationKey` (see `protocol/switch.schema.json`). It returns a durable running
 receipt without waiting for user-paused roots. Poll `operations.get`; success requires all frozen roots
 to reconcile at the new epoch. The Go `Remote.RequestSwitch`/`WaitOperation` methods separate acceptance
-from completion. Closing a wait does not cancel the operation. Full sync and automatic switching stay
-capability-disabled pending complete recovery acceptance.
+from completion. Closing a wait does not cancel the operation. Full sync stays capability-disabled pending
+complete recovery acceptance.
 After interrupted-switch startup blocking, original root leases are reacquired before an internal
 replacement operation freshly verifies the committed origin at a new epoch. The old receipt remains
 failed; no recorded HTTP write is replayed. Previously failed hard verification is not auto-retried.
@@ -215,8 +216,8 @@ coordinator checks trust, identity, epoch and quiescence as a separate control-t
 the engine adapter must supply the actual quiescence proof before it can activate an endpoint.
 Login now uses an in-memory Login Flow v2 session and Windows Credential Manager; see
 [accounts](accounts.md). `accounts.login.status` polls the session ID independently of its start
-operation. Full sync and automatic switching remain capability-disabled until
-their complete paths are implemented. Mock remains an explicit development mode.
+operation. Full sync remains capability-disabled until its complete path is
+implemented. Mock remains an explicit development mode.
 
 The Windows daemon owns a profile-hashed Control DB under the current user's application-data
 directory. Its SQLite connection stays on the Qt thread; settings, operation receipts and outbox
@@ -237,7 +238,9 @@ The endpoint-selection policy is a deterministic control-thread component with c
 monotonic time. It filters trust/network/freshness before applying PLAN §8 weights, preserves independent
 quarantine, tracks generation/revision-bound probe tickets and limits half-open probes. Its output is
 only a proposal; it never publishes an active endpoint or overrides engine quiescence. Runtime network
-notifications, probe scheduling and switch activation must be connected before automatic switching is enabled.
+notifications, probe scheduling and switch activation are connected; the automatic policy's cases ran
+on the disposable server and `endpointAutoSwitch` is true for engine builds
+([platform notes](platform-notes.md#automatic-switching-acceptance)).
 
 The connected functional unit passed shared framing fixtures, persistence/idempotency and switch
 guards on native ARM64 and emulated x64. Real Go-to-C++ pipes passed on both architectures,
@@ -248,4 +251,4 @@ and disabled Continue control. Hostile clients on the real pipe (`internal/syncd
 client that never reads, lost replies and reused operation keys across reconnect and restart, a
 different protocol major, a process that takes the pipe name first, a remote client and a Control
 database of a newer schema. Cross-user and cross-session connections need a second Windows account
-or logon session and are not run. Full sync and engine-driven switching are not verified.
+or logon session and are not run. Full sync is not verified.

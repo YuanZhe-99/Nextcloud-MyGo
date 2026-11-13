@@ -49,7 +49,7 @@ schema 见 `protocol/message.schema.json`）：
 - 周期运行时 `folder.phase` 为 `checking`、`uploading` 或 `downloading`，否则为空；`folder.filesDone`
   统计本周期已完成的文件。运行中的周期在两者变化时最多每秒发布一次快照事件。
 - `endpoint.latencyMs`（平滑后的探测往返时间，探测成功前为 0）、`endpoint.kind`（`internet`、`home`、
-  `vpn`，在 `endpoints.stage` 用可选的 `kind` 选择，从不影响信任）以及 `endpoint.blockedReason`：
+  `vpn`，在 `endpoints.stage` 用可选的 `kind` 选择；它决定自动策略的默认优先级，`home` 90、`vpn` 70、`internet` 50（`PLAN.md` §8.4），从不影响信任）以及 `endpoint.blockedReason`：
   `blocked` 为 true 的唯一原因，按强弱排序：安全隔离、`AUTH_REQUIRED`、`VERIFICATION_PENDING` 或
   `NETWORK_UNAVAILABLE`。
 - `network.why`（选择当前地址的原因）、`network.switchReason` 与 `network.switched`（最近一次已提交的切换）。
@@ -127,8 +127,8 @@ epoch、状态、阻塞和计数）及创建时间。不复制日志、journal�
 即使自动策略也拒绝非字符串 `fixedEndpointId`；null 不等于省略/空目标。
 `Remote.RequestPolicy` 返回接受结果，独立于 `WaitOperation`。Schema/示例位于
 `protocol/policy.*`。Control schema 7 持久化策略、待处理策略、安全隔离及冻结的切换证据
-上下文。既有隐式固定配置不会被静默启用自动选择。此连接路径正接受真实故障验收；完整
-约定范围验证前，自动切换能力仍为 false。
+上下文。既有隐式固定配置不会被静默启用自动选择。其用例已于
+2026-11-12 通过真实故障验收，引擎构建的自动切换能力为 true。
 
 `diagnostics.snapshot` 仅返回脱敏 ID、不可变 epoch 及汇总的请求/排空计数。不返回请求
 URL、标头、密码、路径或文件内容，也不替代用户触发的支持包导出。活动上传/下载计数表示
@@ -146,7 +146,7 @@ Control schema 5 增加持久端点绑定和切换意图。启动时在同一个
 `endpointId`、`expectedRevision` 和 `operationKey`（见 `protocol/switch.schema.json`）。
 它返回持久运行中回执，不等待用户暂停的根。轮询 `operations.get`；成功要求全部冻结根在
 新 epoch 完成重新核对。Go 的 `Remote.RequestSwitch`/`WaitOperation` 将接受与完成分开。
-结束等待不会取消操作。完整同步及自动切换保持能力禁用，等待完整恢复验收。
+结束等待不会取消操作。完整同步保持能力禁用，等待完整恢复验收。
 中断切换在启动时阻塞后，先重新取得原根租约，再由内部替代操作以新 epoch 重新验证已提交
 origin。旧回执保持失败；不重放记录的 HTTP 写入。此前硬验证失败不会自动重试。
 端点移除还会拒绝已提交绑定或待切换目标；删除其 origin 许可不能绕过已有运行时/恢复门槛。
@@ -175,7 +175,7 @@ origin。旧回执保持失败；不重放记录的 HTTP 写入。此前硬验�
 端点切换协调器作为独立控制线程组件检查信任、身份、epoch 和静止条件；引擎适配器必须
 提供实际静止证明后才可激活端点。登录现使用内存中的 Login Flow v2 会话和 Windows
 凭据管理器，见[账号](accounts.md)。`accounts.login.status` 以独立于启动操作的会话 ID
-查询状态。完整同步和自动切换在完整路径实现前保持能力禁用。Mock 保留为显式开发模式。
+查询状态。完整同步在完整路径实现前保持能力禁用。Mock 保留为显式开发模式。
 
 Windows 守护进程在当前用户的应用数据目录下拥有按 profile 哈希区分的 Control DB。
 SQLite 连接留在 Qt 线程；设置、操作回执和 outbox 行以完全同步持久性一起提交。
@@ -192,8 +192,9 @@ SQLite 连接留在 Qt 线程；设置、操作回执和 outbox 行以完全同�
 
 端点选择策略是使用调用者提供的单调时间的确定性控制线程组件。先过滤信任、网络条件和
 新鲜度，再应用 PLAN §8 权重；保留独立隔离状态，跟踪绑定 generation/revision 的探测票据，
-并限制半开探测。输出仅为提议，绝不发布活动端点或绕过引擎静止条件。启用自动切换前，
-仍须接通运行时网络通知、探测调度和切换激活。
+并限制半开探测。输出仅为提议，绝不发布活动端点或绕过引擎静止条件。运行时网络通知、
+探测调度和切换激活已接通；自动策略的用例已在一次性服务器上运行，引擎构建的 `endpointAutoSwitch`
+为 true（[平台说明](platform-notes.md#自动切换验收)）。
 
 连通功能单元已在原生 ARM64 和仿真 x64 上通过共享分帧夹具、持久性/幂等及切换守卫测试。
 两种架构的真实 Go 到 C++ 管道测试均通过，覆盖重启持久性、重连及拒绝非预期服务端
@@ -201,4 +202,4 @@ SQLite 连接留在 Qt 线程；设置、操作回执和 outbox 行以完全同�
 真实管道上的恶意客户端测试（`internal/syncd/pipe_windows_test.go`，
 [平台说明](platform-notes.md#010-验收审计)）覆盖畸形帧和停滞帧、从不读取的客户端、丢失的响应以及在重连和重启后
 重复使用的操作键、不同的协议主版本、抢先占用管道名的进程、远程客户端，以及 schema 更新的 Control 数据库。
-跨用户和跨会话连接需要第二个 Windows 账户或登录会话，未运行。完整同步和引擎驱动切换未验证。
+跨用户和跨会话连接需要第二个 Windows 账户或登录会话，未运行。完整同步未验证。

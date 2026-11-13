@@ -68,7 +68,9 @@ void uncertainTransferAcceptance();
 void largeTransferAcceptance();
 /// fileSafetyTransferAcceptance selects the fault-free rename, move, deletion
 /// review and missing-remote-root cases.
-void fileSafetyTransferAcceptance();
+/// Inputs: bulk selects only the 100 server deletions on a 510-file baseline,
+/// which run as a case of their own (file-safety-bulk) to keep both in budget.
+void fileSafetyTransferAcceptance(bool bulk);
 /// sleepResumeAcceptance selects the simulated sleep: the whole process is
 /// suspended during a held upload and wakes where only the alternate answers.
 void sleepResumeAcceptance();
@@ -132,3 +134,89 @@ void switchQuotaAcceptance(Control &c, const QString &root, const QUrl &base,
 /// cleanupOwnedUser removes the second server user a failed multi-account
 /// or switch-quota run left behind, named only by its own reservation.
 void cleanupOwnedUser(const QString &root);
+/// davRequest sends one bounded request as the named fixture user to an
+/// approved origin and returns its status; the body comes back in body.
+/// Notes: never replays a request; credentials stay in memory.
+int davRequest(const QUrl &base, const QByteArray &method, const QString &path,
+               const QString &user, const QString &password,
+               const QByteArray &content = {}, QByteArray *body = nullptr,
+               const QByteArray &type = {});
+/// home is a fixture user's DAV files root, relative to the origin.
+QString home(const QString &uid);
+
+/// SwitchingControls are what a switching scenario may do to the daemon and
+/// its network: the same notifications and faults a real network produces,
+/// plus aging the dwell, which the switching contracts prove on a caller
+/// clock (PLAN §8.5), so a real run need not wait 120 s for it.
+struct SwitchingControls {
+  AcceptanceCalls calls;
+  QString account, primary, target, credential;
+  QUrl base, alternate;
+  /// failPrimary/failAlternate refuse and break every tunnel to that origin.
+  std::function<void(bool)> failPrimary, failAlternate;
+  /// refuseAlternate refuses alternate-origin requests whose path contains
+  /// this text (empty stops it).
+  std::function<void(const QString &)> refuseAlternate;
+  /// onTargetRequest observes each request about to be created for the
+  /// alternate origin, with its path, on the control thread.
+  std::function<void(const std::function<void(const QString &)> &)>
+      onTargetRequest;
+  /// changed delivers a network-change notification.
+  std::function<void()> changed;
+  /// ready requires full verification and fresh health on both origins.
+  std::function<bool()> ready;
+  /// failed reports observed failure or quarantine of one endpoint.
+  std::function<bool(const QString &)> failed;
+  /// fresh reports a verified endpoint with fresh repeated successes.
+  std::function<bool(const QString &)> fresh;
+  /// age makes the active address count as serving for this many more
+  /// milliseconds and the switch cooldown as that much older.
+  std::function<void(qint64)> age;
+  /// facts reads the durable switch identities of the account.
+  std::function<SwitchFacts()> facts;
+};
+/// SwitchingFixture owns a switching scenario's loopback TLS-terminating
+/// proxies and their throwaway certificates (test process only).
+struct SwitchingFixture;
+/// switchingScenario says whether the name is a switching scenario, and
+/// kind is the alternate's endpoint kind it needs.
+bool switchingScenario(const QString &scenario, QString *kind = nullptr);
+/// switchingFixture creates the scenario's proxies before any sign-in and
+/// routes their host names to them through route (port 0 removes a route).
+/// Side effects: a throwaway CA and certificates under root, trusted only
+/// in this process; no trust store, hosts file or proxy setting changes.
+std::shared_ptr<SwitchingFixture>
+switchingFixture(const QString &scenario, const QString &root,
+                 const std::function<void(const QString &, quint16)> &route);
+/// switchingAcceptance runs one switching scenario on the signed-in account
+/// with its approved alternate (N03–N06, N08–N11, N13–N20, N22).
+void switchingAcceptance(const QString &scenario, SwitchingFixture *fixture,
+                         const SwitchingControls &controls);
+/// ownedUser creates a second user of the disposable server with a random
+/// password and returns its name and password. Side effects: reserves
+/// owned-user.json first, so the run and the parent's cleanup remove it.
+std::pair<QString, QString> ownedUser(const QString &root, const QUrl &base);
+/// removeOwnedUser deletes the owned user and its reservation.
+void removeOwnedUser(const QString &root, const QUrl &base,
+                     const QString &user);
+
+/// dataSafetyAcceptance runs one named data-safety case against the
+/// disposable server (PLAN §20.2, §20.4): interrupted-change (S05), watcher
+/// (S09, S10), root-denied (S13), maintenance and partial-listing (S14), names
+/// (S17), excluded (S18, S21), revocation (R07, R22), and the first half of the
+/// restart cases
+/// journal (S16), root-replaced (S15) and discovery-kill (R02), which end
+/// this process with exit code 75.
+/// Inputs: cut refuses (true) or restores (false) every connection to both
+/// addresses: a plain network loss with nowhere to fail over to.
+void dataSafetyAcceptance(Control &c, const QString &root,
+                          const QString &account, const QString &name,
+                          const AcceptanceCalls &calls,
+                          const std::function<void(bool)> &cut);
+/// dataSafetyBeforeRestart changes what the restarted daemon of a restart
+/// case finds, before it opens its profile: a corrupt journal (S16) or a
+/// replaced root directory (S15); nothing for discovery-kill (R02).
+void dataSafetyBeforeRestart(const QString &root, const QString &name);
+/// dataSafetyRecover checks what the restarted daemon made of it.
+void dataSafetyRecover(Control &c, const QString &root, const QString &name,
+                       const AcceptanceCalls &calls);

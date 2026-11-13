@@ -22,3 +22,13 @@ struct DeleteAssessment {
 DeleteAssessment assessDeletion(QStringList baseline,
                                 const QList<DeleteAction> &actions,
                                 bool upstreamGuard);
+/// emptiesMount reports whether the local removals take away a whole external
+/// storage: a mount point itself, or every baseline entry below one.
+/// Inputs: mounts are the baseline directories the server marked as mount
+/// points (permission `M`).
+/// Notes: the server lists a storage it cannot reach as missing or as an
+/// empty folder, just as if it had been emptied; any such removal, however
+/// small, holds the cycle (S14: offline is not empty). Removing part of a
+/// storage's content stays an ordinary deletion.
+bool emptiesMount(QStringList baseline, const QStringList &mounts,
+                  const QList<DeleteAction> &actions);

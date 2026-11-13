@@ -171,14 +171,41 @@ R05）。它再次登录夹具用户并要求得到 `ACCOUNT_EXISTS`，用随机
 中继在每条路径上都会恢复其父进程；否则由封装脚本的 120 秒预算和作业对象（Job Object）结束两者。
 
 `-Scenario file-safety` 在真实服务器上运行无故障用例：双向重命名和目录移动且保留服务器文件
-ID、对含十二个后代的单个目录的删除确认（方向和数量）、在 520 个文件的基线中于服务器上删除
-100 个单独文件且不到五分之一（只触发绝对阈值，作为本地删除被搁置）、后续变化之后的过期批准、被租约持有
-的本地根，以及返回 404 的远程根。`-Scenario network-large` 在超过 4 GiB 的文件越过 4 GiB
+ID、对含十二个后代的单个目录的删除确认（方向和数量）、后续变化之后的过期批准、被租约持有
+的本地根，以及返回 404 的远程根。`-Scenario file-safety-bulk` 在自己的配置文件上运行：在
+510 个文件的基线中于服务器上删除 100 个单独文件且不到五分之一（只触发绝对阈值，作为本地删除被
+搁置）；它是单独的用例，使两者都保持在 150 秒预算之内。`-Scenario network-large` 在超过 4 GiB 的文件越过 4 GiB
 边界之后切断其分块会话，并要求它在另一个 origin 上续传；内容以流的方式写入、发送和校验，
 需要有约 9 GiB 可用空间的隔离服务器。
 `-Scenario held-revocation` 同样需要隔离服务器：它用夹具自己的密码签发一个应用密码，把它
 记录为被中断登录的搁置撤销，重启 Control，并要求在 60 秒下限之后只发送一次 DELETE、得到
 服务器确认，且该密码此后被拒绝。夹具自己的密码绝不会被撤销。
+
+`-Scenario switching` 针对一次性服务器运行自动切换用例（`backend/switching_acceptance.cpp`），
+每个用例使用自己的进程和配置目录；`-Case` 用于选择：`auto-switch`（N08、N09、N11）、
+`auto-fallback`（N14）、`tls-trust`（N03、N04）、`tls-auth`（N16、N18）、`tls-circuit`（N10、N15、
+N22）、`redirect`（N05）、`subpath`（N06）、`revoke-switch`（N17）、`new-folder`（N19）、
+`root-change`（N20）和 `late-epoch`（N13）。需要真实服务器不会给出的应答的用例，在测试进程内运行
+一个本机回环的 TLS 终止代理：它用 `openssl` 在配置目录下签发一次性 CA 与证书（已过期、主机名错误、
+未知 CA），只信任该 CA 且只在该进程内信任，经过已校验的 TLS 把 HTTP/1.1 转发到真实服务器，并可去掉
+一段安装路径、回答 401、429 或重定向、拒绝连接或延迟应答。120 秒驻留通过测试对 Control 的访问
+提前计满，因为切换契约已在调用方时钟上证明它；分数差、稳定性、新鲜度以及每一项信任检查仍由守护
+进程自己完成。每个用例在 ARM64 上耗时 40–110 秒。
+
+`-Scenario data-safety` 针对一次性服务器运行数据安全与恢复用例
+（`backend/data_safety_acceptance.cpp`），每个用例使用自己的进程和配置目录；`-Case` 用于选择。
+`interrupted-change`（S05）让一个本地修改和一个远程修改停在传输中途，然后拒绝两个地址；
+`watcher`（S09、S10）在上传被扣住时于发现之后写入一个变化，并在控制线程忙碌时让监视缓冲区溢出；
+`root-denied`（S13）通过 ACL 拒绝列出映射根目录，然后恢复；`maintenance`（S14）用 `occ` 让实例
+进入维护模式；`partial-listing`（S14）移走挂载在文件夹内的 `files_external` 存储，使其列表以 207
+回答且有一个成员失败；`names`（S17）创建大小写冲突、Windows 无法容纳的名称、NFD 与非 BMP Unicode、
+超过 300 个字符的路径和一个被锁定的本地文件；`excluded`（S18、S21）向一个新文件夹和一个已同步的
+文件夹加入一个联接点和一个脱机文件；`revocation`（R07、R22）用应用密码登录一个自有用户，在服务器上
+撤销它，然后扫描配置目录、支持包和守护进程日志。`journal`（S16）、`root-replaced`（S15）和
+`discovery-kill`（R02）结束第一个进程（退出码 75），并在同一配置目录上检查重启后的进程：损坏的
+journal 文件头、被空文件夹替换的根目录（以及一个用后即删的 `DefineDosDevice` 驱动器别名）、在远程
+发现期间被结束。`maintenance` 和 `partial-listing` 通过 `SYNCD_TEST_CA_CERT` 旁边的 `state.json`
+找到容器；`maintenance` 会让整个实例进入维护模式数秒，因此不能与并行通道共用服务器。
 
 `tools/build-syncd.ps1` 运行 CTest 时只把 Qt 的 `bin` 加入 PATH。集成测试还需要相同架构的
 对应上游构建 `bin/Release` 和原生依赖 `bin` 目录；请在调用前加入，直接运行已构建的可执行

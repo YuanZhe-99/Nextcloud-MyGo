@@ -1,0 +1,63 @@
+diff --git a/src/libsync/owncloudpropagator.cpp b/src/libsync/owncloudpropagator.cpp
+--- a/src/libsync/owncloudpropagator.cpp
++++ b/src/libsync/owncloudpropagator.cpp
+@@ -411,7 +411,11 @@ std::unique_ptr<PropagateUploadFileCommon> OwncloudPropagator::createUploadJob(S
+ {
+     auto job = std::unique_ptr<PropagateUploadFileCommon>{};
+ 
+-    if (item->_size > syncOptions()._initialChunkSize && account()->capabilities().chunkingNg()) {
++    // A single PUT that replaces a server file is written over it in place (Nextcloud uses no
++    // part file for an update), so a lost connection leaves the server copy truncated. Chunks
++    // are assembled on the server by the final MOVE, which a lost connection cannot cut short.
++    const auto replacesServerFile = item->_instruction != CSYNC_INSTRUCTION_NEW && item->_size > 0;
++    if ((item->_size > syncOptions()._initialChunkSize || replacesServerFile) && account()->capabilities().chunkingNg()) {
+         // Item is above _initialChunkSize, thus will be classified as to be chunked
+         job = std::make_unique<PropagateUploadFileNG>(this, item);
+     } else {
+diff --git a/test/testchunkingng.cpp b/test/testchunkingng.cpp
+--- a/test/testchunkingng.cpp
++++ b/test/testchunkingng.cpp
+@@ -127,6 +127,32 @@ private Q_SLOTS:
+         QCOMPARE(fakeFolder.uploadState().children.count(), 2); // the transfer was done with chunking
+     }
+ 
++    /// Verifies that a modification below the chunk size is sent as chunks, not as one PUT over
++    /// the server file, while a new small file still uses one PUT.
++    void testSmallModificationIsChunked()
++    {
++        FakeFolder fakeFolder{FileInfo::A12_B12_C12_S12()};
++        fakeFolder.syncEngine().account()->setCapabilities({ { "dav", QVariantMap{ {"chunking", "1.0"} } } });
++        int directPuts = 0;
++        fakeFolder.setServerOverride([&](QNetworkAccessManager::Operation op, const QNetworkRequest &request, QIODevice *) -> QNetworkReply * {
++            if (op == QNetworkAccessManager::PutOperation && !request.url().path().contains(QStringLiteral("/uploads/"))) {
++                ++directPuts;
++            }
++            return nullptr;
++        });
++
++        fakeFolder.localModifier().insert("A/new", 100);
++        QVERIFY(fakeFolder.syncOnce());
++        QCOMPARE(directPuts, 1);
++        QCOMPARE(fakeFolder.uploadState().children.count(), 0);
++
++        fakeFolder.localModifier().appendByte("A/a1");
++        QVERIFY(fakeFolder.syncOnce());
++        QCOMPARE(directPuts, 1);
++        QCOMPARE(fakeFolder.uploadState().children.count(), 1); // the modification was chunked
++        QCOMPARE(fakeFolder.currentLocalState(), fakeFolder.currentRemoteState());
++    }
++
+     void testDestinationHeaderPercentEncoding()
+     {
+         FakeFolder fakeFolder{FileInfo::A12_B12_C12_S12()};
+@@ -600,7 +626,9 @@ private Q_SLOTS:
+     {
+         QFETCH(bool, chunking);
+         FakeFolder fakeFolder{ FileInfo::A12_B12_C12_S12() };
+-        fakeFolder.syncEngine().account()->setCapabilities({ { "dav", QVariantMap{ { "chunking", "1.0" } } }, { "checksums", QVariantMap{ { "supportedTypes", QStringList() << "SHA1" } } } });
++        // A server with chunking gets every modification chunked; the single PUT of a modification
++        // remains only for a server without it.
++        fakeFolder.syncEngine().account()->setCapabilities({ { "dav", QVariantMap{ { "chunking", chunking ? "1.0" : "" } } }, { "checksums", QVariantMap{ { "supportedTypes", QStringList() << "SHA1" } } } });
+         const int size = chunking ? 1 * 1000 * 1000 : 300;
+         setChunkSize(fakeFolder.syncEngine(), 300 * 1000);
+ 

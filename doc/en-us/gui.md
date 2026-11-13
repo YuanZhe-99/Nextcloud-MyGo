@@ -27,8 +27,8 @@ kept there.
   that says so; commands are disabled until SyncD is back, and nothing reads as healthy.
 - **Capabilities gate features.** Sign-in needs `login`. While `fullSync` is false, adding folders
   first says that file sync is still being verified, and no state is ever green: a folder SyncD
-  reports up to date reads "Last sync finished". While `endpointAutoSwitch` is false, Automatic is
-  not offered; each account uses the one address chosen. A further account needs `multiAccount`
+  reports up to date reads "Last sync finished". Automatic and Always use one address are offered
+  only while SyncD reports `endpointAutoSwitch`; without it each account uses the one address chosen. A further account needs `multiAccount`
   (the first never does). Full files or On demand is offered only with `virtualFiles`.
 - **Signing in again.** An account needs it as its `auth` says: `needsSignIn` (the saved sign-in
   cannot be used on this PC, or a renewal waits for the browser) or `revoked` (the server refused

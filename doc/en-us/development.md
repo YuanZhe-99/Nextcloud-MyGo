@@ -211,16 +211,49 @@ parent on every path, and the wrapper's 120-second budget and Job Object end bot
 
 `-Scenario file-safety` runs fault-free cases on the real server: renames and directory moves in
 both directions with server file IDs kept, deletion review for one directory with twelve
-descendants (direction and count), 100 single files deleted on the server under a fifth of a
-520-file baseline (the absolute threshold alone, held as local deletions), a stale approval after a
-later change, a leased local root and
-a remote root answering 404. `-Scenario network-large` cuts the chunk session of a file above
+descendants (direction and count), a stale approval after a later change, a leased local root and
+a remote root answering 404. `-Scenario file-safety-bulk` runs, on a profile of its own, 100 single
+files deleted on the server under a fifth of a 510-file baseline (the absolute threshold alone,
+held as local deletions); it is a case of its own so that both stay within the 150 s budget.
+`-Scenario network-large` cuts the chunk session of a file above
 4 GiB after its 4 GiB boundary and requires it to resume on the other origin; it writes, sends and
 verifies the content as a stream and needs an isolated server with about 9 GiB free.
 `-Scenario held-revocation` needs an isolated server too: it issues one app password with the
 fixture's own password, leaves it recorded as the held revocation of an interrupted login, restarts
 Control and requires one DELETE after the 60-second floor, the server's confirmation, and the
 password to be rejected afterwards. The fixture's own password is never revoked.
+
+`-Scenario switching` runs the automatic-switching cases against the disposable server
+(`backend/switching_acceptance.cpp`), each in its own process and profile; `-Case` selects them:
+`auto-switch` (N08, N09, N11), `auto-fallback` (N14), `tls-trust` (N03, N04), `tls-auth` (N16,
+N18), `tls-circuit` (N10, N15, N22), `redirect` (N05), `subpath` (N06), `revoke-switch` (N17),
+`new-folder` (N19), `root-change` (N20) and `late-epoch` (N13). The cases that need a server answer
+the real one does not give run a loopback TLS-terminating proxy inside the test process: it issues a
+throwaway CA and certificates with `openssl` under the profile (expired, wrong host, unknown CA),
+trusts only that CA and only in that process, forwards HTTP/1.1 to the real server over verified TLS,
+and can strip an installation path, answer 401, 429 or a redirect, refuse connections or answer
+late. The 120 s dwell is aged through the test's access to Control, because the switching
+contracts prove it on a caller clock; the margin, stability, freshness and every trust check stay
+the daemon's own. Each case takes 40–110 s on ARM64.
+
+`-Scenario data-safety` runs the data-safety and recovery cases against the disposable server
+(`backend/data_safety_acceptance.cpp`), each in its own process and profile; `-Case` selects them.
+`interrupted-change` (S05) holds a local and a remote modification mid-transfer and then refuses both
+addresses; `watcher` (S09, S10) writes a change after discovery while an upload is held, and
+overflows the watch buffer while the control thread is busy; `root-denied` (S13) denies listing of
+the mapped root through its ACL and restores it; `maintenance` (S14) puts the instance into
+maintenance mode with `occ`; `partial-listing` (S14) takes away a `files_external` storage mounted
+inside the folder, so its listing answers 207 with one failing member; `names` (S17) creates a case
+clash, names Windows cannot hold, NFD and non-BMP Unicode, paths above 300 characters and a locked
+local file; `excluded` (S18, S21) adds a junction and an offline file to a new and to a synced
+folder; `revocation` (R07, R22) signs in an owned user with an app password, revokes it on the
+server, then scans the profile, the support bundle and the daemon's log. `journal` (S16),
+`root-replaced` (S15) and `discovery-kill` (R02) end their first process (exit 75) and check the
+restarted one on the same profile: a damaged journal header, a root replaced by an empty folder (and
+a `DefineDosDevice` drive alias, removed again), a kill during remote discovery. `maintenance` and
+`partial-listing` find the container through the `state.json` beside `SYNCD_TEST_CA_CERT`;
+`maintenance` puts the whole instance into maintenance for a few seconds, so it must not share the
+server with parallel lanes.
 
 `tools/build-syncd.ps1` puts only Qt's `bin` on PATH for CTest. The consuming tests also need the
 matching upstream build's `bin/Release` and the native dependency `bin` directories for the same
