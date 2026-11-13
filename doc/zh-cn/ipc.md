@@ -179,7 +179,9 @@ origin。旧回执保持失败；不重放记录的 HTTP 写入。此前硬验�
 
 Windows 守护进程在当前用户的应用数据目录下拥有按 profile 哈希区分的 Control DB。
 SQLite 连接留在 Qt 线程；设置、操作回执和 outbox 行以完全同步持久性一起提交。
-终态回执目前无限期保留。`events.resume` 要求重新 bootstrap。新的守护进程启动后，
+终态回执目前无限期保留。outbox 只保留最新的 100 个事件：`events.resume` 总是要求重新 bootstrap，
+因此更早的行不会再被读取。此前它保留每个事件，每次状态变化都存一份完整投影，加速浸泡运行中
+Control 数据库每分钟增长约 2 MB（`syncd_contract_tests` 中的 `testOutboxBounded`）。`events.resume` 要求重新 bootstrap。新的守护进程启动后，
 旧的关闭回执不会再次触发关闭。独立切换守卫尚未连接 libsync。
 
 重叠 Win32 管道拒绝远程客户端，将访问限制到登录 SID，去除客户端创建实例权限，

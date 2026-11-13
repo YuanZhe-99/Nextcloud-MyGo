@@ -222,7 +222,10 @@ implemented. Mock remains an explicit development mode.
 The Windows daemon owns a profile-hashed Control DB under the current user's application-data
 directory. Its SQLite connection stays on the Qt thread; settings, operation receipts and outbox
 rows commit together with full synchronous durability. Terminal receipts are currently retained
-indefinitely. `events.resume` requests a fresh bootstrap. Shutdown receipts never restart a shutdown
+indefinitely. The outbox keeps the latest 100 events: `events.resume` always asks for a fresh
+bootstrap, so no older row is read again. It kept every event before, a full projection per state
+change, and the accelerated soak saw the Control database grow by about 2 MB a minute
+(`testOutboxBounded` in `syncd_contract_tests`). `events.resume` requests a fresh bootstrap. Shutdown receipts never restart a shutdown
 after a new daemon boot. The standalone switch guard is not yet connected to libsync.
 
 Overlapped Win32 pipes reject remote clients, restrict access to the logon SID, omit client

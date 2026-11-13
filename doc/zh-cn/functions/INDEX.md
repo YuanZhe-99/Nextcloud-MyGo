@@ -49,4 +49,5 @@ SyncD 连通基础已实现；完整同步尚未完成。见 [IPC](../ipc.md) �
 | `tools/test-reauth-lifetime.ps1` | 只读生命周期回归及所有真实网络场景的父进程：每次运行使用全新配置目录，执行 `switch-kill` 的杀进程与重启序列，并在崩溃后清理原生凭据和远程内容 | `replacedDuringVerification`、`cleanupManifest`、`RunOwned`、`RunProfile` |
 | `tools/test-all.ps1` | 唯一的测试入口：按架构运行快速层（无服务器）或服务器层（一次性容器、并行通道），每个场景一行并给出耗时，总时长有硬性预算 | `Step`、`Lanes`、`Acceptance` |
 | `tools/test-server.ps1` | 服务器层使用的一次性本地 Nextcloud 服务器：一个带标签的容器、夹具本地 TLS 根证书，按状态文件删除 | `Runtime`、`-Start`、`-Stop` |
+| `backend/soak_acceptance.cpp`、`tools/test-soak/`、`tools/test-soak.ps1` | 加速浸泡运行（R21）：一个守护进程、2 个账户 × 2 个文件夹，计时器加快 24 倍，重复的变更、故障、续期、一次重启和界面管道连接；每个周期的哈希收敛、传输、删除和切换计数；30 秒资源采样和斜率阈值 | `soakAcceptance`、`SoakControls`、`Run::once`、`Run::converge`、`NetworkTestAccess::accelerate`、`NetworkTunnel::totals`、`Half`、`Fit` |
 | `tools/test-job.ps1` | 所有夹具包装脚本的关闭即终止 Job Object，守护进程、探针和测试可执行文件都不会比其脚本存活更久 | `Enter-OwnedJob`、`Invoke-InOwnedJob` |

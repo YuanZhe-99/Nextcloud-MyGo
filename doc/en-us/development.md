@@ -329,7 +329,11 @@ within 30 s, a lost final MOVE's failover). The disposable server has brute-forc
 delay), so the failed sign-ins of the revocation cases never slow another lane's sign-in.
 The relay is no longer throttled: a transfer is held unfinished at a byte offset
 (`NetworkTunnel::setStallAfter`, primary or alternate relays only, requests below 1 MiB unaffected)
-and broken by the fault the case names. Most of a case's remaining time is the daemon's own
+and broken by the fault the case names. A faulted origin resets the relay's established tunnels and
+answers new ones as a proxy reports a destination that refuses connections (503); before the soak,
+it closed a new tunnel right after its CONNECT, and Qt then left a request with a body (upstream's
+PROPFIND) and every later request of that manager waiting for the transfer timeout, which no real
+refusal does ([upstream](upstream.md)). Most of a case's remaining time is the daemon's own
 failover, circuit and reconciliation timing, which the tests do not shorten.
 
 Every step has its own deadline and fails with its name: C++ waits default to 60 s and print a
@@ -354,6 +358,37 @@ cut after its 4 GiB boundary, about 30 min, about 9 GiB free on the server), and
 adds the paired-daemon fixture `tools/test-login.ps1` against the approved shared server in
 `NEXTCLOUD_TEST_*`: the paired daemon trusts only a publicly trusted chain, so it cannot use the
 disposable server. `wrong-instance` needs a second instance and is run on its own.
+
+`tools/test-soak.ps1 -Minutes 60` is the accelerated soak (acceptance R21, `PLAN.md` §23.3), opt-in
+and outside the tiers and [CI](ci.md); `-State` reuses a running disposable server. One daemon
+(`syncd_reauth_tests --soak=first|second`, `backend/soak_acceptance.cpp`) signs in the fixture user
+and an owned second user, approves both addresses for each (the first account's alternate is a
+home address, so preference switches happen as well as failovers), maps two folders each and repeats
+a cycle: in every folder one or two local adds, a local modify, rename and delete, a remote add,
+modify, move and delete on distinct names; every fourth cycle a 24–32 MiB file (a chunked upload)
+or its deletion; one network event, rotating through a 20 s outage of either address, a 12 s loss
+of both with network-change notifications, three 2 s flaps of one address, or the cut of the
+address a large upload is running on once 4 MiB of it are sent. Each cycle must converge: both
+sides hold exactly the expected names and SHA-256 hashes, then, with polls paused, every folder is
+idle and still matches (polled 24 times as often, some folder is nearly always in a cycle); a
+deletion proposal or review state fails the run. A local rename the daemon undoes is counted
+(`renamesReverted`, a failed check) and followed: upstream renames the file back when its MOVE
+fails, a transport failure included ([upstream](upstream.md#nextcloud-desktop)). The daemon's timers run 24 times faster through the
+test's access to Control: pending probes, circuit cooldowns, the switch cooldown and the 120 s
+dwell are pulled forward, and each folder's poll and the daily audit are queued as their own timers
+would; stability, freshness and debounce windows, server throttles and every trust check stay the
+daemon's own. Each half renews one account's credential through `accounts.reauthenticate` with the
+user's own password. After a fifth of the run the daemon shuts down and a new process opens the
+same profile, which must keep every journal, folder identity and credential reference; the slope
+window then holds only the second process, past its warm-up. Meanwhile
+`tools/test-soak` connects the interface's pipe client (`syncd.ConnectRemote`) and disconnects
+again every few seconds, staying 30 s every fourth time. The wrapper samples the daemon every 30 s
+(private bytes, working set, handles, threads, TCP connections, CPU time, I/O, the Control database
+and its WAL, the journals and the log) into `build/soak/samples.csv`; the TCP count includes the
+in-process relay's own sockets. It fits slopes over the last 40 minutes against
+the thresholds at the top of the script, and writes `summary.json` and `summary.txt`. The relay
+counts the connections a fault cut after they were established and the bytes they carried
+(`NetworkTunnel::totals`), the bound for what a fault may make the daemon send again.
 ## Running the interface
 
 ```bash

@@ -46,10 +46,7 @@ void Control::publishState() {
     q.prepare("UPDATE settings SET seq=? WHERE id=1");
     q.addBindValue(seq_);
     execute(q);
-    q.prepare("INSERT INTO outbox VALUES(?,?)");
-    q.addBindValue(seq_);
-    q.addBindValue(QJsonDocument(projection()).toJson(QJsonDocument::Compact));
-    execute(q);
+    publishEvent(q);
     if (!db_.commit())
       throw std::runtime_error("INTERNAL_ERROR");
   } catch (...) {

@@ -131,6 +131,45 @@ void testPersistence() {
             "resume not visible");
   }
 }
+/// testOutboxBounded: the outbox keeps only the latest 100 events however many
+/// state changes commit, and the newest is always there. Notes: regression for
+/// the accelerated soak (R21), whose Control database grew about 2 MB a
+/// minute with a full projection per state change.
+void testOutboxBounded() {
+  QTemporaryDir dir;
+  require(dir.isValid(), "temporary database missing");
+  const auto connection = QUuid::createUuid().toString();
+  {
+    Control c(dir.filePath("control.sqlite"));
+    bool hello = false, subscribed = false;
+    c.dispatch(
+        request("session.hello", {{"protocol", QJsonObject{{"major", 1}}}}),
+        hello, subscribed);
+    for (int i = 0; i < 150; ++i)
+      require(c.dispatch(request("settings.update",
+                                 {{"operationKey", QUuid::createUuid().toString(
+                                                       QUuid::WithoutBraces)},
+                                  {"expectedRevision", QString::number(i)},
+                                  {"allPaused", i % 2 == 0}}),
+                         hello, subscribed)
+                  .toObject()
+                  .contains("result"),
+              "outbox fixture mutation refused");
+    auto observer = QSqlDatabase::addDatabase("QSQLITE", connection);
+    observer.setDatabaseName(dir.filePath("control.sqlite"));
+    require(observer.open(), "outbox observer open failed");
+    {
+      QSqlQuery q(observer);
+      require(q.exec("SELECT COUNT(*),MAX(seq) FROM outbox") && q.next(),
+              "outbox unreadable");
+      require(q.value(0).toInt() == 100 &&
+                  q.value(1).toLongLong() == qint64(c.sequence()),
+              "the outbox grew past its bound or lost the latest event");
+    }
+    observer.close();
+  }
+  QSqlDatabase::removeDatabase(connection);
+}
 /// testSwitch proves trust, all-folder quiescence, revalidation and stale-epoch
 /// rejection (INV-03/04/05/06).
 void testSwitch() {
@@ -602,6 +641,7 @@ int main(int argc, char **argv) {
     testWire();
     testProtocolVersion();
     testPersistence();
+    testOutboxBounded();
     testSwitch();
     testDecisionEnvelope();
     testFolderMode();

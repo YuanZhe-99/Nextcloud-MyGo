@@ -790,6 +790,50 @@ smoke passed in 156.6 s. Found while getting there: lanes started together faile
 used and S05's transfers finished unheld; fixture reads of a file the cycle held locked or of a busy
 server now retry for 10 s instead of failing the case.
 
+### Accelerated soak (R21)
+
+Same ARM64 host, 2026-11-13, Nextcloud 35.0.2 in a disposable container, `tools/test-soak.ps1
+-Minutes 60` ([development](development.md)). This is an accelerated 1-hour soak, not a wall-clock
+24-hour run: the daemon's timers ran 24 times faster, so the hour carried about a day of polls,
+probes and switch timing, and many more faults than a day has. One daemon, two accounts with two
+folders each; restart at 12.3 min, so the slope window (the last 40 min, 76 samples at 30 s) holds
+the second process only.
+
+Covered in 89 cycles: 372 local adds, 352 modifies, 352 renames and 359 deletions; 356 remote adds,
+352 modifies, 348 moves and 348 deletions; 12 uploads of 24–32 MiB (chunked); 5,172 queued polls
+and 3,136 engine cycles; 16 primary and 15 alternate outages of 20 s, 14 losses of both addresses,
+16 rounds of three 2 s flaps, 9 cuts of a running large upload (3 more found it already done); 69
+switches (53 `unreachable`, 16 `faster`), each recorded with its reason and none while a cycle of
+the account ran; two renewals, one restart, one daily audit; the interface client connected and
+disconnected over the real pipe throughout (its totals were lost when the wrapper stopped it; the
+10-minute dry runs counted 48 of 49 cycles connected, one in the restart gap).
+
+Resources over the window, against thresholds fixed after the dry runs: private bytes +4.8 MB/h
+(limit 10; 18.7–36.7 MB, large transfers make the band), handles −17/h (limit 60; 516–573),
+threads −1/h (limit 4; 12–19), TCP −16/h (limit 20; 3–65, the in-process relay's sockets
+included), Control database +40 KB/h (limit 1024; 3.1 MB), journals −20 KB/h (0.6–0.75 MB), CPU
+15.4 % in the window's first half and 18.3 % in its second. The harness daemon writes no log.
+
+Checks: every cycle converged with matching SHA-256 hashes on both sides and the final one rehashed
+everything; no duplicate upload (718 confirmed of 736 changes; the 18 others were found done by
+rediscovery after a cut lost their reply) and upload bytes 75 MB above the changes' own, within the
+235.6 MB the relay's 635 cut connections had carried; no deletion beyond the soak's own and no
+deletion proposal; no switch across a running cycle. One check failed: three local renames ended at
+their old name, the upstream MOVE restore described in [upstream](upstream.md) (open).
+
+Fixed on the way: the Control database grew by about 2 MB a minute, a full projection in the outbox
+for every state change; the outbox now keeps the latest 100 events ([IPC](ipc.md),
+`testOutboxBounded`, which failed before the fix). The fixture relay now refuses a faulted origin
+with a `503`; its earlier close-after-`CONNECT` held requests in Qt until their transfer timeout
+([upstream](upstream.md#qt)). With it the server tier failed once at `switch: TLS trust` under the lanes' load (the case then passed alone twice) and passed on the next run in 519.2 s. Not
+explained: one 20-minute dry run ended with an access violation (0xC0000005) in its second half;
+about five hours of later runs, with a stack printer installed, did not repeat it.
+
+What it cannot show: midnight and date rollover, a real credential or session expiry (renewal used
+the user's own password), real sleep, interface and DNS changes, leaks or growth below the
+measured bounds (4.8 MB/h of private bytes over 40 min is within the band's noise and not proven
+zero), behaviour after days of history, and x64.
+
 ## Known limitations
 
 Upstream CTest on native Windows ARM64 passed SyncJournalDBTest, ConcatUrlTest,

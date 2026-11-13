@@ -47,10 +47,7 @@ void Control::accountChange(const std::function<void()> &change) {
     q.addBindValue(revision_);
     q.addBindValue(seq_);
     execute(q);
-    q.prepare("INSERT INTO outbox VALUES(?,?)");
-    q.addBindValue(seq_);
-    q.addBindValue(QJsonDocument(projection()).toJson(QJsonDocument::Compact));
-    execute(q);
+    publishEvent(q);
     if (!db_.commit())
       throw std::runtime_error("Cannot commit account transaction");
   } catch (...) {

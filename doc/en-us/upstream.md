@@ -19,6 +19,7 @@ against the latest release and replaces "read" with the result.
 | The account URL and credential storage are coupled (`account.cpp`, `httpcredentials.cpp`) | calling `Account::setUrl()` is not an endpoint switch | read |
 | `Account::setCapabilities` re-enters status/push setup even after `create(false)` | patch 0015 preserves headless lifetime before the adapter installs verified sync capability metadata | narrow regression failed before the fix; consuming builds pending |
 | Files carry GPL-2.0-or-later and other file-level licenses | see [third-party.md](third-party.md) | read |
+| `PropagateRemoteMove::slotMoveJobFinished` renames the local file back to its old name and records the old name in the journal when the MOVE fails for any reason, a transport failure included | a local rename made while an address is failing is undone: both sides keep the old name, no content is lost, the user's rename is; not patched (open, [acceptance](acceptance.md) R21) | read; seen three times in the accelerated soak, ARM64, 35.0.2, 2026-11-13 |
 
 ### Release audit: Desktop v35.0.2
 
@@ -107,6 +108,7 @@ remain unverified. These sources retain their own SPDX headers and bundled licen
 | Point | Consequence | Checked |
 |---|---|---|
 | Qt 6 documents a Windows ARM64 configuration | a native path exists; the whole dependency chain is proven only on ARM64 hardware | read |
+| An HTTP proxy that closes the connection after `CONNECT` without answering: a GET fails at once (`ProxyConnectionClosedError`), but a request with a body (a PROPFIND) waits for its transfer timeout, and so does every later request of the same manager, even once the proxy answers again; a `503` answer fails both at once (`ConnectionRefusedError`) | the fixture relay answers `503` for a faulted origin ([development](development.md#test-tiers)); a real proxy that just closes would hold a cycle until upstream's timeout, then the next cycle's fresh manager ([engine](engine.md#completion-and-safety)) recovers | Qt 6 of `build-lock.json`, ARM64, 2026-11-13, soak probe |
 
 ## MyGo
 

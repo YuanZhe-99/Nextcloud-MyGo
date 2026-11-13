@@ -877,7 +877,8 @@ int main(int argc, char **argv) {
         scenario == "sleep-resume" || scenario.startsWith("switch-kill=") ||
         scenario.startsWith("switch-recover=") ||
         scenario.startsWith("data-safety=") ||
-        scenario.startsWith("data-recover=") || switchingScenario(scenario)) {
+        scenario.startsWith("data-recover=") || switchingScenario(scenario) ||
+        scenario == "soak=first" || scenario == "soak=second") {
       // Chunk sessions and destructive lost-reply cases need a server of
       // their own; the others accept one when its root is acknowledged.
       if (isolated || qEnvironmentVariableIsSet("SYNCD_TEST_CA_CERT"))

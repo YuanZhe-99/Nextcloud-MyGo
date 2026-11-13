@@ -258,6 +258,16 @@ Control::Control(const QString &path, StartupMode mode, Startup *startup)
   }
 }
 
+void Control::publishEvent(QSqlQuery &q) {
+  q.prepare("INSERT INTO outbox VALUES(?,?)");
+  q.addBindValue(seq_);
+  q.addBindValue(QJsonDocument(projection()).toJson(QJsonDocument::Compact));
+  execute(q);
+  q.prepare("DELETE FROM outbox WHERE seq<=?");
+  q.addBindValue(seq_ - 100);
+  execute(q);
+}
+
 bool Control::activate(qint64 monotonicMs) {
   if (stateAvailable_)
     return true;
@@ -319,11 +329,7 @@ bool Control::activate(qint64 monotonicMs) {
       q.prepare("UPDATE settings SET seq=? WHERE id=1");
       q.addBindValue(seq_);
       execute(q);
-      q.prepare("INSERT INTO outbox VALUES(?,?)");
-      q.addBindValue(seq_);
-      q.addBindValue(
-          QJsonDocument(projection()).toJson(QJsonDocument::Compact));
-      execute(q);
+      publishEvent(q);
       q.finish();
       if (!db_.commit())
         throw std::runtime_error("INTERNAL_ERROR");
@@ -802,10 +808,7 @@ QJsonObject Control::mutate(const QString &method, const QJsonObject &params) {
     q.addBindValue(QJsonDocument(receipt).toJson(QJsonDocument::Compact));
     q.addBindValue(method);
     execute(q);
-    q.prepare("INSERT INTO outbox VALUES(?,?)");
-    q.addBindValue(seq_);
-    q.addBindValue(QJsonDocument(projection()).toJson(QJsonDocument::Compact));
-    execute(q);
+    publishEvent(q);
     if (!db_.commit())
       throw std::runtime_error("Cannot commit mutation");
     committed = true;

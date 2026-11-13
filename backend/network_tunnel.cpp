@@ -14,7 +14,10 @@ QString target;
 qint64 replyDelay = 0;
 constexpr int tickMilliseconds = 10;
 QList<NetworkTunnel *> tunnels;
+NetworkTunnel::Totals totalCounts;
 } // namespace
+
+NetworkTunnel::Totals NetworkTunnel::totals() { return totalCounts; }
 
 NetworkTunnel::NetworkTunnel(QTcpSocket *client, QUrl primary, QUrl alternate,
                              std::function<bool(bool)> failed,
@@ -48,7 +51,7 @@ NetworkTunnel::NetworkTunnel(QTcpSocket *client, QUrl primary, QUrl alternate,
     if (closed_)
       return;
     if (failed_(primaryOrigin_)) {
-      close();
+      refuse();
       return;
     }
     client_->write("HTTP/1.1 200 Connection Established\r\n\r\n");
@@ -63,7 +66,27 @@ NetworkTunnel::NetworkTunnel(QTcpSocket *client, QUrl primary, QUrl alternate,
   });
   if (client_->bytesAvailable())
     handshake();
+  age_.start();
+  idle_.start();
   tunnels.append(this);
+}
+
+QString NetworkTunnel::describe() {
+  QStringList open;
+  for (const auto *t : tunnels)
+    if (!t->closed_)
+      open << QString("%1 %2 up %3 down %4 age %5 idle %6 pending %7/%8")
+                  .arg(t->primaryOrigin_ ? "primary" : "alternate",
+                       t->ready_        ? "ready"
+                       : t->connecting_ ? "connecting"
+                                        : "handshake")
+                  .arg(t->upstreamBytes_)
+                  .arg(t->downstreamBytes_)
+                  .arg(t->age_.elapsed())
+                  .arg(t->idle_.elapsed())
+                  .arg(t->client_->bytesAvailable())
+                  .arg(t->remote_.bytesAvailable());
+  return QString::number(open.size()) + " open: " + open.join("; ");
 }
 
 NetworkTunnel::~NetworkTunnel() { tunnels.removeOne(this); }
@@ -133,7 +156,7 @@ void NetworkTunnel::handshake() {
   header_.clear();
   connecting_ = true;
   if (failed_(primaryOrigin_)) {
-    close();
+    refuse();
     return;
   }
   remote_.connectToHost(target.isEmpty() ? destination.host() : target,
@@ -144,6 +167,13 @@ void NetworkTunnel::tick() {
   if (closed_)
     return;
   if (connecting_ && failed_(primaryOrigin_)) {
+    // An established connection is reset; one still being set up is refused.
+    if (!ready_) {
+      refuse();
+      return;
+    }
+    ++totalCounts.cut;
+    totalCounts.cutUpstreamBytes += upstreamBytes_;
     close();
     return;
   }
@@ -168,6 +198,9 @@ void NetworkTunnel::tick() {
     if (stalls(upstreamBytes_))
       stallCarried[0] += quint64(bytes.size());
     upstreamBytes_ += quint64(bytes.size());
+    totalCounts.upstreamBytes += quint64(bytes.size());
+    if (!bytes.isEmpty())
+      idle_.start();
     remote_.write(bytes);
     if (!bytes.isEmpty() && !awaiting_) {
       awaiting_ = true;
@@ -189,6 +222,9 @@ void NetworkTunnel::tick() {
     if (stalls(downstreamBytes_))
       stallCarried[1] += quint64(bytes.size());
     downstreamBytes_ += quint64(bytes.size());
+    totalCounts.downstreamBytes += quint64(bytes.size());
+    if (!bytes.isEmpty())
+      idle_.start();
     client_->write(bytes);
     replied_ = replied_ || !bytes.isEmpty();
     awaiting_ = awaiting_ && bytes.isEmpty();
@@ -196,6 +232,25 @@ void NetworkTunnel::tick() {
   if (remoteEnded_ && remote_.bytesAvailable() == 0 &&
       client_->bytesToWrite() == 0)
     close();
+}
+
+void NetworkTunnel::refuse() {
+  if (closed_)
+    return;
+  closed_ = true;
+  timer_.stop();
+  remote_.abort();
+  // Qt reads a proxy's 503 as the destination refusing the connection. A
+  // proxy that just closed after CONNECT left a request with a body (an
+  // upstream PROPFIND) and every later request of its manager waiting for
+  // the transfer timeout (soak, 2026-11-13).
+  client_->write("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n"
+                 "Connection: close\r\n\r\n");
+  client_->disconnectFromHost();
+  QTimer::singleShot(1000, this, [this] {
+    client_->abort();
+    deleteLater();
+  });
 }
 
 void NetworkTunnel::close() {

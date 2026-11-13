@@ -34,6 +34,7 @@
 #include <chrono>
 #include <cstdio>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -116,6 +117,95 @@ struct NetworkTestAccess {
     state.policy.activated(state.active, c.network_->clock.elapsed() - ms);
     state.nextSwitch -= ms;
   }
+  /// accelerate makes ms of real time count factor times as long for every
+  /// pending probe, circuit cooldown, switch cooldown and dwell of every
+  /// account. Notes: an indefinite wait stays indefinite; server throttles,
+  /// stability, freshness and debounce windows are untouched.
+  static void accelerate(Control &c, qint64 ms, int factor) {
+    if (!c.network_)
+      return;
+    const auto now = c.network_->clock.elapsed();
+    const auto extra = ms * (factor - 1);
+    const auto pull = [&](qint64 &at) {
+      if (at > now && at != std::numeric_limits<qint64>::max())
+        at = std::max(now, at - extra);
+    };
+    for (auto &[id, state] : c.network_->accounts) {
+      for (auto &[endpoint, node] : state.nodes)
+        pull(node.next);
+      pull(state.nextSwitch);
+      state.policy.activatedAt_ -= extra;
+      for (auto &[endpoint, entry] : state.policy.entries_)
+        pull(entry.openUntil);
+    }
+  }
+  /// explain describes an account's probe state for a failed wait, without
+  /// addresses or credentials.
+  static QString explain(Control &c, const QString &account) {
+    if (!c.network_ || !c.network_->accounts.contains(account))
+      return "no network state";
+    const auto &state = c.network_->accounts.at(account);
+    const auto now = c.network_->clock.elapsed();
+    QString text = QString("phase '%6' throttle %1 probes %2/%3 authFailed %4 "
+                           "blocked %5 business %7 ms ago")
+                       .arg(c.throttleRemaining(account))
+                       .arg(state.probes)
+                       .arg(c.network_->probes)
+                       .arg(!state.authFailed.isEmpty())
+                       .arg(state.networkBlocked)
+                       .arg(facts(c, account).phase)
+                       .arg(now - state.businessSuccess);
+    for (const auto &[id, node] : state.nodes) {
+      const auto h = state.policy.health(id, now);
+      text += QString("; %1%2 verified %3 inFlight %4 next %5 failed %6 fresh "
+                      "%7 successes %8 halfOpen %9 quarantined %10")
+                  .arg(id.left(8), id == state.active ? "*" : "")
+                  .arg(node.verified)
+                  .arg(node.inFlight)
+                  .arg(node.next - now)
+                  .arg(h.failed)
+                  .arg(h.fresh)
+                  .arg(h.successes)
+                  .arg(h.halfOpen)
+                  .arg(h.quarantined);
+    }
+#ifdef SYNCD_WITH_ENGINE
+    for (const auto &row : facts(c, account).folders)
+      if (c.runtime_ && c.runtime_->contains(row))
+        text += QString("; folder %1 running %2 quiescent %3")
+                    .arg(row.left(8))
+                    .arg(c.runtime_->running(row))
+                    .arg(c.runtime_->quiescent(row));
+#endif
+    return text;
+  }
+#ifdef SYNCD_WITH_ENGINE
+  /// wake queues what a folder's own poll (or daily audit) timer queues.
+  static void wake(Control &c, const QString &folder, bool audit) {
+    if (c.runtime_ && c.runtime_->contains(folder))
+      c.runtime_->wake(folder, audit ? Scheduler::Reason::Audit
+                                     : Scheduler::Reason::Remote);
+  }
+  /// observe reports each cycle's start and end (with the files it uploaded)
+  /// ahead of Control's own handling, without changing it.
+  static void
+  observe(Control &c,
+          const std::function<void(const QString &, bool, quint64)> &seen) {
+    if (!c.runtime_)
+      throw std::runtime_error("owned soak engine runtime absent");
+    auto started = c.runtime_->started;
+    auto cycle = c.runtime_->cycle;
+    c.runtime_->started = [started, seen](const QString &id) {
+      seen(id, true, 0);
+      started(id);
+    };
+    c.runtime_->cycle = [cycle, seen](const QString &id,
+                                      const EngineAdapter::Result &result) {
+      seen(id, false, result.uploaded);
+      cycle(id, result);
+    };
+  }
+#endif
   /// fresh requires full-root verification and fresh repeated health of one
   /// endpoint.
   static bool fresh(Control &c, const QString &account,
@@ -534,24 +624,28 @@ void networkAcceptance(const QString &scenario) {
                  scenario.section('=', 0, 0) == "network-uncertain" ||
                  scenario == "network-large" ||
                  scenario.startsWith("file-safety");
-  const bool multi =
-                 scenario == "multi-account" || scenario == "switch-quota",
+  const bool multi = scenario == "multi-account" || scenario == "switch-quota",
              slow = scenario == "slow-server",
              dataSafety = scenario.startsWith("data-safety="),
-             dataRecover = scenario.startsWith("data-recover=");
-  QString alternateKind = QStringLiteral("internet");
+             dataRecover = scenario.startsWith("data-recover="),
+             soak = scenario.startsWith("soak="),
+             soakResume = scenario == "soak=second";
+  // The soak's first account prefers its alternate (a home address), so
+  // preference switches happen as well as failovers.
+  QString alternateKind =
+      soak ? QStringLiteral("home") : QStringLiteral("internet");
   const bool switching = switchingScenario(scenario, &alternateKind);
   const auto stage = scenario.section('=', 1);
   // One transfer case per process: each starts on healthy endpoints, with no
   // circuit history (and its growing open time) left by an earlier fault.
-  if (!killing && !recovering)
+  if (!killing && !recovering && !soak)
     selectTransferCase(stage);
   // An isolated loopback fixture is addressed through reserved names that
   // only the relay maps back; its direct origin is the cleanup address. The
   // relay then carries every request, also those of the network scenario.
   const bool relayed =
       activeTransfers || multi || slow || dataSafety || dataRecover ||
-      switching ||
+      switching || soak ||
       (scenario == "network" &&
        qEnvironmentVariableIsSet("NEXTCLOUD_TEST_CLEANUP_URL"));
   if (relayed && qEnvironmentVariableIsSet("NEXTCLOUD_TEST_CLEANUP_URL"))
@@ -672,6 +766,53 @@ void networkAcceptance(const QString &scenario) {
         return std::make_pair(bound.endpoint, bound.epoch);
       },
       [&](const QString &id) { return NetworkTestAccess::stable(c, id); }};
+  // The soak's controls; its restarted half finds its accounts in its own
+  // state file.
+  const auto soakControls = [&](const QString &account, const QString &primary,
+                                const QString &target) {
+    return SoakControls{
+        calls,
+        account,
+        primary,
+        target,
+        base,
+        alternate,
+        [&](bool failed) { faults->failPrimary = failed; },
+        [&](bool failed) { faults->failAlternate = failed; },
+        [&] { NetworkTestAccess::changed(c); },
+        [&](qint64 ms, int factor) {
+          NetworkTestAccess::accelerate(c, ms, factor);
+        },
+        [&](const QString &folder, bool audit) {
+          NetworkTestAccess::wake(c, folder, audit);
+        },
+        [&](const std::function<void(const QString &, bool, quint64)> &seen) {
+          NetworkTestAccess::observe(c, seen);
+        },
+        [&](const QString &session, const QString &user,
+            const QString &password) {
+          NetworkTestAccess::flow(c, session).verifyCredentials(user, password);
+        },
+        [&](const QString &id) { return NetworkTestAccess::ready(c, id); },
+        [&](const QString &id) { return NetworkTestAccess::facts(c, id); },
+        [&](const QString &id) { return NetworkTestAccess::explain(c, id); }};
+  };
+  const auto runSoak = [&](const SoakControls &k) {
+    try {
+      soakAcceptance(c, root, k, soakResume);
+    } catch (const std::exception &error) {
+      std::fprintf(stderr, "%s\n", error.what());
+      faults->failPrimary = false;
+      faults->failAlternate = false;
+      settled(c, call(c, "daemon.shutdown", {{"reason", "user"}}));
+      throw;
+    }
+    settled(c, call(c, "daemon.shutdown", {{"reason", "user"}}));
+  };
+  if (soakResume) {
+    runSoak(soakControls({}, {}, {}));
+    return;
+  }
   if (dataRecover) {
     try {
       dataSafetyRecover(c, root, stage, calls);
@@ -825,6 +966,10 @@ void networkAcceptance(const QString &scenario) {
   const auto target =
       receipt.value("result").toObject().value("endpointId").toString();
   require(!target.isEmpty(), "approved alternate ID absent");
+  if (soak) {
+    runSoak(soakControls(account, primary, target));
+    return;
+  }
   if (multi || dataSafety) {
     try {
       if (dataSafety)

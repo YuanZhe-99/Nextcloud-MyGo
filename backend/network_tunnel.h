@@ -59,6 +59,19 @@ public:
   /// flight left, until cleared with 0. Notes: models a reachable server that
   /// is slow to answer, not a lost connection; nothing is dropped.
   static void setReplyDelay(qint64 milliseconds);
+  /// Totals count, since the process started, the relays an origin fault broke
+  /// after their tunnel was established and the upstream bytes those had
+  /// carried (a bound on what a fault made the client send again), and the
+  /// bytes every relay forwarded each way. Notes: control thread only.
+  struct Totals {
+    quint64 cut = 0, cutUpstreamBytes = 0, upstreamBytes = 0,
+            downstreamBytes = 0;
+  };
+  /// totals returns the counters above.
+  static Totals totals();
+  /// describe lists the open relays (origin, state, bytes each way, age and
+  /// idle time) for a failed wait, without authorities or content.
+  static QString describe();
 
 private:
   /// handshake admits an exact approved CONNECT authority, without interpreting
@@ -69,6 +82,9 @@ private:
   void tick();
   /// close ends this relay once and defers only its own QObject destruction.
   void close();
+  /// refuse answers a CONNECT to a failed origin the way a proxy reports a
+  /// destination that refuses connections (503), then closes.
+  void refuse();
   QTcpSocket *client_;
   QTcpSocket remote_;
   QTimer timer_;
@@ -76,7 +92,8 @@ private:
   std::function<bool(bool)> failed_;
   std::function<bool(bool)> held_;
   QByteArray header_;
-  QElapsedTimer flight_; // since the unanswered client flight left
+  QElapsedTimer flight_;     // since the unanswered client flight left
+  QElapsedTimer age_, idle_; // since creation, and since the last byte
   quint64 upstreamBytes_ = 0, downstreamBytes_ = 0;
   bool primaryOrigin_ = false, connecting_ = false, ready_ = false,
        closed_ = false, remoteEnded_ = false, withholdReplies_ = false,

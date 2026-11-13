@@ -102,6 +102,9 @@ public:
   bool current(const Ticket &ticket) const;
 
 private:
+  /// NetworkTestAccess lets the real-network soak run the dwell and circuit
+  /// timers faster; no product path uses it.
+  friend struct NetworkTestAccess;
   enum class Circuit { Closed, Open, HalfOpen };
   /// Entry retains circuit/security history independently of fresh network
   /// evidence.

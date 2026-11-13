@@ -308,6 +308,12 @@ private:
   /// accountChange wraps an account/operation update with its revision and
   /// outbox transaction.
   void accountChange(const std::function<void()> &change);
+  /// publishEvent appends the projection at seq_ to the outbox inside the
+  /// caller's transaction and drops the rows older than the latest 100.
+  /// Notes: `events.resume` always asks for a fresh bootstrap, so no older row
+  /// is read again; unbounded, every state change kept a full projection and
+  /// the Control database grew about 2 MB a minute in the soak (2026-11-13).
+  void publishEvent(QSqlQuery &q);
   /// recoverAccounts removes interrupted account creations/removals without
   /// forgetting vault entries.
   void recoverAccounts();

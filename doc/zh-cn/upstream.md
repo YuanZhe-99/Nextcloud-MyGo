@@ -17,6 +17,7 @@ Nextcloud-MyGo 依赖上游的哪些行为，以及每一点核对到什么程�
 | 账号 URL 与凭据存储相互耦合（`account.cpp`、`httpcredentials.cpp`） | 调用 `Account::setUrl()` 不等于端点切换 | 已阅读 |
 | `Account::setCapabilities` 在 `create(false)` 后仍会重新进入状态/推送设置 | 补丁 0015 在适配器安装已验证同步能力元数据前保留无头生命周期 | 窄回归在修复前失败；集成构建待完成 |
 | 文件带有 GPL-2.0-or-later 及其他文件级许可证 | 见 [third-party.md](third-party.md) | 已阅读 |
+| `PropagateRemoteMove::slotMoveJobFinished` 在 MOVE 因任何原因失败时（包括传输失败）把本地文件改回旧名，并在 journal 中记录旧名 | 地址故障期间做的本地重命名会被撤销：两侧都保留旧名，内容不丢失，但用户的重命名丢失；未打补丁（未解决，[验收](acceptance.md) R21） | 已阅读；加速浸泡运行中出现三次，ARM64，35.0.2，2026-11-13 |
 
 ### 发行版审计：Desktop v35.0.2
 
@@ -95,6 +96,7 @@ macOS 扩展目标在 `shell_integration/MacOSX/NextcloudIntegration/FileProvide
 | 要点 | 影响 | 核对 |
 |---|---|---|
 | Qt 6 文档列出 Windows ARM64 配置 | 存在原生路径；完整依赖链只有在 ARM64 真机上才算得到证明 | 已阅读 |
+| HTTP 代理在 `CONNECT` 之后不作回答就关闭连接：GET 立即失败（`ProxyConnectionClosedError`），但带请求体的请求（PROPFIND）会等到传输超时，同一管理器之后的每个请求也一样，即使代理已恢复回答；回答 `503` 时两者都立即失败（`ConnectionRefusedError`） | 夹具中继对处于故障中的源回答 `503`（[开发](development.md#测试分层)）；只关闭连接的真实代理会让一个周期等到上游超时，之后下一个周期的新管理器（[引擎](engine.md#完成与安全)）使其恢复 | `build-lock.json` 的 Qt 6，ARM64，2026-11-13，浸泡探测 |
 
 ## MyGo
 

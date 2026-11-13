@@ -200,6 +200,53 @@ std::pair<QString, QString> ownedUser(const QString &root, const QUrl &base);
 void removeOwnedUser(const QString &root, const QUrl &base,
                      const QString &user);
 
+/// SoakControls are what the accelerated soak may do to the daemon and its
+/// network: the same faults and notifications a real network produces, plus
+/// running the daemon's timers faster (sync poll, probe interval, circuit
+/// cooldown, switch cooldown and dwell, daily audit). Every threshold, window
+/// and safety check stays the daemon's own.
+struct SoakControls {
+  AcceptanceCalls calls;
+  QString account, primary, target;
+  QUrl base, alternate;
+  /// failPrimary/failAlternate refuse and break every tunnel to that origin.
+  std::function<void(bool)> failPrimary, failAlternate;
+  /// changed delivers a network-change notification.
+  std::function<void()> changed;
+  /// accelerate makes ms of real time count factor times as long for every
+  /// pending probe, circuit cooldown, switch cooldown and dwell.
+  std::function<void(qint64 ms, int factor)> accelerate;
+  /// wake queues a remote poll (or the daily audit) of one folder, as its own
+  /// timer would.
+  std::function<void(const QString &folder, bool audit)> wake;
+  /// observe calls back on the control thread when a folder's cycle starts
+  /// (true) and when it ends (false, with the files the engine uploaded).
+  std::function<void(
+      const std::function<void(const QString &, bool, quint64)> &)>
+      observe;
+  /// verify completes a sign-in or renewal session with a user's own
+  /// credentials, as the browser would.
+  std::function<void(const QString &session, const QString &user,
+                     const QString &password)>
+      verify;
+  /// ready requires full verification and fresh health on both origins of an
+  /// account.
+  std::function<bool(const QString &)> ready;
+  /// facts reads the durable switch identities of an account.
+  std::function<SwitchFacts(const QString &)> facts;
+  /// explain describes an account's probe state when a wait fails.
+  std::function<QString(const QString &)> explain;
+};
+/// soakAcceptance runs the accelerated soak (acceptance R21, PLAN §23.3):
+/// two accounts with two folders each, a repeating mix of local and remote
+/// changes, large chunked uploads, address faults and flaps, renewals and UI
+/// connections over the real pipe, for SYNCD_SOAK_SECONDS. Inputs: resume is
+/// the restarted daemon's half on the same profile. Side effects: one owned
+/// server user and the reserved collection; soak.json and soak-result.json in
+/// the profile.
+void soakAcceptance(Control &c, const QString &root, const SoakControls &k,
+                    bool resume);
+
 /// dataSafetyAcceptance runs one named data-safety case against the
 /// disposable server (PLAN §20.2, §20.4): interrupted-change (S05), watcher
 /// (S09, S10), root-denied (S13), maintenance and partial-listing (S14), names
