@@ -571,6 +571,56 @@ address, route and DNS changes; connections that die without a reset and wait fo
 transfer timeout; sleeps of hours, with server sessions and locks expiring; volumes or drive
 letters changing while asleep; and x64.
 
+### Acceptance audit for 0.1.0
+
+Same ARM64 host, 2026-11-12, SyncD of `build/syncd-ARM64` and `build/syncd-x64` (emulated), protocol
+1.10, Desktop v35.0.3 (latest, checked that day), Go 1.27.4, MyGo v0.9.0. The [acceptance
+matrix](acceptance.md) was compared row by row with the tests and runs recorded here; these tests were
+added for cases that had no real run:
+
+| Test | Cases | Native ARM64 | Emulated x64 |
+|---|---|---|---|
+| `TestRealPipeFramingR08R12` (real pipe) | R08, R12 | passed, 16.2 s | passed, 17.1 s |
+| `TestRealPipeReplayR10R11R14` (real pipe) | R10, R11, R14 | passed, 1.2 s | passed, 2.3 s |
+| `TestRealPipeSlowClientR13` (real pipe) | R13 | passed, 2.6 s | passed, 9.6 s |
+| `TestRealPipeImpostorR09` (real pipe) | R09 | passed, 2.4 s | passed, 3.1 s |
+| `TestRealNewerControlSchemaR17` (real pipe) | R17 | passed, 2.3 s | passed, 2.6 s |
+| `SyncDPropertyContracts` (`backend/property_tests.cpp`) | P04, P08 | passed, 0.18 s | passed, 0.40 s |
+| `TestUpdateInterruptedDownload` (`internal/release`) | R16 | passed | passed |
+| `file-safety`: 100 server deletions under a fifth of the baseline | S11 | not run yet: the server tier waits for another session | not run (x64 runs the smoke only) |
+
+What they showed. A frame split inside its length prefix and its body is one message, and two frames
+in one write are answered in order. A zero length, a length above 1 MiB, invalid UTF-8, a duplicate
+key, truncated JSON and nesting above 64 each end only that connection; the next client is served
+and the paused state is kept. A half frame that never completes holds the single pipe instance for
+15.0 s, the stall deadline, and no longer. A client that never reads is dropped once its replies
+pass the 4 MiB output budget (ARM64 after 2.3 s, x64e 8.6 s) and the next client is served at once;
+`events.resume` answers `RESYNC_REQUIRED`. A change committed right after a bootstrap reaches the
+subscription with a later `seq`. `session.hello` with major 2 is `PROTOCOL_MISMATCH`, and a mutation
+or a bootstrap sent before a successful hello is refused the same way and executes nothing. A pause
+whose reply was never read committed once; its key sent again after reconnecting, after a later
+resume and after an explicit stop and a new boot returned the same receipt and never paused again;
+the same key with other input returned `OPERATION_KEY_CONFLICT` with state and revision unchanged.
+A process of the same user that created the pipe name first is refused by the client (its
+executable is not the paired daemon), and the daemon then exits nonzero instead of serving under
+another owner; a client through `\\127.0.0.1\pipe\` is refused as remote ("Access is denied"). A
+Control database one schema newer than the daemon makes it serve only `databaseUnavailable`, refuse
+mutations and leave the file byte for byte. The property run drives `EndpointPolicy` with 500 seeded
+sequences of 400 random events (configuration with random trust flags, reviews, network changes,
+probes, outcomes, hard failures, activations, abandoned tickets, business successes and clock
+steps) and checks after every event that no stale or consumed ticket is accepted or changes health
+(P04) and that no proposal names a filtered endpoint or, for a fixed target, another one (P08); with
+a deliberately wrong model it failed at seed 1 and shrank to a two-step sequence. A download whose
+connection breaks halfway through the archive leaves the staging folder empty.
+
+With them, `tools/test-all.ps1 -Tier fast` passed on ARM64 in 53.6 s (format and vet 2.0 s, Go tests
+with real pipes 38.7 s, 23 CTest targets 12.9 s) and on emulated x64 in 53.6 s (Go tests 40.4 s, 23
+CTest targets 13.1 s); the new real-pipe tests run in parallel, the half frame's 15-second stall
+being the longest.
+
+No product defect was found by these tests. Cross-user and cross-session pipe connections, a second
+logon session and native x64 hardware remain outside this machine ([acceptance](acceptance.md#known-limitations-for-010)).
+
 ## Known limitations
 
 Upstream CTest on native Windows ARM64 passed SyncJournalDBTest, ConcatUrlTest,

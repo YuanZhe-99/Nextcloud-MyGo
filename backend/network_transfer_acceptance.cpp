@@ -772,7 +772,8 @@ void spin(int milliseconds) {
 }
 /// fileSafetyAcceptance runs fault-free cases against the real server: renames
 /// and directory moves in both directions (S04), deletion protection for one
-/// directory with many descendants with its direction and count (S11, S12), a
+/// directory with many descendants with its direction and count (S11, S12),
+/// 100 server deletions held by the absolute threshold alone (S11), a
 /// proposal invalidated by a later change (S20), a leased local root (S13)
 /// and a remote root that answers 404 (S14).
 void fileSafetyAcceptance(Control &c, const QString &credential,
@@ -949,6 +950,65 @@ void fileSafetyAcceptance(Control &c, const QString &credential,
               "later change refused, matching approval applied");
   }
   {
+    // S11 at scale: another client deletes 100 single files, under a fifth
+    // of a baseline above 500, so only the absolute threshold applies; they
+    // are held as local deletions and no local file goes before approval.
+    constexpr int bulk = 510, removed = 100;
+    const auto bulkName = [](int i) {
+      return QString("bulk/item-%1.bin").arg(i, 3, 10, QChar('0'));
+    };
+    require(QDir().mkpath(m.local + "/bulk"), "owned bulk directory failed");
+    QHash<int, QByteArray> contents;
+    for (int i = 0; i < bulk; ++i) {
+      contents.insert(i, randomContent(64));
+      writeLocal(m.local + '/' + bulkName(i), contents.value(i));
+    }
+    sync();
+    converge(
+        [&] {
+          for (int i = 0; i < bulk; i += 51)
+            if (remoteHash(bulkName(i)) != sha256(contents.value(i)))
+              return false;
+          return remoteHash(bulkName(bulk - 1)) ==
+                 sha256(contents.value(bulk - 1));
+        },
+        "owned bulk files did not reach the real server");
+    for (int i = 0; i < removed; ++i)
+      dav(m.base, m.uid, m.collection, "DELETE", credential, {},
+          bulkName(i * 5));
+    const auto localCount = [&] {
+      return QDir(m.local + "/bulk").entryList(QDir::Files).size();
+    };
+    sync();
+    wait([&] { return folder().value("state") == "needsReview"; },
+         "owned 100 server deletions were not held for review", 250);
+    const auto proposal = decisions().first().toObject();
+    require(decisions().size() == 1 &&
+                proposal.value("localDeletes").toInteger() == removed &&
+                proposal.value("remoteDeletes").toInteger() == 0,
+            "owned 100-deletion proposal has the wrong direction or count");
+    require(localCount() == bulk &&
+                localHash(m.local + '/' + bulkName(0)) ==
+                    sha256(contents.value(0)),
+            "owned local files were removed before the decision");
+    require(call(c, "decisions.resolve",
+                 {{"decisionId", proposal.value("id")},
+                  {"proposalDigest", proposal.value("digest")},
+                  {"action", "approveDeletion"}})
+                .contains("result"),
+            "owned 100-deletion approval refused");
+    converge([&] { return localCount() == bulk - removed; },
+             "owned approved server deletions did not reach the local root");
+    require(QFile::exists(m.local + '/' + bulkName(1)) &&
+                !QFile::exists(m.local + '/' + bulkName(5)) &&
+                decisions().isEmpty(),
+            "owned approved deletion removed other local files");
+    std::printf("PASS real 100 server deletions under a fifth of a %d-file "
+                "baseline held as 100 local deletions before propagation, "
+                "applied after approval\n",
+                bulk + 10);
+  }
+  {
     // S13: the mapped root cannot be taken away under the daemon.
     const bool renamed = QDir().rename(m.local, m.local + "-gone");
     if (renamed)
@@ -1071,13 +1131,21 @@ void sleepAcceptance(Control &c, const QString &root, const QString &account,
   require(idle, "owned switch did not wait for the folder to go idle after "
                 "its dead connections failed");
   PendingRead pending;
+  // A cycle on the alternate the server refused (the fixture's SQLite answers
+  // a busy database with 503 after the whole body) is retried and may send
+  // the body once more; each failed cycle stays visible for its retry delay.
+  qint64 refused = 0;
+  bool failing = false;
   wait(
       [&] {
+        const bool failed = diagnostics(c).value("state") == "error";
+        refused += failed && !failing;
+        failing = failed;
         return upToDate(c) &&
                sha256(dav(other, m.uid, m.collection, "GET", credential, {},
                           "asleep.bin", &pending)) == sha256(content);
       },
-      "owned held upload did not complete after waking", 500);
+      "owned held upload did not complete after waking", 100);
   const auto completed = woken.elapsed();
   const auto after = switchFacts(c, account);
   require(after.endpoint == alternate && after.epoch > before.epoch,
@@ -1104,11 +1172,12 @@ void sleepAcceptance(Control &c, const QString &root, const QString &account,
   require(counter(recovered, "uncertainWrites") >
               counter(baseline, "uncertainWrites"),
           "owned interrupted upload lost its unconfirmed-write evidence");
-  // The interrupted attempt counts at most its whole body, the completed one
-  // the whole body: a second completed upload would exceed both.
+  // The interrupted attempt counts at most its whole body (the relay accepts
+  // all of it), each refused one and the completed one a whole body each: a
+  // second completed upload would exceed them all.
   require(uploads == 1 && counter(recovered, "uploadBytes") -
                                   counter(baseline, "uploadBytes") <=
-                              2ULL * size,
+                              quint64(2 + refused) * size,
           "owned held upload was sent more than once after waking");
   require(QDir(m.local).entryList(QDir::Files) ==
                   QStringList{"asleep.bin", "kept.bin"} &&
@@ -1120,9 +1189,11 @@ void sleepAcceptance(Control &c, const QString &root, const QString &account,
               "alternate answers; dead connections failed, nothing read as "
               "deleted, switch after the folder went idle %lld ms after "
               "waking with reason unreachable, upload completed once %lld ms "
-              "after waking, hashes, journal and folder identity unchanged\n",
+              "after waking, %lld server refusals retried, hashes, journal "
+              "and folder identity unchanged\n",
               static_cast<long long>(suspended), static_cast<long long>(still),
-              static_cast<long long>(moved), static_cast<long long>(completed));
+              static_cast<long long>(moved), static_cast<long long>(completed),
+              static_cast<long long>(refused));
 }
 } // namespace
 

@@ -105,6 +105,13 @@ not depend on acquiring a health-probe ticket: they invalidate outstanding evide
 probe or an open circuit. Security quarantine is persisted independently, and late successful probes
 cannot clear it. Connected regressions reproduced lost quarantine before this fix (INV-04/06/14).
 
+A sync request that fails at the transport level (refused, closed, timed out, or reset while an
+upload body is still being written, which Qt reports as an unknown network error) ends its cycle
+as `NETWORK_UNAVAILABLE`: that drops the active address's recent business success and probes every
+address at once. Cancellation, TLS, permission and HTTP errors are not transport evidence. Before
+the mid-body reset counted, a dead upload after a sleep read as `SYNC_FAILED` (sleep-resume
+regression).
+
 Only a failed probe blocks the active endpoint. While its circuit is still recovering (half-open), a
 successful probe is recovery evidence and never blocks the account or fails the switch that just
 activated it; a failed probe there still does. Before this rule a manual switch onto a recovering

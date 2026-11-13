@@ -100,6 +100,10 @@ bool RequestLifetime::transportFailure(QNetworkReply::NetworkError error) {
   case QNetworkReply::ProxyConnectionClosedError:
   case QNetworkReply::ProxyNotFoundError:
   case QNetworkReply::ProxyTimeoutError:
+  // A connection reset while the body is still being written: Qt reports the
+  // socket's write error as unknown (sleep-resume regression: the dead upload
+  // read as SYNC_FAILED and never reached endpoint recovery).
+  case QNetworkReply::UnknownNetworkError:
     return true;
   default:
     return false;

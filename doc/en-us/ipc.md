@@ -243,5 +243,9 @@ The connected functional unit passed shared framing fixtures, persistence/idempo
 guards on native ARM64 and emulated x64. Real Go-to-C++ pipes passed on both architectures,
 including restart persistence, reconnect and refusal of an unexpected server executable path.
 The native frontend opened its paired daemon; its screenshot showed the unavailable-login message
-and disabled Continue control. Windows cross-user/session and impersonation acceptance are separate
-from these checks and remain outstanding. Full sync and engine-driven switching are not verified.
+and disabled Continue control. Hostile clients on the real pipe (`internal/syncd/pipe_windows_test.go`,
+[platform notes](platform-notes.md#acceptance-audit-for-010)) cover malformed and stalled frames, a
+client that never reads, lost replies and reused operation keys across reconnect and restart, a
+different protocol major, a process that takes the pipe name first, a remote client and a Control
+database of a newer schema. Cross-user and cross-session connections need a second Windows account
+or logon session and are not run. Full sync and engine-driven switching are not verified.

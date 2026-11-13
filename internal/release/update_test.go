@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -167,6 +168,41 @@ func TestUpdateNotNewer(t *testing.T) {
 	}
 	if _, err := u.Download(ctx, HTTPGet, pub, "ARM64", "0.1.1", t.TempDir()); err == nil {
 		t.Fatal("an older signed update behind a newer manifest was accepted")
+	}
+}
+
+// TestUpdateInterruptedDownload (PLAN.md §20.4 R16): a connection that breaks
+// partway through the archive leaves nothing staged, so no installer starts
+// and the installed version stays.
+func TestUpdateInterruptedDownload(t *testing.T) {
+	key, pub := newKey(t)
+	ctx := context.Background()
+	_, dir := signedFeed(t, key, "0.1.1", "ARM64")
+	archive := UpdateArchiveName("0.1.1", "ARM64")
+	files := http.FileServer(http.Dir(dir))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, archive) {
+			files.ServeHTTP(w, r)
+			return
+		}
+		b, _ := os.ReadFile(filepath.Join(dir, archive))
+		w.Header().Set("Content-Length", strconv.Itoa(len(b)))
+		w.Write(b[:len(b)/2])
+		w.(http.Flusher).Flush()
+		conn, _, _ := w.(http.Hijacker).Hijack()
+		conn.Close()
+	}))
+	t.Cleanup(srv.Close)
+	u, err := CheckUpdate(ctx, HTTPGet, srv.URL+"/", "ARM64", "0.1.0")
+	if err != nil || u == nil {
+		t.Fatalf("CheckUpdate = %v, %v", u, err)
+	}
+	stage := t.TempDir()
+	if setup, err := u.Download(ctx, HTTPGet, pub, "ARM64", "0.1.0", stage); err == nil {
+		t.Fatalf("an interrupted download produced %s", setup)
+	}
+	if entries, _ := os.ReadDir(stage); len(entries) != 0 {
+		t.Fatalf("an interrupted download left %v", entries)
 	}
 }
 

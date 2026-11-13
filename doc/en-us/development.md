@@ -198,17 +198,22 @@ it) with `NtSuspendProcess` for 35 s, past the 15-second freshness and the 30-se
 success and drain windows. Meanwhile it resets every connection and refuses the primary from
 then on, leaving only the alternate: the machine woke on another network. A control-thread timer
 and an independent thread must both have stood still. After `NtResumeProcess` the daemon gets no
-hint, not even a power notification. It must fail the dead connection on its own, keep every
-local file and propose no deletion while the primary is unreachable, never call the folder up to
-date there, and go idle before the switch. The switch must be recorded with reason `unreachable`.
-The upload must complete once on the alternate (one `uploaded` entry, at most two bodies' worth
-of bytes for the interrupted and the completed attempt, no conflict copy) with matching hashes,
+hint, not even a power notification. It must fail the dead connection on its own as a transport
+failure (a reset while the body is still being written arrives as Qt's unknown network error),
+keep every local file and propose no deletion while the primary is unreachable, never call the
+folder up to date there, and go idle before the switch. The switch must be recorded with reason
+`unreachable`. The upload must complete once on the alternate (one `uploaded` entry, at most one
+body's worth of bytes for the interrupted attempt and one for each attempt on the alternate: the
+completed one and any the server refused, such as the fixture's SQLite answering 503 under the
+tier's load; no conflict copy) with matching hashes,
 the original native journal file, folder rows and credential reference. The relay resumes its
 parent on every path, and the wrapper's 120-second budget and Job Object end both otherwise.
 
 `-Scenario file-safety` runs fault-free cases on the real server: renames and directory moves in
 both directions with server file IDs kept, deletion review for one directory with twelve
-descendants (direction and count), a stale approval after a later change, a leased local root and
+descendants (direction and count), 100 single files deleted on the server under a fifth of a
+520-file baseline (the absolute threshold alone, held as local deletions), a stale approval after a
+later change, a leased local root and
 a remote root answering 404. `-Scenario network-large` cuts the chunk session of a file above
 4 GiB after its 4 GiB boundary and requires it to resume on the other origin; it writes, sends and
 verifies the content as a stream and needs an isolated server with about 9 GiB free.

@@ -9,14 +9,14 @@ SyncD 连通基础已实现；完整同步尚未完成。见 [IPC](../ipc.md) �
 |---|---|---|
 | `cmd/nextcloud-mygo` | 单实例、托盘、窗口、配套 SyncD 及显式演示模式 | `main` |
 | `internal/gui` | 窗口、页面、首次设置、设置、托盘、更新（[gui.md](../gui.md)） | `App`、`App.view`、`App.do`、`Prefs`、`overallOf` |
-| `internal/syncd` | 经过身份验证的管道客户端、快照投影、命令重试、支持取消的操作等待及显式 Mock | `Client`、`Remote`、`dialPipe`、`Snapshot`、`Mock` |
+| `internal/syncd` | 经过身份验证的管道客户端、快照投影、命令重试、支持取消的操作等待及显式 Mock；针对已编译守护进程、使用恶意原始客户端的真实管道测试 | `Client`、`Remote`、`dialPipe`、`Snapshot`、`Mock`、`rawPipe` |
 | `backend/` | 控制线程守护进程、持久账号/设置/回执、原生凭据、登录、Win32 传输及独立切换守卫 | `Control`、`LoginFlow`、`writeCredential`、`PipeServer`、`SwitchCoordinator`、`decodeMessage` |
 | `backend/control_reauth.cpp` | 保留账号的凭据替换、原生凭据库回滚/清理及同 origin 运行时重新加载 | `reauthenticate`、`installReauthentication`、`recoverReauthentication`、`reloadCredentials` |
 | `backend/engine*`, `backend/scheduler.*`, `backend/root*` | 进程内引擎/运行时、排空后的账号重新绑定、按需请求静止、重试/安全阻塞、确定性串行队列及根租约（[引擎](../engine.md)） | `EngineAdapter`、`rebindError`、`rebind`、`EngineRuntime`、`quiesceAccount`、`Scheduler`、`RootLease` |
 | `backend/control_folders.cpp`, `backend/namespace.*`, `backend/deletion.*` | 持久映射及其固定的文件模式、完成持久化失败时安全关闭、按步骤设截止时间的有界 DAV 元数据及独立权限/锁定/限流结果、传播前提案及单次批准 | `folderMutation`、`restoreFolders`、`cycleFinished`、`MetadataError`、`checkMetadataReply`、`metadataDeadline`、`parseCollections`、`readCollections`、`assessDeletion`、`decisionMutation` |
 | `backend/control_endpoints.cpp`, `backend/control_switch.cpp` | 持久 origin 许可、只读 UID/全部根验证及门槛保护的手动激活 | `endpointMutation`、`probeEndpoint`、`switchMutation`、`advanceSwitch`、`verifySwitchTarget` |
 | `backend/control_update.cpp` | 更新安全点（`daemon.prepareUpdate`）、启动后报告与自检，以及不修改配置的快照事件 | `prepareUpdate`、`advanceUpdate`、`releaseUpdate`、`startupReport`、`selfCheck`、`publishState` |
-| `backend/endpoint_policy.*` | 确定性的仅提议评分、代次隔离、去抖、隔离及熔断恢复 | `EndpointPolicy`、`beginProbe`、`observe`、`choose` |
+| `backend/endpoint_policy.*`、`backend/property_tests.cpp` | 确定性的仅提议评分、代次隔离、去抖、隔离及熔断恢复；带缩减的固定 seed 随机性质测试（P04、P08） | `EndpointPolicy`、`beginProbe`、`observe`、`choose`、`run`、`shrink` |
 | `backend/control_network.cpp`, `backend/network_*` | 原生通知排空、有界健康序列、持久策略、冻结切换证据及新 epoch 恢复提案 | `NetworkMonitor`、`evaluateNetwork`、`networkOutcome`、`policyMutation`、`switchEvidence`、`switchFailed` |
 | `backend/network_tunnel.*`, `backend/network_acceptance.h`, `backend/network_transfer_acceptance.cpp` | 仅验收使用的有界加密中继（限速、扣留回复、丢弃回复、延迟回复）、慢速服务器健康用例、真实映射传输故障、回复丢失的 MOVE/DELETE/最终 MOVE 用例、切换阶段杀进程及重启检查、文件安全用例、模拟休眠（由子进程中继挂起整个进程），父进程负责远程清理 | `NetworkTunnel`、`TransferFaults`、`SwitchFacts`、`networkTransferAcceptance`、`switchKillAcceptance`、`switchRecoverAcceptance`、`sleepRelay`、`cleanupNetworkContent` |
 | `backend/multi_account_acceptance.cpp` | 仅验收使用、在一次性服务器上运行的 2 个账号 × 2 个目录：拒绝重复账号、各账号独立绑定、一个账号的切换不暂停其他账号、服务器配额已满时守护进程继续服务且固定策略能提交、移除一个账号，第二个服务器用户由父进程清理；以及 switch-quota 运行：上传被挂起超过排空窗口时请求的切换以 `switchFailed` 结束，配额已满时再次请求则完成切换 | `multiAccountAcceptance`、`switchQuotaAcceptance`、`AcceptanceCalls`、`cleanupOwnedUser` |
@@ -28,7 +28,7 @@ SyncD 连通基础已实现；完整同步尚未完成。见 [IPC](../ipc.md) �
 | `backend/resume_context.*` | 只读 ETag 下载、带校验和单 PUT 及分块 v2 会话准入；保留被阻塞轮询/v1 分块索引及损坏 journal | `resumeContextError` |
 | `backend/switch_state.*` | 事务化切换意图/epoch 存储、已提交绑定解析及重启门槛 | `SwitchState`、`begin`、`commit`、`reconciled`、`interrupt` |
 | `backend/platform/windows/ondemand*` | Cloud Files 同步根注册、归属检查、切换所等待的按需请求闸门、注销，以及真实服务器按需验收程序（[按需文件](../on-demand.md)） | `OnDemandRoot`、`ownershipError`、`close`、`busy`、`unregister`、`EngineAdapter::quiescent` |
-| `protocol/` | 协议 1.8 清单、schema 及共享恶意输入夹具 | `contract.json`、`message.schema.json`、`folders.schema.json`、`endpoints.schema.json`、`switch.schema.json`、`reauthentication.schema.json`、`policy.schema.json`、`startup.examples.json`、`constraints.examples.json`、`fixtures.json` |
+| `protocol/` | 协议 1.10 清单、schema 及共享恶意输入夹具 | `contract.json`、`message.schema.json`、`folders.schema.json`、`endpoints.schema.json`、`switch.schema.json`、`reauthentication.schema.json`、`policy.schema.json`、`startup.examples.json`、`constraints.examples.json`、`fixtures.json` |
 | `tools/build-syncd.ps1` | ARM64/x64 SyncD 构建与核心契约测试 | 脚本参数 |
 | `tools/pkg`、`tools/package.ps1`、`tools/package-smoke.ps1` | 带必需许可证包的 DLL 闭包暂存、安装包清单、原生架构 PE 检查、运行中 SyncD 的启动报告、测试版本安装包、更新签名以及真实安装、升级与应用内更新测试（[打包](../packaging.md)） | `stageCommand`、`requireNotices`、`reportCommand`、`signUpdateCommand`、`check`、`inspect`、`native` |
 | `packaging/windows/setup` | 按版本目录的当前用户安装、替换文件前的更新安全点、协调的双进程停止、卸载及可选的用户数据删除 | `install`、`stopApp`、`prepare`、`prepareUpdate`、`shutdown`、`uninstallApp`、`admit`、`extract` |

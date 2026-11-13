@@ -408,7 +408,8 @@ int main(int argc, char **argv) {
     for (auto error :
          {QNetworkReply::RemoteHostClosedError,
           QNetworkReply::HostNotFoundError, QNetworkReply::TimeoutError,
-          QNetworkReply::ProxyTimeoutError})
+          QNetworkReply::ProxyTimeoutError,
+          QNetworkReply::UnknownNetworkError})
       require(RequestLifetime::transportFailure(error),
               "transport failure did not contribute to endpoint recovery");
     for (auto error :

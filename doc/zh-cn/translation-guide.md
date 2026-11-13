@@ -79,6 +79,8 @@ Nextcloud-MyGo、MyGo、Qt、Microsoft），以及协议与 API 名称（WebDAV�
 | sleep and resume | 休眠与唤醒 |
 | simulation, simulated (sleep) | 模拟，模拟休眠（emulated x64 仍是“仿真”） |
 | suspend (a process) | 挂起（进程） |
+| soak run | 浸泡运行 |
+| property test, seed, minimal failing sequence | 性质测试、seed、最小失败序列 |
 
 ## 6. 审阅清单
 
