@@ -132,12 +132,19 @@ control.
 
 ## Updates
 
-Only signed release builds update themselves (`mygo.Updater.Enabled`); others say so and their
-update controls are disabled. The check runs daily while switched on. Installing first asks SyncD
-for a safe point (`PrepareUpdate`); a refusal postpones it and says which: a deletion waiting for
-the user (`DECISION_PENDING`, with Review), or sync not yet at a safe point (`QUIESCE_STALLED`),
-told apart by `syncd.ReasonOf`. An automatic install runs when the computer has been idle for 15 minutes or within
-03:00, as chosen; one that failed is not tried again in the same run.
+Only an installed package built with the update signing key updates itself (`release.UpdateFeed`
+and `UpdateKey`, [packaging](packaging.md#signed-updates)); others say so and their update controls
+are disabled. Checking is off until the user turns on Check daily (saved as `updateChecks`, so the
+value builds without an update channel saved by default never turns it on); Check now works either
+way. A check reads the latest release's `update-windows-<goarch>.json`. Installing downloads the
+signed archive and verifies it, then asks SyncD for a safe point (`PrepareUpdate`); a refusal
+postpones it and says which: a deletion waiting for the user (`DECISION_PENDING`, with Review), or
+sync not yet at a safe point (`QUIESCE_STALLED`), told apart by `syncd.ReasonOf`. Then it hands over
+to the update's installer, which closes the interface, upgrades UI and SyncD together and starts the
+new version. A failed download or signature check, or an installer that stops while the interface
+still runs, keeps the installed version and says the update could not be installed. An automatic
+install runs when the computer has been idle for 15 minutes or within 03:00, as chosen; one that
+failed is not tried again in the same run.
 
 ## Languages
 

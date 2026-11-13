@@ -34,7 +34,13 @@ user without elevation, with the provider name `Nextcloud-MyGo` and the product 
 official client registers as `Nextcloud!…`; the two never share a key.
 
 A folder may become an on-demand root only if it is no sync root and lies inside none. A path that
-Cloud Files reports as another provider's, another folder's or inside a root is `FOLDER_OWNED`. The
+Cloud Files reports as another provider's, another folder's or inside a root is `FOLDER_OWNED`. On-demand
+also needs the Cloud Files minifilter (service `CldFlt`) to be running; Windows Server, including
+GitHub's runner images, may not run it. Without it `folders.add` with `onDemand` answers
+`UNSUPPORTED_CAPABILITY`, and an existing on-demand folder fails to start with `UNSUPPORTED_FOLDER_MODE`.
+A Cloud Files query that fails because Cloud Files cannot answer (provider not running, not supported,
+invalid function, or any failure while the filter is stopped) is never read as `FOLDER_OWNED`. Any other
+failed query still refuses as owned. Full-file folders do not ask Cloud Files and work either way. The
 root lease admits a cloud reparse tag on the root itself and Cloud Files placeholders in the tree only
 for an on-demand folder; any other reparse point, and every placeholder in a full-file folder, still
 blocks the folder. The tree check never lists an unpopulated directory, which would ask SyncD's own
@@ -75,7 +81,10 @@ server keeps their content. Other local content and the journal stay. SyncD neve
 
 `syncd_ondemand_tests` (CTest `SyncDOnDemandContracts`) runs on temporary NTFS folders against the
 real Cloud Files API, without a server: registration identity, refused foreign and nested roots, the
-request gate a switch waits on, and complete unregistration. `tools/test-ondemand.ps1` runs
+request gate a switch waits on, and complete unregistration. It first classifies simulated Cloud Files
+answers (`OnDemandRoot::ownershipReason`) on every machine. Where Cloud Files cannot answer for its
+temporary folder, it prints `SKIP` with the query's HRESULT and the filter state and exits 77, which
+CTest reports as skipped, never as passed. `tools/test-ondemand.ps1` runs
 `syncd_ondemand_acceptance` against a disposable local server: placeholders, hydration on open,
 population, free up space, always keep on this device, a switch that waits for a running hydration,
 refusal while closed and service on the next epoch, a kill during a hydration and restart, and

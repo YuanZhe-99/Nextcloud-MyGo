@@ -1,7 +1,8 @@
 # 持续集成与发布
 
 公共仓库中的 GitHub Actions 对每次推送和拉取请求在 Windows x64 与 ARM64 上原生构建并测试
-Nextcloud-MyGo，并把 `v*` 标签连同两个安装包发布为预发布。只使用 `GITHUB_TOKEN`；没有任何工作流进行签名。
+Nextcloud-MyGo，并把 `v*` 标签连同两个安装包发布为 release。除 `GITHUB_TOKEN` 外，只有发布使用一个 secret，
+即为应用内更新签名的 `MYGO_UPDATER_PRIVATE_KEY`；没有任何内容带 Authenticode 签名。
 
 | 工作流 | 触发 | 内容 |
 |---|---|---|
@@ -16,6 +17,8 @@ Nextcloud-MyGo，并把 `v*` 标签连同两个安装包发布为预发布。只
 第一步会明确失败，并打印找到的 Visual Studio 与 MSVC 版本。每个架构都在自己的硬件上构建和运行：没有作业交叉编译
 或仿真另一架构的产品，因此 CI 也是原生 x64 的证据，而这台 ARM64 开发机无法提供（[平台说明](platform-notes.md)）。
 在 ARM64 上，x64 宿主 Qt 的工具（moc、rcc、lrelease）在运行器的 x64 仿真下运行，与本地构建完全相同；它们的产物不会进入安装包。
+“Cloud Files diagnostics”步骤打印镜像名称和 Cloud Files 微筛选器的状态（`sc query/qc cldflt`、`fltmc`）。Cloud Files
+无法作答时，`SyncDOnDemandContracts` 把其注册用例报告为已跳过（[按需文件](on-demand.md)）。
 
 ## `build.yml` 的步骤
 
@@ -112,12 +115,18 @@ vcpkg 全部六次端口构建的 ABI 输入相同，ARM64 端口 DLL 逐字节�
 1. 标签必须等于 `internal/version/version.go` 中的 `Version` 和 `mygo.json` 中的 `version`。
 2. 在两个架构上带 `package` 运行 `build.yml`：上述全部步骤，然后是安装包、暂存安装包中每个 PE 文件的架构检查
    （ARM64 Visual C++ 运行时是已接受的 ARM64X 例外，[打包](packaging.md)），以及许可证包。
-3. 一个标记为**预发布**、标题注明未签名测试构建的 GitHub release，附带
-   `Nextcloud-MyGo-X.Y.Z-arm64-test-setup.exe`、`Nextcloud-MyGo-X.Y.Z-x64-test-setup.exe`、
-   `Nextcloud-MyGo-X.Y.Z-licenses.zip` 以及覆盖这三者的 `SHA256SUMS`。说明中写明安装包未签名、自动更新关闭，
-   以及服务器层在 CI 之外运行。
+   有 secret `MYGO_UPDATER_PRIVATE_KEY`（只传给 Package 步骤）时，每个包还会得到其签名更新
+   `Nextcloud-MyGo-X.Y.Z-<arch>-update.zip` 与 `update-windows-<goarch>.json`（[打包](packaging.md#签名更新)），
+   一并上传。
+3. 一个 GitHub release，附带 `Nextcloud-MyGo-X.Y.Z-arm64-test-setup.exe`、
+   `Nextcloud-MyGo-X.Y.Z-x64-test-setup.exe`、`Nextcloud-MyGo-X.Y.Z-licenses.zip`、存在时两个架构的更新文件
+   （只有一个架构则作业失败），以及覆盖所有这些文件的 `SHA256SUMS`。有更新时它标记为**最新**（已安装的副本从这个
+   release 读取清单），标题注明安装包未做代码签名的测试构建；没有更新时它是**预发布**，标题注明未签名测试构建，
+   已安装的副本无法更新到它。说明中写明安装包没有 Authenticode 签名，因此首次安装时 SmartScreen 会警告，写明是否
+   提供应用内更新，以及服务器层在 CI 之外运行。
 
-CI 中从不对安装包签名：签名要等可信签名链就绪（PLAN.md §16.2），其密钥只保存在 GitHub secrets 和维护者的离线副本中。
+安装包从不带 Authenticode 签名：没有 Windows 代码签名证书。更新密钥只保存在 GitHub secret 和维护者的离线副本中；
+`tools/pkg sign-update` 从环境变量读取它且从不输出，`mygo build` 从不获得它。
 
 ### 许可证包
 

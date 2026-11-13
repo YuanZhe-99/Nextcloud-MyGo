@@ -190,6 +190,35 @@ void accountThrottle() {
   require(!longDelay.take(604800001),
           "unrepresentable server delay was silently shortened");
 }
+/// rebound proves a retry delay earned on an unreachable address no longer
+/// holds back the folder once the account moved, while pauses and the
+/// account's server throttle still do (PLAN §9.3 S5; sleep-resume regression).
+void rebound() {
+  Scheduler s;
+  s.add("folder", "account");
+  s.enqueue("folder", Scheduler::Reason::Recovery, 0);
+  auto failed = s.take(0);
+  require(failed && s.fail(*failed, "NETWORK_UNAVAILABLE", 60000),
+          "unreachable-address failure fixture failed");
+  s.enqueue("folder", Scheduler::Reason::Recovery, 15000);
+  require(!s.take(15000), "failure backoff was not applied");
+  s.block("folder", "userPaused", true);
+  s.clearRetry("folder");
+  require(!s.take(15000), "clearing the backoff erased a pause");
+  s.block("folder", "userPaused", false);
+  s.throttleAccount("account", 120000, 15000);
+  require(!s.take(15000), "clearing the backoff bypassed the account throttle");
+  require(s.take(135000).has_value(), "pending work lost after the throttle");
+  Scheduler moved;
+  moved.add("folder", "account");
+  moved.enqueue("folder", Scheduler::Reason::Recovery, 0);
+  auto again = moved.take(0);
+  require(again && moved.fail(*again, "NETWORK_UNAVAILABLE", 60000),
+          "second failure fixture failed");
+  moved.clearRetry("folder");
+  require(moved.take(15000).has_value(),
+          "the moved account waited out the old address's backoff");
+}
 } // namespace
 
 /// main verifies the pure scheduling contract without wall-clock sleeps or
@@ -202,7 +231,9 @@ int main() {
     recovery();
     credentialRenewal();
     accountThrottle();
-    std::puts("PASS scheduling generations, blockers, fairness and debounce");
+    rebound();
+    std::puts("PASS scheduling generations, blockers, fairness, debounce and "
+              "retry after an address change");
     return 0;
   } catch (const std::exception &e) {
     std::fprintf(stderr, "%s\n", e.what());

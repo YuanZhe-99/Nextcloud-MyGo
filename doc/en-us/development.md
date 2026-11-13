@@ -190,6 +190,22 @@ fix the request disappeared without any record and the run stopped at its outcom
 requires both addresses to stay healthy: a reachable server that is slow to answer is not
 `NETWORK_UNAVAILABLE`. Before `metadataDeadline` it failed within 15 s.
 
+`-Scenario sleep-resume` simulates a sleep; the user decided this machine is not put to sleep for
+a test. Every tunnel runs in a child relay (`--sleep-relay=<pid>`, the same executable), because a
+suspended process cannot drop its own connections. The case holds a 6 MiB upload on the primary
+with the relay's stall hook, then the relay suspends the whole acceptance process (the daemon with
+it) with `NtSuspendProcess` for 35 s, past the 15-second freshness and the 30-second failure,
+success and drain windows. Meanwhile it resets every connection and refuses the primary from
+then on, leaving only the alternate: the machine woke on another network. A control-thread timer
+and an independent thread must both have stood still. After `NtResumeProcess` the daemon gets no
+hint, not even a power notification. It must fail the dead connection on its own, keep every
+local file and propose no deletion while the primary is unreachable, never call the folder up to
+date there, and go idle before the switch. The switch must be recorded with reason `unreachable`.
+The upload must complete once on the alternate (one `uploaded` entry, at most two bodies' worth
+of bytes for the interrupted and the completed attempt, no conflict copy) with matching hashes,
+the original native journal file, folder rows and credential reference. The relay resumes its
+parent on every path, and the wrapper's 120-second budget and Job Object end both otherwise.
+
 `-Scenario file-safety` runs fault-free cases on the real server: renames and directory moves in
 both directions with server file IDs kept, deletion review for one directory with twelve
 descendants (direction and count), a stale approval after a later change, a leased local root and

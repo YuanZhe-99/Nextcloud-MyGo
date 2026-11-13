@@ -9,6 +9,10 @@ on:
         description: Build, check and upload the per-architecture installers and license bundles.
         type: boolean
         default: false
+    secrets:
+      MYGO_UPDATER_PRIVATE_KEY:
+        description: Signs the update of each package (release.yml only); without it no update is made.
+        required: false
 
 permissions:
   contents: read
@@ -53,6 +57,18 @@ jobs:
           go version
           Write-Output "cgo: $(go env CGO_ENABLED)"
           "msvc=$msvc" >> $env:GITHUB_OUTPUT
+
+      # On-demand folders need the Cloud Files minifilter; SyncDOnDemandContracts skips its registration
+      # cases (and says why) where it does not answer. This records the runner's state for that line.
+      - name: Cloud Files diagnostics
+        continue-on-error: true
+        run: |
+          (Get-CimInstance Win32_OperatingSystem).Caption
+          sc.exe query cldflt
+          sc.exe qc cldflt
+          fltmc filters
+          fltmc instances -f cldflt
+          $global:LASTEXITCODE = 0
 
       - name: Go checks
         run: |
@@ -168,6 +184,10 @@ jobs:
 
       - name: Package
         if: inputs.package
+        env:
+          # Signs the update archive and update-windows-<goarch>.json of the package and gives its UI the
+          # update channel; unset (ci.yml, forks), the package offers and publishes no updates.
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
         run: |
           ./tools/package.ps1 -Arch ${{ matrix.arch }}
           $version = (Get-Content mygo.json -Raw | ConvertFrom-Json).version
@@ -177,6 +197,7 @@ jobs:
           New-Item -ItemType Directory -Force build/release | Out-Null
           Copy-Item -Recurse build/package/${{ matrix.arch }}/notices build/release/licenses-${{ matrix.arch }}
           Copy-Item "build/package/Nextcloud-MyGo-$version-$('${{ matrix.arch }}'.ToLower())-test-setup.exe" build/release/
+          if (Test-Path build/package/update-${{ matrix.arch }}) { Copy-Item -Recurse build/package/update-${{ matrix.arch }} build/release/update }
 
       - name: Upload package
         if: inputs.package

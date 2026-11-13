@@ -2938,11 +2938,11 @@ func (msgs Messages) UpdateAvailable(version string) string {
 	return Catalog.Format(msgs.locale, "UpdateAvailable", map[string]any{"version": version})
 }
 
-// UpdateAvailableHint says "Signed and checked. It installs once sync reaches a safe point."
+// UpdateAvailableHint says "Its signature is checked before it installs, once sync reaches a safe point."
 // in the language the app shows.
 func UpdateAvailableHint() string { return In(i18n.Locale()).UpdateAvailableHint() }
 
-// UpdateAvailableHint says "Signed and checked. It installs once sync reaches a safe point."
+// UpdateAvailableHint says "Its signature is checked before it installs, once sync reaches a safe point."
 // in the language of msgs.
 func (msgs Messages) UpdateAvailableHint() string {
 	return Catalog.Format(msgs.locale, "UpdateAvailableHint", nil)

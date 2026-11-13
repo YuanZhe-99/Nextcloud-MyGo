@@ -1,9 +1,11 @@
 # Packaging and installation
 
 Nextcloud-MyGo ships one per-user installer per architecture. Each carries the UI, the SyncD it was
-verified with and only the DLLs they load. Until a trusted signing chain exists every package is an
-unsigned **test build** with automatic updates off; the installer, the Apps entry and the shortcut
-say so.
+verified with and only the DLLs they load. Every package is a **test build** without an Authenticode
+signature: there is no Windows code-signing certificate, so SmartScreen warns on the first install, and
+the installer, the Apps entry and the shortcut say so. A package built with the update signing key also
+has a [signed update](#signed-updates), which installed copies take in the app, off until the user turns
+it on.
 
 ## Tooling
 
@@ -180,6 +182,38 @@ A new SyncD never shares a directory with another version's Qt DLLs, and the pre
 removed only after the new one is complete and current. The same rules make a same-version
 reinstall a full switch to a fresh directory.
 
+## Signed updates
+
+An update is the per-user installer of the new version, delivered through MyGo's update format and
+keys, so that the UI and SyncD still change together through the steps above (PLAN.md §16.2). MyGo's own
+`Update.Install` is not used: it replaces the files of the running app's directory, which here would put
+a new UI beside the old SyncD and its Qt DLLs.
+
+| Piece | Where | What |
+|---|---|---|
+| Key pair | `mygo keygen`; the public key in `mygo.json` `updates.publicKey`, the private key only in the GitHub secret `MYGO_UPDATER_PRIVATE_KEY` | Ed25519, base64, as MyGo stores them |
+| Archive | `Nextcloud-MyGo-<version>-<arch>-update.zip` | `update.json` (`product`, `version`, `arch`) and `setup.exe`, stored |
+| Manifest | `update-windows-<goarch>.json` (`arm64`, `amd64`) | MyGo's manifest: `version`, `notes`, `date`, the archive's `url` (relative to the manifest), `size`, and `signature`, Ed25519 over the archive's SHA-256 |
+| Feed | `https://github.com/<updates.github>/releases/latest/download/` | the latest release |
+
+`tools/package.ps1` makes them when `MYGO_UPDATER_PRIVATE_KEY` is set: it links `release.UpdateFeed`
+and `release.UpdateKey` (mygo.json's key) into the UI and, after the installer is checked, runs
+`pkg sign-update`, which refuses a private key that does not belong to that public key and writes both
+files to `build/package/update-<Arch>/`. `mygo build` never gets the key (its own archive would hold the
+UI alone; it warns that it is not signing an update). Without the key, as in every local build, the UI has
+no feed, offers no update and says so, and no update file is written. `-UpdatePublicKey`, with
+`-TestVersion` only, trusts another key, for tests with a throwaway `mygo keygen` pair.
+
+The installed interface (`internal/gui`, [Updates](gui.md#updates)) reads the manifest, and only for a
+newer version downloads the archive into `update\` in the install folder (the uninstall removes it; the
+next start clears it), checks its size and signature against its built-in key, and refuses it unless the
+signed `update.json` names Nextcloud-MyGo, the manifest's version, this architecture and a version newer
+than the running one: the manifest is not signed, so a changed one can neither offer an older signed
+package nor another architecture's. It then asks SyncD for the safe point and starts `setup.exe` without
+a console window (`release.StartSetup`, output in `update\setup.log`); setup closes the interface and
+runs steps 1 to 6, so every refusal and failure above keeps the installed version. Only HTTPS is fetched,
+or HTTP to a loopback address for tests; a redirect may not leave HTTPS.
+
 ## Uninstall
 
 `uninstall.exe -uninstall` (the Apps entry's command) closes the interface, stops SyncD as above,
@@ -231,12 +265,24 @@ ARM64 (Windows 11 on ARM64 hardware), 2026-11-12:
   the upgrade was kept; uninstall then left nothing. Before the interface was closed first, a reinstall
   stopped after 2 minutes with the no-answer message, removed its new directory and kept the
   installed version: SyncD's pipe serves one client at a time.
+- the signed update path (`tools/package-smoke.ps1 -UpdateDir`, 41 s in all): a throwaway `mygo keygen`
+  pair, the 0.1.0 package built without a key (no update channel) and a `-TestVersion 0.1.1` package
+  with its signed update (21 s). `TestInstalledUpdate` served the update directory over loopback HTTP,
+  read the manifest, downloaded the 37 MB archive, verified its signature and `update.json`, and started
+  its installer with `release.StartSetup` (5.0 s): setup closed the running 0.1.0 interface, printed
+  `SyncD is ready`, switched to 0.1.1 and removed 0.1.0; SyncD 0.1.1 reported previous version 0.1.0,
+  schema 11 to 11, self-check `passed`, every folder still paused; both uninstalls left nothing and the
+  throwaway keys were deleted. Unit tests (`internal/release`) refuse a wrong key, a changed archive, a
+  changed manifest signature, version or size, an x64 update served as ARM64 and a version not newer.
 
 Not verified: installing the x64 package (needs x64 hardware); which TLS backend SyncD loads at its
 first network request (no server in this run); `-remove-user-data` with a signed-in account; a
 failed install on real hardware (covered by unit tests only); the deletion-waiting and still-busy
 refusals of the safe point on a real install (unit tests only, `TestPrepare`); an upgrade with a
-signed-in account or a Control schema change.
+signed-in account or a Control schema change; the installed interface itself starting the update (the
+test plays its part, so the interface's `PrepareUpdate` and its own handover are unit-level only); a
+release signed with the project key and read from GitHub; an interrupted download or a failing setup in
+the in-app path on a real install.
 
 ## What SyncD needs to provide
 

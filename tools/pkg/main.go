@@ -6,14 +6,17 @@
 //	    -plugin tls/qopensslbackend.dll -notices <tools/licenses.ps1 output> -file Nextcloud-MyGo.exe=<path> ...
 //	go run ./tools/pkg check -arch ARM64 <dir or file>...
 //	go run ./tools/pkg report -profile <profile> -syncd <running SyncD> [-pause-all]
+//	go run ./tools/pkg sign-update -arch ARM64 -version <X.Y.Z> -setup <installer> -key <public key> -out <dir>
 //
-// stage and check need no server and no Windows APIs, so CI runs them
-// anywhere; report reads a running SyncD for tools/package-smoke.ps1.
+// stage, check and sign-update need no server and no Windows APIs, so CI runs
+// them anywhere; report reads a running SyncD for tools/package-smoke.ps1.
 package main
 
 import (
 	"archive/zip"
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -46,6 +49,8 @@ func main() {
 		err = checkCommand(os.Args[2:])
 	case "report":
 		err = reportCommand(os.Args[2:])
+	case "sign-update":
+		err = signUpdateCommand(os.Args[2:])
 	default:
 		err = fmt.Errorf("unknown command %q", os.Args[1])
 	}
@@ -53,6 +58,44 @@ func main() {
 		fmt.Fprintln(os.Stderr, "pkg:", err)
 		os.Exit(1)
 	}
+}
+
+// signUpdateCommand writes the signed update of an installer
+// (release.SignUpdate) with the private key of MYGO_UPDATER_PRIVATE_KEY, the
+// variable `mygo build` signs updates with.
+// Inputs: -key is the public key the package's interface trusts (mygo.json's
+// updates.publicKey); the private key must belong to it.
+// Notes: the private key is read from the environment only, and never
+// printed, written or passed on.
+func signUpdateCommand(args []string) error {
+	fs := flag.NewFlagSet("sign-update", flag.ContinueOnError)
+	arch := fs.String("arch", "", "ARM64 or x64")
+	ver := fs.String("version", "", "the package version")
+	setup := fs.String("setup", "", "the installer tools/package.ps1 built")
+	pub := fs.String("key", "", "the public key the interface trusts")
+	out := fs.String("out", "", "the directory for the archive and manifest")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := archFlag(*arch); err != nil {
+		return err
+	}
+	if *setup == "" || *out == "" {
+		return errors.New("-setup and -out are required")
+	}
+	b, err := base64.StdEncoding.DecodeString(strings.TrimSpace(os.Getenv("MYGO_UPDATER_PRIVATE_KEY")))
+	if err != nil || len(b) != ed25519.PrivateKeySize {
+		return errors.New("MYGO_UPDATER_PRIVATE_KEY is not set to an update private key (mygo keygen)")
+	}
+	key := ed25519.PrivateKey(b)
+	if base64.StdEncoding.EncodeToString(key.Public().(ed25519.PublicKey)) != strings.TrimSpace(*pub) {
+		return errors.New("MYGO_UPDATER_PRIVATE_KEY does not match the public key the interface trusts")
+	}
+	if err := release.SignUpdate(key, *setup, *ver, *arch, *out); err != nil {
+		return err
+	}
+	fmt.Printf("signed update %s and %s in %s\n", release.UpdateArchiveName(*ver, *arch), release.UpdateManifestName(*arch), *out)
+	return nil
 }
 
 // reportCommand prints, as one JSON line, what a running SyncD of a profile

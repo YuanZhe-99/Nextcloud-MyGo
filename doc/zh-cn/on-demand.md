@@ -28,7 +28,11 @@ Shell 扩展（缩略图、锁定与共享叠加图标）不构建。资源管�
 `Nextcloud-MyGo`，版本为产品版本。官方客户端注册为 `Nextcloud!…`，两者从不共用同一注册项。
 
 只有既不是同步根、也不位于任何同步根之内的目录才能成为按需同步根。Cloud Files 报告属于其他提供程序、其他目录
-或位于某个同步根之内的路径一律为 `FOLDER_OWNED`。只有按需目录的根租约才接受根目录自身的云重解析标记和目录树中的
+或位于某个同步根之内的路径一律为 `FOLDER_OWNED`。按需模式还需要 Cloud Files 微筛选器（服务 `CldFlt`）
+正在运行；Windows Server（包括 GitHub 的运行器镜像）可能不运行它。没有它时，带 `onDemand` 的 `folders.add` 返回
+`UNSUPPORTED_CAPABILITY`，已有的按需目录启动失败并给出 `UNSUPPORTED_FOLDER_MODE`。因 Cloud Files 无法作答而失败的
+查询（提供程序未运行、不支持、无效函数，或筛选器停止时的任何失败）绝不被读作 `FOLDER_OWNED`；其他查询失败仍按已被占用
+拒绝。完整文件目录不询问 Cloud Files，两种情况下都能使用。只有按需目录的根租约才接受根目录自身的云重解析标记和目录树中的
 Cloud Files 占位文件；其他任何重解析点，以及完整文件目录中的任何占位文件，仍会阻止该目录。目录树检查从不列举尚未
 填充的目录，否则会请求 SyncD 自己的提供程序去填充它。
 
@@ -57,7 +61,9 @@ origin。账号为切换或重新认证进入静止时，该账号的所有按�
 ## 验证
 
 `syncd_ondemand_tests`（CTest `SyncDOnDemandContracts`）在临时 NTFS 目录上针对真实的 Cloud Files API 运行，
-不连接服务器：注册标识、拒绝外部和嵌套同步根、切换所等待的请求闸门，以及完整注销。`tools/test-ondemand.ps1`
+不连接服务器：注册标识、拒绝外部和嵌套同步根、切换所等待的请求闸门，以及完整注销。它先在每台机器上对模拟的
+Cloud Files 结果分类（`OnDemandRoot::ownershipReason`）；Cloud Files 无法为其临时目录作答时，它打印带查询 HRESULT
+与筛选器状态的 `SKIP` 并以 77 退出，CTest 将其报告为已跳过，绝不报告为通过。`tools/test-ondemand.ps1`
 针对一次性本地服务器运行 `syncd_ondemand_acceptance`：占位文件、打开时按需下载、目录填充、释放空间、始终保留在
 此设备上、等待正在运行的按需下载的切换、关闭期间的拒绝与下一个 epoch 的服务、按需下载期间终止进程后重启，以及注销。
 `tools/test-cfapi-upstream.ps1` 运行上游的 `SyncCfApiTest`。结果见[平台说明](platform-notes.md)。

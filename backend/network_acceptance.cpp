@@ -1,4 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
 #include "network_acceptance.h"
 
 #include "control.h"
@@ -15,14 +23,20 @@
 #include <QJsonDocument>
 #include <QMutex>
 #include <QNetworkProxyFactory>
+#include <QProcess>
 #include <QRegularExpression>
 #include <QSqlQuery>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QThread>
 #include <QUuid>
+#include <atomic>
+#include <chrono>
 #include <cstdio>
+#include <iostream>
 #include <stdexcept>
+#include <string>
+#include <thread>
 
 /// NetworkTestAccess observes the real coordinator while keeping fault controls
 /// out of production IPC.
@@ -356,7 +370,114 @@ void hold(int milliseconds) {
   QTimer::singleShot(milliseconds, &loop, &QEventLoop::quit);
   loop.exec();
 }
+/// relayCommand sends one line to the out-of-process relay and returns its
+/// one-line answer, driving this process's event loop until it arrives.
+QByteArray relayCommand(QProcess &relay, const QByteArray &line,
+                        int milliseconds) {
+  relay.write(line + '\n');
+  QEventLoop loop;
+  QTimer deadline;
+  deadline.setSingleShot(true);
+  QObject::connect(&relay, &QProcess::readyReadStandardOutput, &loop, [&] {
+    if (relay.canReadLine())
+      loop.quit();
+  });
+  QObject::connect(&relay, &QProcess::finished, &loop, &QEventLoop::quit);
+  QObject::connect(&deadline, &QTimer::timeout, &loop, &QEventLoop::quit);
+  deadline.start(milliseconds);
+  if (!relay.canReadLine())
+    loop.exec();
+  require(relay.canReadLine(), "owned sleep relay did not answer");
+  return relay.readLine().trimmed();
+}
+/// Suspension holds one process suspended and resumes it when it ends, so no
+/// path out of the relay leaves its parent suspended.
+struct Suspension {
+  using Call = LONG(NTAPI *)(HANDLE);
+  HANDLE process = nullptr;
+  Call resume = nullptr;
+  /// ~Suspension resumes the process and releases its handle.
+  ~Suspension() {
+    if (process) {
+      resume(process);
+      CloseHandle(process);
+    }
+  }
+};
 } // namespace
+
+int sleepRelay(quint32 parent) {
+  const auto base = canonicalServer(qEnvironmentVariable("NEXTCLOUD_TEST_URL")),
+             alternate = canonicalServer(
+                 qEnvironmentVariable("NEXTCLOUD_TEST_ALTERNATE_URL"));
+  if (qEnvironmentVariableIsSet("NEXTCLOUD_TEST_CLEANUP_URL"))
+    NetworkTunnel::setTarget(
+        QUrl(qEnvironmentVariable("NEXTCLOUD_TEST_CLEANUP_URL")).host());
+  bool failPrimary = false, failAlternate = false;
+  QTcpServer listener;
+  require(listener.listen(QHostAddress::LocalHost, 0),
+          "owned sleep relay unavailable");
+  QObject::connect(&listener, &QTcpServer::newConnection, &listener, [&] {
+    while (auto *socket = listener.nextPendingConnection())
+      new NetworkTunnel(socket, base, alternate, [&](bool primary) {
+        return primary ? failPrimary : failAlternate;
+      });
+  });
+  const auto ntdll = GetModuleHandleW(L"ntdll.dll");
+  const auto suspend = reinterpret_cast<Suspension::Call>(
+      GetProcAddress(ntdll, "NtSuspendProcess"));
+  const auto resume = reinterpret_cast<Suspension::Call>(
+      GetProcAddress(ntdll, "NtResumeProcess"));
+  require(suspend && resume, "process suspension unavailable");
+  std::unique_ptr<Suspension> suspended;
+  QElapsedTimer clock;
+  std::printf("PORT %u\n", unsigned(listener.serverPort()));
+  std::fflush(stdout);
+  const auto answer = [](const QByteArray &text) {
+    std::printf("%s\n", text.constData());
+    std::fflush(stdout);
+  };
+  const auto handle = [&](const QByteArray &line) {
+    const auto words = line.trimmed().split(' ');
+    const auto value = words.value(1).toLongLong();
+    if (words.size() == 2 && words[0] == "stall" && value >= 0) {
+      NetworkTunnel::setStallAfter(value);
+      answer("ok");
+    } else if (words.size() == 2 && words[0] == "sleep" && value > 0 &&
+               value <= 60000 && !suspended) {
+      const auto process = OpenProcess(PROCESS_SUSPEND_RESUME, FALSE, parent);
+      if (!process || suspend(process) < 0) {
+        if (process)
+          CloseHandle(process);
+        answer("failed");
+        return;
+      }
+      suspended.reset(new Suspension{process, resume});
+      clock.start();
+      // Woken on another network: every connection is gone and only the
+      // alternate answers from now on.
+      failPrimary = failAlternate = true;
+      NetworkTunnel::setStallAfter(0);
+      QTimer::singleShot(500, &listener, [&] { failAlternate = false; });
+      QTimer::singleShot(int(value), Qt::PreciseTimer, &listener, [&] {
+        suspended.reset();
+        answer("awake " + QByteArray::number(clock.elapsed()));
+      });
+    } else
+      answer("refused");
+  };
+  // Standard input is read on its own thread; its end ends the relay.
+  std::jthread reader([&] {
+    std::string line;
+    while (std::getline(std::cin, line))
+      QMetaObject::invokeMethod(
+          &listener, [&, text = QByteArray::fromStdString(line)] { handle(text); },
+          Qt::QueuedConnection);
+    QMetaObject::invokeMethod(QCoreApplication::instance(),
+                              &QCoreApplication::quit, Qt::QueuedConnection);
+  });
+  return QCoreApplication::exec();
+}
 
 void networkAcceptance(const QString &scenario) {
 #ifndef SYNCD_WITH_ENGINE
@@ -367,8 +488,9 @@ void networkAcceptance(const QString &scenario) {
              wrongInstance = scenario == "wrong-instance",
              killing = scenario.startsWith("switch-kill="),
              recovering = scenario.startsWith("switch-recover="),
+             sleeping = scenario == "sleep-resume",
              activeTransfers =
-                 killing || recovering ||
+                 killing || recovering || sleeping ||
                  scenario.section('=', 0, 0) == "network-active" ||
                  scenario == "network-chunked" ||
                  scenario.section('=', 0, 0) == "network-uncertain" ||
@@ -443,6 +565,26 @@ void networkAcceptance(const QString &scenario) {
           },
           {}, true);
   });
+  // A suspended process cannot drop its own connections: for the simulated
+  // sleep every tunnel runs in a child relay that keeps running meanwhile.
+  QProcess relay;
+  if (sleeping) {
+    relay.setProcessChannelMode(QProcess::ForwardedErrorChannel);
+    relay.start(QCoreApplication::applicationFilePath(),
+                {"--sleep-relay=" +
+                 QString::number(QCoreApplication::applicationPid())});
+    require(relay.waitForStarted(10000), "owned sleep relay did not start");
+    QElapsedTimer started;
+    started.start();
+    while (!relay.canReadLine() && started.elapsed() < 10000)
+      relay.waitForReadyRead(1000);
+    const auto line = relay.readLine().trimmed();
+    bool parsed = false;
+    const auto port = line.mid(5).toUShort(&parsed);
+    require(line.startsWith("PORT ") && parsed && port,
+            "owned sleep relay port missing");
+    faults->port = port;
+  }
   ProxyScope proxy;
   QNetworkProxyFactory::setApplicationProxyFactory(new FaultProxy(faults));
   Control c(QDir(root).filePath("control.sqlite"));
@@ -660,6 +802,53 @@ void networkAcceptance(const QString &scenario) {
         [&] { return faults->withheld.load(); },
         [&](const std::function<void(const QString &)> &observer) {
           faults->targetRequest = observer;
+        },
+        [&](qint64 bytes) {
+          require(relayCommand(relay, "stall " + QByteArray::number(bytes),
+                               10000) == "ok",
+                  "owned sleep relay refused the stall");
+        },
+        [&](qint64 milliseconds) {
+          // Both a control-thread timer and an independent thread must stand
+          // still: the whole process was suspended, not one thread.
+          std::atomic<qint64> threadPause{0};
+          std::atomic<int> beats{0};
+          std::jthread beating([&](std::stop_token stop) {
+            auto last = std::chrono::steady_clock::now();
+            while (!stop.stop_requested()) {
+              std::this_thread::sleep_for(std::chrono::milliseconds(20));
+              const auto now = std::chrono::steady_clock::now();
+              threadPause = std::max<qint64>(
+                  threadPause,
+                  std::chrono::duration_cast<std::chrono::milliseconds>(now -
+                                                                        last)
+                      .count());
+              last = now;
+              ++beats;
+            }
+          });
+          // A thread not yet scheduled when the process is suspended would
+          // only start after it and see no pause.
+          for (int i = 0; i < 200 && beats < 2; ++i)
+            hold(10);
+          require(beats >= 2, "owned heartbeat thread did not start");
+          QElapsedTimer beat;
+          beat.start();
+          qint64 timerPause = 0;
+          QTimer ticks;
+          ticks.setInterval(20);
+          QObject::connect(&ticks, &QTimer::timeout, &ticks, [&] {
+            timerPause = std::max(timerPause, beat.restart());
+          });
+          ticks.start();
+          const auto awake = relayCommand(
+              relay, "sleep " + QByteArray::number(milliseconds),
+              int(milliseconds) + 20000);
+          hold(100); // the overdue tick
+          require(awake.startsWith("awake "),
+                  "owned sleep relay did not suspend this process");
+          return std::pair(awake.mid(6).toLongLong(),
+                           std::min(timerPause, threadPause.load()));
         }};
     try {
       if (killing)

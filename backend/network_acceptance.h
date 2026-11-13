@@ -28,6 +28,15 @@ struct TransferFaults {
   /// alternate origin, with its path, before anything is sent.
   std::function<void(const std::function<void(const QString &)> &)>
       onTargetRequest;
+  /// stall holds primary transfers past this many bytes in the out-of-process
+  /// relay of sleep-resume (its NetworkTunnel::setStallAfter); 0 clears it.
+  std::function<void(qint64)> stall;
+  /// sleep has the out-of-process relay suspend this whole process for about
+  /// the given milliseconds while it drops every connection and refuses the
+  /// primary from then on. Returns: how long the relay held the process
+  /// suspended, and the longest pause a control-thread timer and an
+  /// independent thread of this process both saw.
+  std::function<std::pair<qint64, qint64>(qint64)> sleep;
 };
 
 /// SwitchFacts are the durable identities a switch must never change
@@ -60,6 +69,14 @@ void largeTransferAcceptance();
 /// fileSafetyTransferAcceptance selects the fault-free rename, move, deletion
 /// review and missing-remote-root cases.
 void fileSafetyTransferAcceptance();
+/// sleepResumeAcceptance selects the simulated sleep: the whole process is
+/// suspended during a held upload and wakes where only the alternate answers.
+void sleepResumeAcceptance();
+/// sleepRelay runs the out-of-process relay of sleep-resume for the parent
+/// process with this ID: it prints its loopback port, then answers "stall N"
+/// and "sleep N" lines from standard input until it ends. Returns: the exit
+/// code. Side effects: suspends and always resumes that parent process.
+int sleepRelay(quint32 parent);
 /// networkTransferAcceptance breaks real transfers through the owned relay and
 /// requires automatic mapped-root recovery.
 void networkTransferAcceptance(Control &c, const QString &root,

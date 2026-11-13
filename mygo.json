@@ -9,5 +9,10 @@
     "dir": "locales",
     "source": "en"
   },
+  "updates": {
+    "publicKey": "RU+Zv+UJV6hEOxMoI7vjObcHs3KGZH8CZ9+OG5H92pA=",
+    "github": "YuanZhe-99/Nextcloud-MyGo",
+    "deltas": 0
+  },
   "description": "Nextcloud file sync with network-aware endpoint switching"
 }

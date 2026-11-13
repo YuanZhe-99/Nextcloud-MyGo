@@ -377,7 +377,7 @@ func (a *App) aboutPage(c *ui.Context) {
 	ui.Column(c).Gap(8).MaxWidth(720).FillWidth().Children(func() {
 		muted(c, L.SectionUpdates(), 13).FontWeight(600)
 		switch {
-		case !mygo.Updater.Enabled():
+		case !updatesEnabled():
 			ui.Row(c).FillWidth().Gap(10).Padding(12, 16).Radius(radiusCard).Background(p.subtle).Children(func() {
 				ui.Icon(c, icInfo).FontSize(16).TextColor(p.muted)
 				muted(c, L.UpdatesOff(), 13).Wrap()
@@ -413,11 +413,11 @@ func (a *App) aboutPage(c *ui.Context) {
 				hint = L.UpToDateApp() + " " + hint
 			}
 			r.row(c, "upd-daily", icRefresh, L.CheckDaily(), hint, func() {
-				if button(c, "upd-check", L.ActionCheckNow(), nil).Disabled(!mygo.Updater.Enabled() || u.checking).Clicked() {
+				if button(c, "upd-check", L.ActionCheckNow(), nil).Disabled(!updatesEnabled() || u.checking).Clicked() {
 					a.checkUpdate()
 				}
 				on := a.prefs.CheckUpdates
-				if ui.Switch(c.Key("upd-daily-sw"), &on).Label(L.CheckDaily()).Disabled(!mygo.Updater.Enabled()).Changed() {
+				if ui.Switch(c.Key("upd-daily-sw"), &on).Label(L.CheckDaily()).Disabled(!updatesEnabled()).Changed() {
 					pr := a.prefs
 					pr.CheckUpdates = on
 					a.setPrefs(pr)
@@ -432,7 +432,7 @@ func (a *App) aboutPage(c *ui.Context) {
 						cur = opts[i]
 					}
 				}
-				if ui.Select(c.Key("upd-auto-sel"), &cur, opts).Label(L.AutoInstall()).MinWidth(210).Disabled(!a.prefs.CheckUpdates || !mygo.Updater.Enabled()).Changed() {
+				if ui.Select(c.Key("upd-auto-sel"), &cur, opts).Label(L.AutoInstall()).MinWidth(210).Disabled(!a.prefs.CheckUpdates || !updatesEnabled()).Changed() {
 					for i, o := range opts {
 						if o == cur {
 							pr := a.prefs

@@ -1,6 +1,8 @@
-# Publishes a v* tag as a GitHub pre-release: both installers built and tested natively, SHA256SUMS and the
-# license bundle. Every package is an unsigned test build with automatic updates off until a trusted
-# signing chain exists (PLAN.md §16.2); nothing here signs anything. See doc/en-us/ci.md.
+# Publishes a v* tag as a GitHub release: both installers built and tested natively, SHA256SUMS and the
+# license bundle. With the MYGO_UPDATER_PRIVATE_KEY secret each package also gets its signed update
+# (archive and update-windows-<goarch>.json), and the release becomes the latest one, which installed apps
+# read; without it there are no update files and the release stays a pre-release. Nothing is
+# Authenticode-signed: there is no Windows code-signing certificate. See doc/en-us/ci.md.
 name: Release
 
 on:
@@ -37,6 +39,8 @@ jobs:
     uses: ./.github/workflows/build.yml
     with:
       package: true
+    secrets:
+      MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
 
   publish:
     name: Publish pre-release
@@ -59,6 +63,18 @@ jobs:
           cp artifacts/package-*/Nextcloud-MyGo-*-test-setup.exe release/
           for arch in ARM64 x64; do cp -r "artifacts/package-$arch/licenses-$arch" "licenses/$arch"; done
           (cd licenses && zip -qr "../release/Nextcloud-MyGo-$version-licenses.zip" .)
+          # The signed updates: both architectures or neither.
+          updates=$(find artifacts -mindepth 2 -maxdepth 2 -type d -name update | wc -l)
+          case "$updates" in
+            0) echo "No MYGO_UPDATER_PRIVATE_KEY: no updates published." ;;
+            2) cp artifacts/package-*/update/* release/
+               for f in update-windows-arm64.json update-windows-amd64.json \
+                        "Nextcloud-MyGo-$version-arm64-update.zip" "Nextcloud-MyGo-$version-x64-update.zip"; do
+                 [ -f "release/$f" ] || { echo "::error::missing $f"; exit 1; }
+               done ;;
+            *) echo "::error::only one architecture has a signed update"; exit 1 ;;
+          esac
+          echo "UPDATES=$updates" >> "$GITHUB_ENV"
           (cd release && sha256sum -- * > SHA256SUMS && cat SHA256SUMS)
           [ "$(ls release/*-test-setup.exe | wc -l)" -eq 2 ] || { echo "::error::expected two installers"; exit 1; }
 
@@ -70,11 +86,24 @@ jobs:
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
+          if [ "$UPDATES" = 2 ]; then
+            updates="Installed copies update in the app (Settings, About & updates; off until you turn it on):
+          it reads \`update-windows-<arch>.json\` of the latest release and installs only an update archive
+          signed with the project's update key, through the same per-user installer."
+            flags=(--latest)
+            title="Nextcloud MyGo $version (test build, installers not code-signed)"
+          else
+            updates="This release carries no signed updates, so installed copies cannot update in the app."
+            flags=(--prerelease)
+            title="Nextcloud MyGo $version (unsigned test build)"
+          fi
           cat > notes.md <<EOF
-          **Unsigned test build.** Nextcloud MyGo $version for Windows 11, one per-user installer per
+          **Test build.** Nextcloud MyGo $version for Windows 11, one per-user installer per
           architecture: \`arm64\` for Windows on Arm (native ARM64 only), \`x64\` for x64 PCs. The
-          installers are not code-signed and automatic updates are off; Windows SmartScreen may warn.
-          Check each download against \`SHA256SUMS\`.
+          installers are not Authenticode-signed (there is no Windows code-signing certificate), so
+          Windows SmartScreen warns on the first install. Check each download against \`SHA256SUMS\`.
+
+          $updates
 
           Both packages were built and passed the fast test tier natively on GitHub's Windows x64 and
           ARM64 runners, and every PE file in them passed the architecture check. The real-server test
@@ -85,5 +114,5 @@ jobs:
           and the Go modules, and \`SOURCE.txt\` names the corresponding source: this tag of the
           repository, its \`third_party/nextcloud\` submodule and the patches in \`patches/nextcloud/\`.
           EOF
-          gh release create "$GITHUB_REF_NAME" release/* --verify-tag --prerelease \
-            --title "Nextcloud MyGo $version (unsigned test build)" --notes-file notes.md
+          gh release create "$GITHUB_REF_NAME" release/* --verify-tag "${flags[@]}" \
+            --title "$title" --notes-file notes.md

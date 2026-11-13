@@ -167,6 +167,8 @@ if(BUILD_TESTING)
     target_compile_definitions(syncd_ondemand_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
     add_dependencies(syncd_ondemand_tests syncd_cfapi_plugin)
     add_test(NAME SyncDOnDemandContracts COMMAND syncd_ondemand_tests)
+    # Exit 77: Cloud Files cannot answer on this machine; reported as skipped, never passed.
+    set_tests_properties(SyncDOnDemandContracts PROPERTIES SKIP_RETURN_CODE 77)
     set_tests_properties(SyncDOnDemandContracts PROPERTIES TIMEOUT 120)
   endif()
 endif()

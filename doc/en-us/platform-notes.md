@@ -534,6 +534,43 @@ it is recorded as unresolved, not passed. The server tier on ARM64 stopped at `c
 which exceeded its 150 s budget by 2.1 s (148.3 s before) under the same load; every case run before
 it passed. The B14 steps were not run again through the installed interface.
 
+### Simulated sleep and resume (R15)
+
+Same ARM64 host, 2026-11-12, Nextcloud 35.0.2 in a disposable container. The user ruled out a real
+sleep of this machine; `sleep-resume` ([development](development.md)) replaces it and is recorded
+as a simulation. Through its wrapper it passed in 86.9 s alone and 87.7 s in the server tier: the
+acceptance process was suspended for 35.0 s, and both a control-thread timer and an independent
+thread stood still for 35.0 s. After waking, the held upload failed at once (`NETWORK_UNAVAILABLE`,
+one transport failure), no local file went and no deletion was proposed. The account switched to
+the alternate 16.6 s after waking with reason `unreachable`, the upload completed once 21.1 s
+after waking, and hashes, the native journal file, folder rows and the credential reference were
+unchanged.
+
+The first runs found a SyncD bug: the switch committed, but reconciliation on the alternate waited
+another 47 s. That was the 60-second retry delay of a cycle start refused on the unreachable
+primary; a failure backoff can reach 300 s the same way. Rebinding now drops the folders' retry
+delay and failure count ([engine](engine.md); `rebound` in `syncd_scheduler_tests`). Completion
+fell from 68.6 s to 21.1 s after waking, and the server-tier failover cases became faster too
+(active upload 113.2 s before, 59.6 s now). The power-notification handler already existed; it now
+has an injected-clock test (`resume` in `syncd_endpoint_policy_tests`).
+
+Runs with these changes, built together with other sessions' uncommitted work in the same tree:
+fast tier ARM64 passed in 37.2 s and emulated x64 in 39.2 s. The server tier on ARM64 passed on
+its third run in 457.5 s of 600 s, all 21 cases (server start 61.5 s; `kill at reconciling`
+139.1 s). The first run stopped at `kill at reconciling` ("restart recovery transferred reconciled
+files again") under load from another session's build. That stage then passed alone in 132.2 s;
+the cause was not established. The rebind change is a no-op on that path unless a cycle failed
+before the recovery rebind. The second run failed 10 s after server start, in two lanes at once,
+when the alternate's first public probe failed before any changed code ran.
+
+What a real sleep adds that this simulation cannot show: the power transition itself (S3,
+hibernate, Modern Standby) and `PBT_APMSUSPEND` / `PBT_APMRESUMEAUTOMATIC` reaching the running
+daemon (the simulation delivers none; `nativeResume` posts one to the monitor's own window);
+whether `QElapsedTimer` (QPC) counts the sleep on this hardware; adapters going down and up with
+address, route and DNS changes; connections that die without a reset and wait for upstream's
+transfer timeout; sleeps of hours, with server sessions and locks expiring; volumes or drive
+letters changing while asleep; and x64.
+
 ## Known limitations
 
 Upstream CTest on native Windows ARM64 passed SyncJournalDBTest, ConcatUrlTest,

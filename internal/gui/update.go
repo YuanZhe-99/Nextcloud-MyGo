@@ -3,17 +3,25 @@ package gui
 import (
 	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/egoist/mygo"
 
+	"github.com/YuanZhe-99/Nextcloud-MyGo/internal/release"
 	"github.com/YuanZhe-99/Nextcloud-MyGo/internal/syncd"
+	"github.com/YuanZhe-99/Nextcloud-MyGo/internal/version"
 	L "github.com/YuanZhe-99/Nextcloud-MyGo/locales"
 )
 
 // updateState is the app's own update (PLAN.md §16.2, §17.1).
 type updateState struct {
-	available  *mygo.Update
+	available  *release.Update
 	checking   bool
 	installing bool
 	// failedFor is the version an automatic install failed for in this
@@ -42,13 +50,53 @@ func waitWords(deletion bool) string {
 	return L.UpdateWaits()
 }
 
+// installRoot returns the install folder the running interface was
+// installed in (%LOCALAPPDATA%\Programs\Nextcloud-MyGo, the parent of
+// versions\<version>), or "" when it does not run from an install.
+var installRoot = sync.OnceValue(func() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	versions := filepath.Dir(filepath.Dir(exe))
+	root := filepath.Dir(versions)
+	if !strings.EqualFold(filepath.Base(versions), "versions") {
+		return ""
+	}
+	if _, err := os.Stat(filepath.Join(root, "install.json")); err != nil {
+		return ""
+	}
+	return root
+})
+
+// updatesEnabled reports whether this build offers updates: a package built
+// with the update signing key (release.UpdateFeed and UpdateKey), running
+// from its install.
+var updatesEnabled = sync.OnceValue(func() bool {
+	return release.UpdateFeed != "" && release.UpdateKey != "" && installRoot() != ""
+})
+
+// packageArch is the package architecture of this build.
+func packageArch() string {
+	if runtime.GOARCH == "arm64" {
+		return "ARM64"
+	}
+	return "x64"
+}
+
+// stagingDir is where updates are downloaded: next to the versions, inside
+// the install folder, so that the uninstall removes it with the rest.
+func stagingDir(root string) string { return filepath.Join(root, "update") }
+
 // updateLoop checks once a day while Check for updates is on, and
 // installs a found update when Install automatically says so. It runs
 // only in builds that can update themselves (a signed release).
+// Side effects: removes what an earlier update left in the staging folder.
 func (a *App) updateLoop() {
-	if !mygo.Updater.Enabled() {
+	if !updatesEnabled() {
 		return
 	}
+	os.RemoveAll(stagingDir(installRoot()))
 	t := time.NewTicker(5 * time.Minute)
 	defer t.Stop()
 	for {
@@ -66,16 +114,16 @@ func (a *App) updateLoop() {
 	}
 }
 
-// checkUpdate reads the signed update of the latest release.
+// checkUpdate reads the update manifest of the latest release.
 func (a *App) checkUpdate() {
-	if a.upd.checking {
+	if a.upd.checking || !updatesEnabled() {
 		return
 	}
 	a.upd.checking = true
 	a.async(func() {
 		ctx, cancel := context.WithTimeout(a.ctx, time.Minute)
 		defer cancel()
-		u, err := mygo.Updater.Check(ctx)
+		u, err := release.CheckUpdate(ctx, release.HTTPGet, release.UpdateFeed, packageArch(), version.Version)
 		a.later(func() {
 			a.upd.checking = false
 			if err != nil {
@@ -113,19 +161,38 @@ func (a *App) autoInstall() {
 	a.installUpdate()
 }
 
-// installUpdate brings SyncD to a safe point first, then installs and
-// relaunches; SyncD refusing (a deletion waiting for the user, or files
-// moving, a switch going on) postpones it and says which (PLAN.md §16.2).
+// installUpdate downloads the update and checks its signature, brings
+// SyncD to a safe point, then hands over to the update's installer, which
+// closes this interface, prepares and stops SyncD, switches to a new
+// version directory and starts the new version (PLAN.md §16.2). SyncD
+// refusing (a deletion waiting for the user, or files moving, a switch
+// going on) postpones it and says which. Any failure keeps the installed
+// version: nothing of it is touched before setup has the new one complete.
 func (a *App) installUpdate() {
 	u := a.upd.available
-	if u == nil || a.upd.installing {
+	root := installRoot()
+	if u == nil || a.upd.installing || root == "" {
 		return
 	}
 	a.upd.installing = true
 	a.async(func() {
-		err := a.client.PrepareUpdate(u.Version)
+		dir := stagingDir(root)
+		os.RemoveAll(dir)
+		ctx, cancel := context.WithTimeout(a.ctx, 30*time.Minute)
+		setup, err := u.Download(ctx, release.HTTPGet, release.UpdateKey, packageArch(), version.Version, dir)
+		cancel()
 		if err == nil {
-			err = u.Install(a.ctx, nil)
+			err = a.client.PrepareUpdate(u.Version)
+		}
+		if err == nil {
+			var c *exec.Cmd
+			if c, err = release.StartSetup(setup, filepath.Join(dir, "setup.log")); err == nil {
+				// Setup closes this interface on its way; it returns while
+				// the interface still runs only when it refused early.
+				if err = c.Wait(); err == nil {
+					err = errSetupDone
+				}
+			}
 		}
 		a.later(func() {
 			a.upd.installing = false
@@ -135,13 +202,17 @@ func (a *App) installUpdate() {
 				// Not at a safe point: postponed, tried again later.
 				a.setToast(waitWords(a.upd.deletion))
 				return
+			case errors.Is(err, errSetupDone):
+				// Installed without closing this interface; the new one runs.
+				a.quitting = true
+				mygo.App.Quit()
 			case err != nil:
 				a.upd.failedFor = u.Version
 				a.setToast(L.UpdateFailed())
-				return
 			}
-			a.quitting = true
-			mygo.App.Relaunch()
 		})
 	})
 }
+
+// errSetupDone: setup finished while this interface still ran.
+var errSetupDone = errors.New("setup finished")

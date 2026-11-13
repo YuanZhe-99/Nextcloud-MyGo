@@ -90,13 +90,16 @@ type Prefs struct {
 	NotifyConflicts bool `json:"notifyConflicts"`
 	NotifyUpdates   bool `json:"notifyUpdates"`
 
-	CheckUpdates bool      `json:"checkUpdates"`
+	// CheckUpdates is off until the user turns it on. Its key is not the
+	// "checkUpdates" that builds without an update channel saved switched
+	// on by default, so that value never turns checks on.
+	CheckUpdates bool      `json:"updateChecks"`
 	AutoInstall  string    `json:"autoInstall"` // "never", "idle" or "daily"
 	CheckedAt    time.Time `json:"checkedAt"`
 }
 
 func defaultPrefs() Prefs {
-	return Prefs{Theme: "system", StartInTray: true, NotifyDecisions: true, NotifySignIn: true, NotifyConflicts: true, NotifyUpdates: true, CheckUpdates: true, AutoInstall: "never"}
+	return Prefs{Theme: "system", StartInTray: true, NotifyDecisions: true, NotifySignIn: true, NotifyConflicts: true, NotifyUpdates: true, AutoInstall: "never"}
 }
 
 // New makes the interface for a SyncD client; dir holds gui.json.

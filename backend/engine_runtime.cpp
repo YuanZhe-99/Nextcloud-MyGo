@@ -195,12 +195,17 @@ void EngineRuntime::rebindAccount(const QString &account, const QUrl &server,
   const auto reason = retireAccount(account);
   if (!reason.isEmpty())
     throw std::runtime_error(reason.toStdString());
-  for (const auto &[id, entry] : folders_)
+  for (auto &[id, entry] : folders_)
     if (entry.account == account) {
       entry.adapter->rebind(server, epoch, login);
       // Rebinding invalidates authorization; fresh discovery must produce a new
       // proposal.
       scheduler_.block(id, "awaitingDecision", false);
+      // Failures on the old address say nothing about the new one: its
+      // reconciliation starts now, not after their backoff (sleep-resume
+      // regression: it waited out 60 s earned on the unreachable primary).
+      scheduler_.clearRetry(id);
+      entry.failures = 0;
     }
 }
 

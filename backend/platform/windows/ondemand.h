@@ -27,8 +27,13 @@ public:
   };
   /// provider is the Cloud Files provider name of this product.
   static constexpr auto provider = "Nextcloud-MyGo";
-  /// available reports whether upstream's CFAPI plugin loads in this process.
+  /// available reports whether on-demand folders can work here: upstream's
+  /// CFAPI plugin loads in this process and the Cloud Files filter runs.
   static bool available();
+  /// cloudFilesRunning reports whether the Cloud Files minifilter service
+  /// (CldFlt) is running. Notes: Windows Server images may not run it; without
+  /// it the Cloud Files API cannot say who owns a folder.
+  static bool cloudFilesRunning();
   /// OnDemandRoot registers (or updates) and connects the sync root of a
   /// leased local folder.
   /// Inputs: localPath is the canonical root; remotePath the mapped collection;
@@ -55,9 +60,21 @@ public:
   bool busy() const;
   /// ownershipError checks that a local folder is no sync root, and inside
   /// none, except this folder's own registration.
-  /// Returns: empty when the folder may be used; FOLDER_OWNED otherwise.
+  /// Returns: empty when the folder may be used; FOLDER_OWNED when a sync root
+  /// that is not this folder's covers it; UNSUPPORTED_FOLDER_MODE when Cloud
+  /// Files cannot answer (ownershipReason).
   static QString ownershipError(const QString &localPath,
                                 const Identity &identity);
+  /// ownershipReason classifies a CfGetSyncRootInfoByPath answer.
+  /// Inputs: queried is its HRESULT; running is cloudFilesRunning(); provider
+  /// and ownRecord describe the root found when it succeeded.
+  /// Returns: as ownershipError.
+  /// Notes: "not under a sync root" is the only free answer. A failure that
+  /// means Cloud Files is unavailable (a known code, or any failure while the
+  /// filter is not running) is not evidence of an owner and refuses as
+  /// unsupported; every other failure still refuses as owned (fail closed).
+  static QString ownershipReason(long queried, bool running,
+                                 const QString &provider, bool ownRecord);
   /// unregister ends this folder's registration after its root was destroyed.
   /// Side effects: files whose content is on disk become ordinary files again;
   /// online-only placeholders, which nothing could open without the provider,

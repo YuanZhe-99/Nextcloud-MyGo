@@ -41,7 +41,7 @@ Not done:
 | Login throttling | No real-server 429 acceptance. A renewal's candidate password still ends unconfirmed when the daemon restarts during its held revocation |
 | Packaging and update (B13) | The installer is in `packaging/windows/setup`; SyncD now provides `daemon.prepareUpdate`, the post-start report, `--version`, a connect-only client and installed-layout DLL/plugin restriction ([packaging](packaging.md)), none of them adopted by the installer yet or verified in an installed package; no update channel |
 | On-demand files (M6, Windows) | `virtualFiles` stays `false`. Not run: through the paired daemon and interface (the interface cannot choose a mode yet), a switch to another origin, deletion protection and offline behavior with placeholders, the §20 cases for on-demand folders. The uninstaller does not end registrations yet; the SyncD executable has no icon for Explorer's sync-root entry; thumbnails and lock/share overlays need the shell extension, which is not built |
-| Platform evidence | No native x64 hardware, interactive browser/SSO/MFA login, suspend/resume, previous-major server 34 or 24-hour run; clang-tidy could not be run |
+| Platform evidence | No native x64 hardware, interactive browser/SSO/MFA login, a real suspend/resume (simulated only, [acceptance](acceptance.md) R15), previous-major server 34 or 24-hour run; clang-tidy could not be run |
 
 What the interface must respect until those pass:
 

@@ -177,15 +177,48 @@ bool releaseTree(const QString &root) {
 } // namespace
 
 bool OnDemandRoot::available() {
-  return OCC::isVfsPluginAvailable(OCC::Vfs::WindowsCfApi);
+  return cloudFilesRunning() &&
+         OCC::isVfsPluginAvailable(OCC::Vfs::WindowsCfApi);
+}
+
+bool OnDemandRoot::cloudFilesRunning() {
+  const auto manager = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+  if (!manager)
+    return false;
+  const auto closeManager = qScopeGuard([&] { CloseServiceHandle(manager); });
+  const auto service = OpenServiceW(manager, L"CldFlt", SERVICE_QUERY_STATUS);
+  if (!service)
+    return false;
+  const auto closeService = qScopeGuard([&] { CloseServiceHandle(service); });
+  SERVICE_STATUS status{};
+  return QueryServiceStatus(service, &status) &&
+         status.dwCurrentState == SERVICE_RUNNING;
+}
+
+QString OnDemandRoot::ownershipReason(long queried, bool running,
+                                      const QString &provider,
+                                      bool ownRecord) {
+  if (queried == HRESULT_FROM_WIN32(ERROR_CLOUD_FILE_NOT_UNDER_SYNC_ROOT))
+    return {};
+  if (SUCCEEDED(queried))
+    return provider == QString(OnDemandRoot::provider) && ownRecord
+               ? QString{}
+               : "FOLDER_OWNED";
+  for (const DWORD unavailable :
+       {DWORD(ERROR_CLOUD_FILE_PROVIDER_NOT_RUNNING),
+        DWORD(ERROR_CLOUD_FILE_NOT_SUPPORTED), DWORD(ERROR_NOT_SUPPORTED),
+        DWORD(ERROR_INVALID_FUNCTION)})
+    if (queried == HRESULT_FROM_WIN32(unavailable))
+      return "UNSUPPORTED_FOLDER_MODE";
+  return running ? "FOLDER_OWNED" : "UNSUPPORTED_FOLDER_MODE";
 }
 
 OnDemandRoot::OnDemandRoot(const Identity &identity, const QString &localPath,
                            const QString &remotePath,
                            const OCC::AccountPtr &account,
                            OCC::SyncJournalDb *journal) {
-  if (!ownershipError(localPath, identity).isEmpty())
-    throw std::runtime_error("FOLDER_OWNED");
+  if (const auto reason = ownershipError(localPath, identity); !reason.isEmpty())
+    throw std::runtime_error(reason.toStdString());
   auto plugin = OCC::createVfsFromPlugin(OCC::Vfs::WindowsCfApi);
   if (!plugin)
     throw std::runtime_error("UNSUPPORTED_FOLDER_MODE");
@@ -242,17 +275,16 @@ QString OnDemandRoot::ownershipError(const QString &localPath,
   const auto result = CfGetSyncRootInfoByPath(
       reinterpret_cast<LPCWSTR>(native.utf16()), CF_SYNC_ROOT_INFO_PROVIDER,
       &info, sizeof(info), &length);
-  if (result == HRESULT_FROM_WIN32(ERROR_CLOUD_FILE_NOT_UNDER_SYNC_ROOT))
-    return {};
-  if (FAILED(result) ||
-      QString::fromWCharArray(info.ProviderName) != QString(provider))
-    return "FOLDER_OWNED";
+  if (FAILED(result))
+    return ownershipReason(result, cloudFilesRunning(), {}, false);
   // Our provider name alone is not enough: the record must be this folder's,
   // for exactly this root, not another profile's or a parent root.
+  const auto name = QString::fromWCharArray(info.ProviderName);
   const auto sid = userSid();
-  return sameRoot(registeredRoot(syncRootId(identity, sid), sid), localPath)
-             ? QString{}
-             : "FOLDER_OWNED";
+  return ownershipReason(
+      result, true, name,
+      name == QString(provider) &&
+          sameRoot(registeredRoot(syncRootId(identity, sid), sid), localPath));
 }
 
 QString OnDemandRoot::unregister(const QString &localPath,

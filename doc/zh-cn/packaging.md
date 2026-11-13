@@ -1,8 +1,9 @@
 # 打包与安装
 
 Nextcloud-MyGo 每个架构提供一个当前用户安装包。每个安装包包含界面、与之一起验证的 SyncD，以及它们
-实际加载的 DLL，仅此而已。在可信签名链建立之前，每个包都是未签名的**测试构建**，自动更新关闭；安装器、
-应用列表条目和快捷方式都会注明。
+实际加载的 DLL，仅此而已。每个包都是没有 Authenticode 签名的**测试构建**：没有 Windows 代码签名证书，
+因此首次安装时 SmartScreen 会警告；安装器、应用列表条目和快捷方式都会注明。用更新签名密钥构建的包还带有
+[签名更新](#签名更新)，已安装的副本在应用内取用，用户开启之前保持关闭。
 
 ## 工具
 
@@ -158,6 +159,33 @@ PE 文件，因此 CI 可在任何平台运行。
 新的 SyncD 从不与其他版本的 Qt DLL 共用目录，旧版本只在新版本完整且已成为当前版本后才删除。同样的规则
 使同版本重装也完整切换到一个全新目录。
 
+## 签名更新
+
+一次更新就是新版本的当前用户安装器，通过 MyGo 的更新格式和密钥交付，因此界面和 SyncD 仍按上面的步骤一起
+更换（PLAN.md §16.2）。不使用 MyGo 自带的 `Update.Install`：它替换运行中应用所在目录的文件，在这里会让新
+界面与旧 SyncD 及其 Qt DLL 并存。
+
+| 组成 | 位置 | 内容 |
+|---|---|---|
+| 密钥对 | `mygo keygen`；公钥在 `mygo.json` 的 `updates.publicKey`，私钥只在 GitHub secret `MYGO_UPDATER_PRIVATE_KEY` 中 | Ed25519，base64，与 MyGo 的存储方式相同 |
+| 归档 | `Nextcloud-MyGo-<version>-<arch>-update.zip` | `update.json`（`product`、`version`、`arch`）与 `setup.exe`，不压缩存储 |
+| 清单 | `update-windows-<goarch>.json`（`arm64`、`amd64`） | MyGo 的清单：`version`、`notes`、`date`、归档的 `url`（相对于清单）、`size`，以及 `signature`，即对归档 SHA-256 的 Ed25519 签名 |
+| 更新源 | `https://github.com/<updates.github>/releases/latest/download/` | 最新的 release |
+
+设置了 `MYGO_UPDATER_PRIVATE_KEY` 时由 `tools/package.ps1` 生成：它把 `release.UpdateFeed` 和
+`release.UpdateKey`（mygo.json 中的公钥）链接进界面，并在安装器检查通过后运行 `pkg sign-update`；该命令
+拒绝不属于这个公钥的私钥，并把两个文件写入 `build/package/update-<Arch>/`。`mygo build` 从不获得密钥（它
+自己的归档只含界面；它会警告没有签名更新）。没有密钥时（所有本地构建都是如此），界面没有更新源，不提供
+更新并会说明，也不写任何更新文件。`-UpdatePublicKey` 只能与 `-TestVersion` 一起使用，信任另一个公钥，用于
+以一次性 `mygo keygen` 密钥对进行的测试。
+
+已安装的界面（`internal/gui`，[更新](gui.md#更新)）读取清单，只有版本更新时才把归档下载到安装文件夹中的
+`update\`（卸载会删除它；下次启动时清空），按内置公钥检查其大小和签名，并且除非签名的 `update.json` 写明
+Nextcloud-MyGo、清单中的版本、本机架构以及比运行版本更新的版本，否则拒绝：清单本身未签名，因此改过的清单
+既不能提供更旧的已签名包，也不能提供另一架构的包。随后它请 SyncD 到达安全点，并在无控制台窗口的情况下启动
+`setup.exe`（`release.StartSetup`，输出在 `update\setup.log`）；setup 关闭界面并执行第 1 到第 6 步，因此
+上面的每种拒绝和失败都保留已安装版本。只获取 HTTPS，测试时也可以是到环回地址的 HTTP；重定向不得离开 HTTPS。
+
 ## 卸载
 
 `uninstall.exe -uninstall`（应用列表条目的命令）关闭界面，按上文停止 SyncD，删除此安装的开机启动项、
@@ -197,10 +225,19 @@ ARM64（ARM64 硬件上的 Windows 11），2026-11-12：
   报告版本 0.1.1，`startupReport` 的 `previousVersion` 为 0.1.0，schema 从 11 到 11，自检 `passed`；升级前
   设置的暂停所有目录得以保留；随后卸载不留任何内容。在改为先关闭界面之前，一次重装在 2 分钟后以无应答
   信息停止，删除了其新目录并保留已安装版本：SyncD 的管道一次只服务一个客户端。
+- 签名更新路径（`tools/package-smoke.ps1 -UpdateDir`，共 41 s）：一次性 `mygo keygen` 密钥对，不带密钥构建的
+  0.1.0 包（没有更新通道），以及带签名更新的 `-TestVersion 0.1.1` 包（21 s）。`TestInstalledUpdate` 通过环回
+  HTTP 提供更新目录，读取清单，下载 37 MB 的归档，校验其签名与 `update.json`，并用 `release.StartSetup` 启动
+  其安装器（5.0 s）：setup 关闭了运行中的 0.1.0 界面，输出 `SyncD is ready`，切换到 0.1.1 并删除 0.1.0；
+  SyncD 0.1.1 报告上一版本 0.1.0，schema 从 11 到 11，自检 `passed`，所有目录仍处于暂停；两次卸载都不留任何
+  内容，一次性密钥已删除。单元测试（`internal/release`）拒绝错误的密钥、改过的归档、改过签名、版本或大小的
+  清单、作为 ARM64 提供的 x64 更新，以及不更新的版本。
 
 未验证：安装 x64 包（需要 x64 硬件）；SyncD 首次网络请求时加载哪个 TLS 后端（本次没有服务器）；对已登录
 账号执行 `-remove-user-data`；真实硬件上的安装失败（仅单元测试覆盖）；真实安装中安全点的删除等待与仍忙
-拒绝（仅单元测试 `TestPrepare`）；带已登录账号或 Control schema 变更的升级。
+拒绝（仅单元测试 `TestPrepare`）；带已登录账号或 Control schema 变更的升级；由已安装的界面本身发起更新（测试
+代替了它的角色，因此界面的 `PrepareUpdate` 与它自己的交接只有单元级覆盖）；用项目密钥签名并从 GitHub 读取的
+release；真实安装中应用内路径的下载中断或 setup 失败。
 
 ## 需要 SyncD 提供的内容
 

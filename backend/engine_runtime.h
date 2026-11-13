@@ -51,7 +51,8 @@ public:
   QString retireAccount(const QString &account);
   /// rebindAccount installs freshly verified bindings under the switch gate;
   /// partial construction failure leaves admission frozen for controlled
-  /// recovery.
+  /// recovery. Side effects: drops the folders' retry backoff from failures
+  /// on the previous address; account throttles and blockers stay.
   void rebindAccount(const QString &account, const QUrl &server, quint64 epoch,
                      const QString &login = {});
   /// blockAccount changes one independent account blocker without overriding

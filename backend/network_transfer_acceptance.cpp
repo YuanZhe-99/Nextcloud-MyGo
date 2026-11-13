@@ -39,7 +39,8 @@ int contentSize = 8 * 1024 * 1024;
 // Upstream sends files above its default 100 MiB threshold as a chunking-v2
 // session whose first chunk is that size.
 constexpr qint64 firstChunk = 100LL * 1024 * 1024;
-bool chunked = false, uncertain = false, fileSafety = false, large = false;
+bool chunked = false, uncertain = false, fileSafety = false, large = false,
+     sleepResume = false;
 // A standby endpoint is probed about once a minute once its health is stable,
 // and readiness needs a fresh success on both: allow one full probe period.
 constexpr int readyMilliseconds = 90000;
@@ -986,12 +987,151 @@ void fileSafetyAcceptance(Control &c, const QString &credential,
                 qPrintable(word(folder().value("reasonCode").toString())));
   }
 }
+/// sleepAcceptance is the simulated sleep (R15, PLAN §15.2 item 7): an upload
+/// held unfinished on the primary, then this whole process, the daemon with
+/// it, suspended past the freshness, failure, success and drain windows while
+/// the relay drops every connection and leaves only the alternate reachable.
+/// After waking the daemon must notice the dead connections, read nothing as
+/// deleted while the primary is unreachable, switch only once its folder went
+/// idle and with a recorded reason, and finish the upload once on the
+/// alternate with the same journal and folder identity (INV-05/06/08/09/12).
+void sleepAcceptance(Control &c, const QString &root, const QString &account,
+                     const QString &primary, const QString &alternate,
+                     const QString &credential, const TransferFaults &faults,
+                     const Mapping &m, const QByteArray &journal) {
+  constexpr qint64 asleep = 35000;
+  constexpr int size = 6 * 1048576;
+  const auto kept = randomContent(4096), content = randomContent(size);
+  upload(c, m, credential, "kept.bin", kept);
+  const auto activity = [&] {
+    return c.projection()
+        .value("snapshot")
+        .toObject()
+        .value("activity")
+        .toArray();
+  };
+  qint64 seen = 0;
+  for (const auto &entry : activity())
+    seen = std::max(seen,
+                    entry.toObject().value("cursor").toString().toLongLong());
+  const auto before = switchFacts(c, account);
+  const auto baseline = diagnostics(c);
+  writeLocal(m.local + "/asleep.bin", content);
+  faults.stall(2 * 1048576);
+  settle(c, call(c, "folders.syncNow", {{"folderId", m.folder}}));
+  wait(
+      [&] {
+        const auto d = diagnostics(c);
+        return counter(d, "activeUploads") > 0 &&
+               counter(d, "uploadBytes") >=
+                   counter(baseline, "uploadBytes") + 1048576;
+      },
+      "owned upload was not held unfinished before the sleep", 25);
+  require(inUse(c, primary) && !upToDate(c),
+          "owned held upload was not on the primary address");
+  const auto [suspended, still] = faults.sleep(asleep);
+  QElapsedTimer woken;
+  woken.start();
+  if (suspended < asleep - 50 || still < asleep - 1000)
+    throw std::runtime_error("owned process did not stand still as a whole, "
+                             "suspended " +
+                             std::to_string(suspended) + " ms, still " +
+                             std::to_string(still) + " ms");
+  const auto other =
+      canonicalServer(qEnvironmentVariable("NEXTCLOUD_TEST_ALTERNATE_URL"));
+  bool idle = false;
+  qint64 moved = 0;
+  wait(
+      [&] {
+        // Offline is not empty: nothing goes locally and nothing is proposed
+        // for deletion while the server cannot be reached.
+        require(localHash(m.local + "/kept.bin") == sha256(kept) &&
+                    localHash(m.local + "/asleep.bin") == sha256(content),
+                "owned local file removed while the server was unreachable");
+        require(c.projection()
+                    .value("snapshot")
+                    .toObject()
+                    .value("decisions")
+                    .toArray()
+                    .isEmpty(),
+                "owned unreachable server was read as deleted files");
+        const auto d = diagnostics(c);
+        if (d.value("epoch").toString().toLongLong() == before.epoch) {
+          require(!upToDate(c),
+                  "owned unreachable primary was reported up to date");
+          idle = idle || (counter(d, "activeRequests") == 0 &&
+                          counter(d, "transportFailures") >
+                              counter(baseline, "transportFailures"));
+          return false;
+        }
+        moved = woken.elapsed();
+        return true;
+      },
+      "owned daemon did not move to the reachable address after waking", 25);
+  require(idle, "owned switch did not wait for the folder to go idle after "
+                "its dead connections failed");
+  PendingRead pending;
+  wait(
+      [&] {
+        return upToDate(c) &&
+               sha256(dav(other, m.uid, m.collection, "GET", credential, {},
+                          "asleep.bin", &pending)) == sha256(content);
+      },
+      "owned held upload did not complete after waking", 500);
+  const auto completed = woken.elapsed();
+  const auto after = switchFacts(c, account);
+  require(after.endpoint == alternate && after.epoch > before.epoch,
+          "owned binding did not move to the alternate");
+  require(after.folders == before.folders &&
+              after.credential == before.credential &&
+              journalIdentity(root) == journal,
+          "owned sleep changed the journal, folder identity or credential");
+  bool recorded = false;
+  qint64 uploads = 0;
+  for (const auto &value : activity()) {
+    const auto entry = value.toObject();
+    if (entry.value("cursor").toString().toLongLong() <= seen)
+      continue;
+    recorded = recorded || (entry.value("kind") == "switched" &&
+                            entry.value("fromId") == primary &&
+                            entry.value("toId") == alternate &&
+                            entry.value("reason") == "unreachable");
+    if (entry.value("kind") == "uploaded")
+      uploads += entry.value("count").toInt();
+  }
+  require(recorded, "owned switch after waking has no recorded reason");
+  const auto recovered = diagnostics(c);
+  require(counter(recovered, "uncertainWrites") >
+              counter(baseline, "uncertainWrites"),
+          "owned interrupted upload lost its unconfirmed-write evidence");
+  // The interrupted attempt counts at most its whole body, the completed one
+  // the whole body: a second completed upload would exceed both.
+  require(uploads == 1 && counter(recovered, "uploadBytes") -
+                                  counter(baseline, "uploadBytes") <=
+                              2ULL * size,
+          "owned held upload was sent more than once after waking");
+  require(QDir(m.local).entryList(QDir::Files) ==
+                  QStringList{"asleep.bin", "kept.bin"} &&
+              sha256(dav(other, m.uid, m.collection, "GET", credential, {},
+                         "kept.bin")) == sha256(kept),
+          "owned sleep left a conflict copy or lost the kept file");
+  std::printf("PASS simulated sleep: whole process suspended %lld ms, threads "
+              "still %lld ms, during a held upload; woke where only the "
+              "alternate answers; dead connections failed, nothing read as "
+              "deleted, switch after the folder went idle %lld ms after "
+              "waking with reason unreachable, upload completed once %lld ms "
+              "after waking, hashes, journal and folder identity unchanged\n",
+              static_cast<long long>(suspended), static_cast<long long>(still),
+              static_cast<long long>(moved), static_cast<long long>(completed));
+}
 } // namespace
 
 void largeTransferAcceptance() {
   chunkedTransferAcceptance();
   large = true;
 }
+
+void sleepResumeAcceptance() { sleepResume = true; }
 
 void selectTransferCase(const QString &name) { transferCase = name; }
 
@@ -1287,6 +1427,12 @@ void networkTransferAcceptance(Control &c, const QString &root,
   if (large) {
     largeUploadAcceptance(c, root, account, primary, alternate, credential,
                           faults, m, journal);
+    removeMapping(c, m.folder);
+    return;
+  }
+  if (sleepResume) {
+    sleepAcceptance(c, root, account, primary, alternate, credential, faults,
+                    m, journal);
     removeMapping(c, m.folder);
     return;
   }

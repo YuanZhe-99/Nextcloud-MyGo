@@ -4,7 +4,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$Executable,
-    [ValidateSet('lifetime','held-revocation','network','network-lifetime','network-active','network-chunked','network-uncertain','network-large','file-safety','multi-account','switch-quota','slow-server','switch-kill','wrong-instance')][string]$Scenario = 'lifetime',
+    [ValidateSet('lifetime','held-revocation','network','network-lifetime','network-active','network-chunked','network-uncertain','network-large','file-safety','multi-account','switch-quota','slow-server','sleep-resume','switch-kill','wrong-instance')][string]$Scenario = 'lifetime',
     [ValidateSet('prepared','quiescing','verifying','committed','reconciling')][string[]]$Stage = @('prepared','quiescing','verifying','committed','reconciling'),
     # network-active and network-uncertain run each case in its own process and profile, so every case
     # starts on healthy endpoints instead of waiting out the circuit history of the case before it.
@@ -33,8 +33,9 @@ function RunOwned([string]$Argument) {
         $errors = $child.StandardError.ReadToEndAsync()
         # Each child has a short budget of its own and every step inside it a shorter one; only the opt-in
         # above-4-GiB case is long. Cleanup is direct and bounded.
-        # network waits out the daemon's own circuit-open and stability windows twice, so it gets more.
-        $timeout = if ($Argument -eq '--cleanup') { 60000 } elseif ($Scenario -eq 'network-large') { 2400000 } elseif ($Scenario -eq 'network') { 240000 } else { 150000 }
+        # network waits out the daemon's own circuit-open and stability windows twice, so it gets more;
+        # sleep-resume holds itself suspended for 35 s of its two minutes.
+        $timeout = if ($Argument -eq '--cleanup') { 60000 } elseif ($Scenario -eq 'network-large') { 2400000 } elseif ($Scenario -eq 'network') { 240000 } elseif ($Scenario -eq 'sleep-resume') { 120000 } else { 150000 }
         $code = if ($child.WaitForExit($timeout)) { $child.ExitCode } else { $child.Kill($true); $child.WaitForExit(); -1 }
         return @{ Code = $code; Budget = [int]($timeout / 1000); Output = $output.GetAwaiter().GetResult(); Error = $errors.GetAwaiter().GetResult() }
     } finally { $child.Dispose() }

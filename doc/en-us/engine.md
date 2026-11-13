@@ -25,7 +25,10 @@ strict VPN egress and metered-network enforcement are not advertised.
 Interface/address/route callbacks only set an atomic notification bit and are drained with
 `CancelMibChangeNotify2`. Suspend/resume uses a process-local message-only window on the control
 thread, destroyed synchronously after unregistering. It creates no visible window, Shell entry or
-system setting; no power callback can retain a freed Qt/control object.
+system setting; no power callback can retain a freed Qt/control object. Every `WM_POWERBROADCAST`
+(suspend and `PBT_APMRESUMEAUTOMATIC` alike) is a network change: earlier health is no longer
+fresh and a probe begun before the sleep is not counted after it, whether or not the monotonic
+clock counted the sleep (`resume` in `syncd_endpoint_policy_tests`, injected clock).
 Probe evaluation retains owned endpoint identifiers across nested Qt metadata requests and reacquires
 selection entries afterward. Removing an address cannot leave a dangling map key or authorize another
 credentialed request: consent and frozen roots are rechecked between full-verification steps and before
@@ -255,7 +258,11 @@ Successful completion acknowledges only the captured generation; failed or cance
 pending. Account and folder rotation prevent immediate follow-up work from monopolizing the engine.
 Resuming one pause never clears another blocker. `EngineRuntime` connects the queue to adapters,
 polls at 60 seconds with ±20% jitter, requests daily full checks and retains failed generations with
-bounded exponential backoff. A shutdown freezes admission and waits for active teardown. Recursive
+bounded exponential backoff. Rebinding an account to another address drops its folders' retry
+delay and failure count: the delay was earned on the old address, and it held reconciliation on
+the new one for 47 s after a simulated sleep, and could for up to the 300-second backoff cap
+(`sleep-resume` found it; `rebound` in `syncd_scheduler_tests`). Account
+throttles and blockers stay. A shutdown freezes admission and waits for active teardown. Recursive
 watching uses an overlapped Windows subtree subscription, including newly created directories.
 Notifications only mark dirty work; discovery remains the authority. Overflow or notification loss
 requests a full audit, with polling retained as a fallback. Watch handles are cancelled and drained

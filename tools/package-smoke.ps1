@@ -4,16 +4,26 @@
 # nothing is left behind (PLAN.md §16, R19/R20).
 # Inputs: -Setup, the installer tools/package.ps1 built for this machine's architecture; -UpgradeTo, a
 # higher-version installer of the same architecture (tools/package.ps1 -TestVersion), installed over
-# the running -Setup version through daemon.prepareUpdate.
+# the running -Setup version through daemon.prepareUpdate. -UpdateDir, with -UpgradeTo, makes that upgrade
+# the in-app one instead: the signed update tools/package.ps1 wrote for -UpgradeTo (build/package/
+# update-<Arch>-testversion), served over loopback HTTP, checked against -UpdateKey (its public key) and
+# handed to its installer as the interface does (internal/release TestInstalledUpdate).
 # Side effects: a temporary per-user install, Start menu shortcut, Apps entry and startup entry, all
 # removed again; runs under a throwaway interface/SyncD profile, never the default one, and never
 # touches the official Nextcloud client. Refuses to run over an existing Nextcloud-MyGo install.
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$Setup, [string]$UpgradeTo = '')
+param([Parameter(Mandatory)][string]$Setup, [string]$UpgradeTo = '', [string]$UpdateDir = '', [string]$UpdateKey = '')
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 $Setup = (Resolve-Path $Setup).Path
 if ($UpgradeTo) { $UpgradeTo = (Resolve-Path $UpgradeTo).Path }
+if ($UpdateDir) {
+    if (-not $UpgradeTo -or -not $UpdateKey) { throw '-UpdateDir needs -UpgradeTo and -UpdateKey' }
+    $UpdateDir = (Resolve-Path $UpdateDir).Path
+    $updateTest = Join-Path $repo 'build/package/update.test.exe'
+    & go test -c -o $updateTest ./internal/release
+    if ($LASTEXITCODE -ne 0) { throw 'building the update test failed' }
+}
 $programs = [Environment]::GetFolderPath('LocalApplicationData') + '\Programs'
 $root = Join-Path $programs 'Nextcloud-MyGo'
 $appsKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Nextcloud-MyGo'
@@ -188,7 +198,14 @@ try {
         [void][Diagnostics.Process]::Start($info)
         Assert-Running $second
         $copies = @((Get-ChildItem $data -Filter 'control.pre-update.*.sqlite').Name)
-        Invoke-Bounded 'upgrade' 300 $UpgradeTo
+        if ($UpdateDir) {
+            $env:NEXTCLOUD_MYGO_UPDATE_DIR, $env:NEXTCLOUD_MYGO_UPDATE_KEY, $env:NEXTCLOUD_MYGO_UPDATE_CURRENT = $UpdateDir, $UpdateKey, $old.version
+            try { Invoke-Bounded 'in-app update' 300 $updateTest @('-test.run', '^TestInstalledUpdate$', '-test.v', '-test.count', '1') }
+            finally { Remove-Item env:NEXTCLOUD_MYGO_UPDATE_DIR, env:NEXTCLOUD_MYGO_UPDATE_KEY, env:NEXTCLOUD_MYGO_UPDATE_CURRENT -ErrorAction SilentlyContinue }
+            if ($script:output -notmatch 'verified the signed') { throw 'the in-app update did not verify the signed update' }
+        } else {
+            Invoke-Bounded 'upgrade' 300 $UpgradeTo
+        }
         if ($script:output -notmatch 'SyncD is ready') { throw 'the upgrade did not bring SyncD to the update safe point (daemon.prepareUpdate)' }
         if (-not (Get-ChildItem $data -Filter 'control.pre-update.*.sqlite' | Where-Object Name -NotIn $copies)) { throw "the upgrade left no new pre-update Control copy in $data" }
         $third = Assert-Installed
@@ -236,6 +253,7 @@ try {
     $stray = Get-ChildItem ([Environment]::GetFolderPath('ApplicationData')), ([Environment]::GetFolderPath('LocalApplicationData')) -Filter "*$profileName*" -ErrorAction SilentlyContinue
     if ($stray) { Write-Warning "profile state outside the known directories: $($stray.FullName -join ', ')"; $stray | Remove-Item -Recurse -Force }
     if ($left) { Write-Warning "cleanup removed: $($left -join ', ')" }
+    if ($UpdateDir) { Remove-Item $updateTest -ErrorAction SilentlyContinue }
     $new = & $dirs | Where-Object { $_ -notin $before }
     if ($new) { Write-Warning "created during the run and still present: $($new -join ', ')" }
     Write-Host ("total {0:n1}s" -f $total.Elapsed.TotalSeconds)

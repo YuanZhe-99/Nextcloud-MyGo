@@ -47,6 +47,11 @@ public:
   /// newer cycle. Server constraints (full quota, lock, throttle) and transport
   /// failures retry after backoff; they are never a safety block.
   bool fail(const Run &run, const QString &reason, qint64 retryAt);
+  /// clearRetry drops the retry delay of a folder's failed cycles, keeping
+  /// its pending work, blockers and any account throttle. Notes: used when
+  /// the account moves to another address, where a delay earned on the old
+  /// one must not hold back reconciliation (PLAN §9.3 S5).
+  void clearRetry(const QString &folder) { entries_.at(folder).retryAt = 0; }
   /// pending reports unfinished generations, including a currently running
   /// generation.
   bool pending(const QString &folder) const;

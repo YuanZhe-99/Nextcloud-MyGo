@@ -173,7 +173,7 @@ try {
                 , @(@('lost MOVE reply', 'network-uncertain', 'move'), @('lost DELETE reply', 'network-uncertain', 'delete'), @('lost final MOVE reply', 'network-uncertain', 'final-move'), @('switch held past its window', 'switch-quota', ''))
                 , @(@('kill at prepared', 'switch-kill', 'prepared'), @('kill at quiescing', 'switch-kill', 'quiescing'), @('kill at verifying', 'switch-kill', 'verifying'))
                 , @(@('kill at committed', 'switch-kill', 'committed'), @('kill at reconciling', 'switch-kill', 'reconciling'), @('file safety', 'file-safety', ''))
-                , @(@('chunk session resume', 'network-chunked', ''), @('held revocation', 'held-revocation', ''), @('slow server stays healthy', 'slow-server', ''))
+                , @(@('chunk session resume', 'network-chunked', ''), @('held revocation', 'held-revocation', ''), @('slow server stays healthy', 'slow-server', ''), @('sleep and resume, simulated', 'sleep-resume', ''))
                 , @(@('network failover and fixed target', 'network', ''), @('renewal lifetime', 'lifetime', ''), @('two accounts, two folders each', 'multi-account', ''))
             )
             if ($Large) { Step 'above-4-GiB chunk resume' { Acceptance 'network-large' } -OutsideBudget }

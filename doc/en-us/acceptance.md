@@ -9,6 +9,7 @@ is not a release claim.
 | Status | Meaning |
 |---|---|
 | `passed` | A real run of the case is recorded and meets the plan's pass condition |
+| `passed (simulated)` | A real run of a simulation the user accepted in place of the real condition meets the pass condition; Missing names what only the real condition shows |
 | `partial` | Part of the condition is evidenced, or only a mock, scripted-transport or unit test exists for a case the plan requires on a real server |
 | `not run` | No run is recorded |
 | `not possible on this hardware` | The single available machine cannot prove it |
@@ -90,12 +91,12 @@ here in plan order.
 | R12 | `partial` | [ipc](ipc.md): atomic bootstrap and subscription | Concurrent-update race test |
 | R13 | `partial` | [ipc](ipc.md): reconnect re-bootstraps; bounded queues | Slow client; expired event window |
 | R14 | `not run` | No run is recorded | All of it |
-| R15 | `not run` | [backend progress](backend-progress.md): suspend/resume is not covered | All of it |
-| R16 | `not run` | [backend progress](backend-progress.md): no installer or update channel | All of it |
+| R15 | `passed (simulated)` | [platform notes](platform-notes.md): `sleep-resume` ([development](development.md)), the whole daemon process suspended 35 s during a held upload and woken where only the alternate answers: dead connection failed, nothing read as deleted, switch at an idle folder with reason `unreachable`, upload completed once, journal and folder identity kept; ARM64, 35.0.2. [Engine](engine.md): resume notification on an injected clock; UTC rollback keeps throttle deadlines (`syncd_constraint_tests`) | A real sleep: power transitions and their notifications reaching the running daemon, whether the monotonic clock counts the sleep, adapter and address changes, connections that die without a reset, hours-long sleeps, volume changes while asleep, Modern Standby; x64e |
+| R16 | `partial` | [packaging](packaging.md#signed-updates): a refused download (wrong key, changed archive or manifest, other architecture, not newer) leaves nothing staged and nothing installed (unit tests); the in-app path installed a signed 0.1.1 over a running 0.1.0 through setup and `daemon.prepareUpdate`, profile state kept, ARM64 | An interrupted download or a failing setup in the in-app path on a real install; the installed interface starting it |
 | R17 | `not run` | No run is recorded | All of it |
 | R18 | `not run` | No run is recorded | All of it |
 | R19 | `partial` | [packaging](packaging.md): ARM64 per-user install, reinstall and uninstall; startup entry, shortcut, Apps entry and install folder removed; official client registration unchanged; B14: synced files kept after account removal and uninstall, ARM64 | x64 hardware; uninstall with the account still signed in |
-| R20 | `passed` | [platform notes](platform-notes.md): ARM64 real runs and B14: the installed ARM64 package (30 PE files native ARM64) signed in, synced, switched, reinstalled and uninstalled over publicly trusted TLS, 35.0.2; [packaging](packaging.md): dependency closure | Sleep and resume (§15.2 item 7) |
+| R20 | `passed` | [platform notes](platform-notes.md): ARM64 real runs and B14: the installed ARM64 package (30 PE files native ARM64) signed in, synced, switched, reinstalled and uninstalled over publicly trusted TLS, 35.0.2; [packaging](packaging.md): dependency closure; sleep and resume (§15.2 item 7) passed by simulation only (R15) | A real sleep and resume (§15.2 item 7) |
 | R21 | `not run` | [backend progress](backend-progress.md): no 24-hour run | All of it |
 | R22 | `partial` | [ipc](ipc.md): the support bundle holds only sanitized fields; B14: an exported bundle held no password, user, server, path or file name | A log scan for secrets |
 
@@ -140,8 +141,8 @@ property, so none is `passed`.
 | 23.3-2 package architectures and dependencies | `partial` | [packaging](packaging.md): both packages checked; B14: the ARM64 package checked and run | x64 package on x64 hardware |
 | 23.3-3 install, upgrade, downgrade, uninstall, coexistence | `partial` | [packaging](packaging.md): ARM64 install, same-version upgrade, uninstall and coexistence; downgrade refusal unit-tested; B14: same-version reinstall over a running, signed-in copy kept account and folder; package smoke: 0.1.0 → 0.1.1 test-version upgrade over a running SyncD through `daemon.prepareUpdate`, profile state and startup report (previous version, schema, self-check passed) checked, ARM64 | x64; an upgrade between versions with a signed-in account |
 | 23.3-4 matrix, content checks, 24-hour report | `not run` | This document | All of it |
-| 23.3-5 auto-update only with a trusted chain | `not possible on this hardware` | [gui](gui.md): updates stay off in unsigned builds | A trusted signing chain |
-| 23.3-6 §17.1 desktop features | `partial` | [platform notes](platform-notes.md): B14: tray icon and flyout, close to tray, Start menu reopen, Quit and stop syncing; setup reaches `daemon.prepareUpdate` before stopping SyncD (package smoke) | `daemon.prepareUpdate` refusals with a real deletion waiting; notifications; start at sign-in; sleep and resume |
+| 23.3-5 auto-update only with a trusted chain | `partial` | [packaging](packaging.md#signed-updates): updates exist only in packages built with the `mygo keygen` key, kept in a GitHub secret; the app installs only archives signed with the key in `mygo.json`, off until the user turns it on; package smoke: a signed 0.1.1 test update from loopback HTTP installed over 0.1.0 with a throwaway key, ARM64 | A release signed with the project key, read from GitHub; x64; no Authenticode signature (SmartScreen warns on first install) |
+| 23.3-6 §17.1 desktop features | `partial` | [platform notes](platform-notes.md): B14: tray icon and flyout, close to tray, Start menu reopen, Quit and stop syncing; setup reaches `daemon.prepareUpdate` before stopping SyncD (package smoke) | `daemon.prepareUpdate` refusals with a real deletion waiting; notifications; start at sign-in; a real sleep and resume (simulated only, R15) |
 | 23.3-7 licenses, source, limits, diagnostics notes | `partial` | [platform notes](platform-notes.md): known limitations | User guide; release source materials |
 | 23.3-8 no unverified capability listed as supported | `partial` | [backend progress](backend-progress.md): `fullSync` and `endpointAutoSwitch` stay `false` | Release list |
 
@@ -154,7 +155,7 @@ property, so none is `passed`.
 | M2 reliability and file safety | `partial` | [engine](engine.md): scheduler, root lease, deletion veto | Core §20.2 cases not passing |
 | M3 endpoint registry, read-only policy | `partial` | [ipc](ipc.md): consent, namespace check, policy | N04, N06, N07 |
 | M4 safe automatic switching | `partial` | [platform notes](platform-notes.md): manual and failover switching real; automatic capability `false` | VPN; uncertain writes |
-| M5 frontend, first release | `partial` | [platform notes](platform-notes.md): B14 joint acceptance on ARM64, 35.0.2, six of nine steps passed | Sleep and resume; upgrade between versions; 24-hour run; B14 findings |
+| M5 frontend, first release | `partial` | [platform notes](platform-notes.md): B14 joint acceptance on ARM64, 35.0.2, six of nine steps passed | A real sleep and resume (simulated only, R15); upgrade between versions; 24-hour run; B14 findings |
 | M6 cloud-file frameworks | `partial` | [on-demand](on-demand.md), [platform notes](platform-notes.md): Windows on-demand registration, hydration, free up space, always keep, switch boundary, crash recovery and unregistration on native ARM64 against server 35.0.2 through the engine runtime | Paired daemon and interface, another origin, deletion protection and offline with placeholders, uninstall unregistration; `virtualFiles` false; the macOS half is outside 0.1.0 by the user's decision of 2026-11-11 |
 
 ## Joint release acceptance (B14)
@@ -173,7 +174,7 @@ Native Windows 11 ARM64, installed package, real window driven by UI Automation,
 | 7 close, reopen, quit from the tray | `passed` | interface and processes |
 | 8 reinstall over the running copy | `partial` | interface and processes; since then setup calls `daemon.prepareUpdate`, the self-check no longer fails on `CANCELLED` (`SyncDFolderErrorContracts`) and a 0.1.0 → 0.1.1 test upgrade passed in the package smoke; not run again in the interface |
 | 9 remove the account, uninstall | `passed` | interface, registry, server token list |
-| sleep and resume | `not run` | needs the user |
+| sleep and resume | `passed (simulated)` | `sleep-resume` against the backend, not through the interface or the installed package (R15); a real sleep was ruled out for this machine by the user |
 
 ## Hardware and environment limits
 

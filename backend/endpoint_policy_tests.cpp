@@ -233,6 +233,51 @@ void hardFailures() {
     }
   }
 }
+/// resume checks what waking from sleep leaves of the evidence (R15, PLAN
+/// §10.2 "休眠恢复"): the resume notification (WM_POWERBROADCAST, delivered to
+/// Control::networkChanged) makes every earlier result stale and refuses a probe
+/// begun before the sleep, whether or not the monotonic clock counted the
+/// sleep; after it, one lucky sample never moves the account.
+void resume() {
+  for (const bool counted : {false, true}) {
+    EndpointPolicy p;
+    p.configure("current", trusted(90));
+    p.configure("backup", trusted(50));
+    p.activated("current", 0);
+    for (const qint64 now : {0, 5000, 10000}) {
+      sample(p, "current", now);
+      sample(p, "backup", now);
+    }
+    const auto asleep = p.beginProbe("backup", 12000);
+    require(asleep.has_value(), "probe in flight at sleep missing");
+    // Eight hours asleep, which the clock either counted or did not.
+    const qint64 wake = counted ? 12000 + 8LL * 3600 * 1000 : 12000;
+    require(p.health("current", wake).fresh == !counted,
+            "evidence age did not follow the injected clock");
+    p.networkChanged(wake);
+    require(!p.health("current", wake).fresh &&
+                !p.health("backup", wake).fresh &&
+                p.choose(wake).endpoint.isEmpty(),
+            "evidence from before the sleep survived the resume notification");
+    require(!p.observe(*asleep, EndpointPolicy::Outcome::Success, wake, 50, 1),
+            "a probe begun before the sleep was counted after it");
+    require(!p.beginProbe("current", wake + 1000),
+            "resume notification was not coalesced");
+    // The primary is gone on the new network and the alternate answers.
+    sample(p, "backup", wake + 2000);
+    for (const qint64 after : {2000, 7000, 12000})
+      sample(p, "current", wake + after,
+             EndpointPolicy::Outcome::NetworkFailure);
+    require(p.health("current", wake + 12000).failed,
+            "three failures after waking did not open the circuit");
+    require(p.choose(wake + 12000).endpoint.isEmpty(),
+            "one sample after waking moved the account");
+    sample(p, "backup", wake + 12000);
+    const auto chosen = p.choose(wake + 12000);
+    require(chosen.endpoint == "backup" && chosen.reason == "unreachable",
+            "fresh evidence after waking did not fail over with its reason");
+  }
+}
 } // namespace
 /// main verifies PLAN §8 selection contracts without network access, wall-clock
 /// sleeps or user state.
@@ -244,8 +289,10 @@ int main() {
     failover();
     failedFreshness();
     hardFailures();
+    resume();
     std::puts("PASS endpoint scoring, generation isolation, debounce, circuit "
-              "recovery, trust gates and independent hard failures");
+              "recovery, trust gates, independent hard failures and evidence "
+              "after waking");
     return 0;
   } catch (const std::exception &e) {
     std::fprintf(stderr, "%s\n", e.what());

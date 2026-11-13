@@ -8,6 +8,7 @@
 | 状态 | 含义 |
 |---|---|
 | `passed` | 已记录该用例的真实运行，且满足计划的通过条件 |
+| `passed (simulated)` | 用户认可的模拟代替真实条件，其真实运行满足通过条件；“缺少”一栏写明只有真实条件才能证明的部分 |
 | `partial` | 只有部分条件有证据，或对计划要求在真实服务器上完成的用例只有模拟、脚本化传输或单元测试 |
 | `not run` | 没有运行记录 |
 | `not possible on this hardware` | 仅有的这台机器无法证明 |
@@ -88,12 +89,12 @@
 | R12 | `partial` | [IPC](ipc.md)：原子 bootstrap 与订阅 | 并发更新的竞态测试 |
 | R13 | `partial` | [IPC](ipc.md)：重连重新 bootstrap；有界队列 | 慢客户端；事件窗口过期 |
 | R14 | `not run` | 没有运行记录 | 全部 |
-| R15 | `not run` | [后端进度](backend-progress.md)：未覆盖休眠/唤醒 | 全部 |
-| R16 | `not run` | [后端进度](backend-progress.md)：没有安装器或更新通道 | 全部 |
+| R15 | `passed (simulated)` | [平台说明](platform-notes.md)：`sleep-resume`（[开发](development.md)），在一次被扣住的上传期间把整个 SyncD 进程挂起 35 秒，唤醒后只有备用地址可达：失效连接被判为失败，没有任何内容被当成已删除，在目录空闲时以原因 `unreachable` 切换，上传只完成一次，journal 与目录身份不变；ARM64，35.0.2。[引擎](engine.md)：唤醒通知使用可注入时钟测试；UTC 回拨不缩短限流截止时间（`syncd_constraint_tests`） | 真实休眠：电源状态切换及其通知到达运行中的服务进程、单调时钟是否计入休眠时间、网卡与地址变化、未收到重置就失效的连接、数小时的休眠、休眠期间卷的变化、现代待机（Modern Standby）；x64e |
+| R16 | `partial` | [打包](packaging.md#签名更新)：被拒绝的下载（错误的密钥、改过的归档或清单、其他架构、版本不更新）不留暂存内容、不安装任何东西（单元测试）；应用内路径经 setup 与 `daemon.prepareUpdate` 在运行中的 0.1.0 上安装了签名的 0.1.1，配置状态保留，ARM64 | 真实安装中应用内路径的下载中断或 setup 失败；由已安装的界面发起 |
 | R17 | `not run` | 没有运行记录 | 全部 |
 | R18 | `not run` | 没有运行记录 | 全部 |
 | R19 | `partial` | [打包](packaging.md)：ARM64 当前用户安装、重装与卸载；开机启动项、快捷方式、应用列表条目与安装目录均被删除；官方客户端注册未变；B14：移除账号并卸载后同步文件保留，ARM64 | x64 硬件；账号仍登录时卸载 |
-| R20 | `passed` | [平台说明](platform-notes.md)：ARM64 真实运行与 B14：已安装的 ARM64 包（30 个 PE 文件均为原生 ARM64）通过公共受信 TLS 完成登录、同步、切换、重装和卸载，35.0.2；[打包](packaging.md)：依赖闭包 | 休眠与唤醒（§15.2 第 7 项） |
+| R20 | `passed` | [平台说明](platform-notes.md)：ARM64 真实运行与 B14：已安装的 ARM64 包（30 个 PE 文件均为原生 ARM64）通过公共受信 TLS 完成登录、同步、切换、重装和卸载，35.0.2；[打包](packaging.md)：依赖闭包；休眠与唤醒（§15.2 第 7 项）仅以模拟通过（R15） | 真实的休眠与唤醒（§15.2 第 7 项） |
 | R21 | `not run` | [后端进度](backend-progress.md)：没有 24 小时运行 | 全部 |
 | R22 | `partial` | [IPC](ipc.md)：支持包只含脱敏字段；B14：导出的支持包不含密码、用户、服务器、路径或文件名 | 对日志做秘密扫描 |
 
@@ -137,8 +138,8 @@
 | 23.3-2 包架构和依赖 | `partial` | [打包](packaging.md)：两个包均已检查；B14：ARM64 包经检查并运行 | x64 硬件上的 x64 包 |
 | 23.3-3 安装、升级、降级、卸载、共存 | `partial` | [打包](packaging.md)：ARM64 安装、同版本升级、卸载与共存；降级拒绝由单元测试覆盖；B14：在运行中且已登录的副本上同版本重装，账号和目录保留；安装包冒烟测试：在运行中的 SyncD 上经 `daemon.prepareUpdate` 从 0.1.0 升级到测试版本 0.1.1，核对了配置状态与启动报告（上一版本、schema、自检通过），ARM64 | x64；带已登录账号的不同版本间升级 |
 | 23.3-4 矩阵、内容核验、24 小时报告 | `not run` | 本文档 | 全部 |
-| 23.3-5 仅在可信链就绪后自动更新 | `not possible on this hardware` | [界面](gui.md)：未签名构建保持更新关闭 | 可信签名链 |
-| 23.3-6 §17.1 桌面功能 | `partial` | [平台说明](platform-notes.md)：B14：托盘图标与弹出面板、关闭到托盘、从开始菜单重新打开、“退出并停止同步”；安装程序在停止 SyncD 前调用 `daemon.prepareUpdate`（安装包冒烟测试） | 真实删除等待时 `daemon.prepareUpdate` 的拒绝；通知；登录时启动；休眠与唤醒 |
+| 23.3-5 仅在可信链就绪后自动更新 | `partial` | [打包](packaging.md#签名更新)：只有用保存在 GitHub secret 中的 `mygo keygen` 密钥构建的包才有更新；应用只安装用 `mygo.json` 中公钥对应密钥签名的归档，用户开启之前保持关闭；安装包冒烟测试：用一次性密钥，从环回 HTTP 获取签名的 0.1.1 测试更新并安装到 0.1.0 之上，ARM64 | 用项目密钥签名并从 GitHub 读取的 release；x64；没有 Authenticode 签名（首次安装时 SmartScreen 会警告） |
+| 23.3-6 §17.1 桌面功能 | `partial` | [平台说明](platform-notes.md)：B14：托盘图标与弹出面板、关闭到托盘、从开始菜单重新打开、“退出并停止同步”；安装程序在停止 SyncD 前调用 `daemon.prepareUpdate`（安装包冒烟测试） | 真实删除等待时 `daemon.prepareUpdate` 的拒绝；通知；登录时启动；真实的休眠与唤醒（仅有模拟，R15） |
 | 23.3-7 许可证、源码、限制、诊断说明 | `partial` | [平台说明](platform-notes.md)：已知限制 | 用户指南；发布源码材料 |
 | 23.3-8 未验证能力不列为已支持 | `partial` | [后端进度](backend-progress.md)：`fullSync` 和 `endpointAutoSwitch` 保持 `false` | 发布清单 |
 
@@ -151,7 +152,7 @@
 | M2 可靠性和文件安全 | `partial` | [引擎](engine.md)：调度、根租约、删除否决 | §20.2 核心用例未全部通过 |
 | M3 端点登记与只读策略 | `partial` | [IPC](ipc.md)：认可、命名空间核验、策略 | N04、N06、N07 |
 | M4 安全自动切换 | `partial` | [平台说明](platform-notes.md)：手动切换和故障转移已真实运行；自动切换能力为 `false` | VPN；不确定的写入 |
-| M5 前端接入与首版发布 | `partial` | [平台说明](platform-notes.md)：ARM64 上的 B14 联合验收，35.0.2，九步中六步通过 | 休眠与唤醒；版本间升级；24 小时运行；B14 发现的问题 |
+| M5 前端接入与首版发布 | `partial` | [平台说明](platform-notes.md)：ARM64 上的 B14 联合验收，35.0.2，九步中六步通过 | 真实的休眠与唤醒（仅有模拟，R15）；版本间升级；24 小时运行；B14 发现的问题 |
 | M6 现代网盘框架 | `partial` | [按需文件](on-demand.md)、[平台说明](platform-notes.md)：Windows 按需注册、按需下载、释放空间、始终保留、切换边界、崩溃恢复和注销，在原生 ARM64 上通过引擎运行时针对服务器 35.0.2 运行 | 配对守护进程与界面、另一个 origin、占位文件下的删除保护与离线、卸载时注销；`virtualFiles` 为 false；macOS 部分按用户 2026-11-11 的决定不在 0.1.0 范围内 |
 
 ## 联合发布验收（B14）
@@ -170,7 +171,7 @@
 | 7 关闭、重新打开、从托盘退出 | `passed` | 界面和进程 |
 | 8 在运行中的副本上重装 | `partial` | 界面和进程；此后安装程序调用 `daemon.prepareUpdate`，自检不再因 `CANCELLED` 失败（`SyncDFolderErrorContracts`），安装包冒烟测试中 0.1.0 → 0.1.1 测试升级通过；未在界面中重新运行 |
 | 9 移除账号、卸载 | `passed` | 界面、注册表、服务器令牌列表 |
-| 休眠与唤醒 | `not run` | 需要用户 |
+| 休眠与唤醒 | `passed (simulated)` | 针对后端运行 `sleep-resume`，未经过界面或已安装的包（R15）；用户已决定不让这台机器真实休眠 |
 
 ## 硬件和环境限制
 

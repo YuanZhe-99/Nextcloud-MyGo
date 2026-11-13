@@ -863,6 +863,8 @@ int main(int argc, char **argv) {
       return 0;
     }
     const auto scenario = app.arguments().value(1).mid(2);
+    if (scenario.startsWith("sleep-relay="))
+      return sleepRelay(scenario.section('=', 1).toUInt());
     const bool isolated = scenario == "network-chunked" ||
                           scenario.section('=', 0, 0) == "network-uncertain" ||
                           scenario == "network-large" ||
@@ -871,7 +873,7 @@ int main(int argc, char **argv) {
         scenario.section('=', 0, 0) == "network-active" ||
         scenario == "file-safety" || scenario == "multi-account" ||
         scenario == "switch-quota" || scenario == "slow-server" ||
-        scenario.startsWith("switch-kill=") ||
+        scenario == "sleep-resume" || scenario.startsWith("switch-kill=") ||
         scenario.startsWith("switch-recover=")) {
       // Chunk sessions and destructive lost-reply cases need a server of
       // their own; the others accept one when its root is acknowledged.
@@ -885,6 +887,8 @@ int main(int argc, char **argv) {
         largeTransferAcceptance();
       if (scenario == "file-safety")
         fileSafetyTransferAcceptance();
+      if (scenario == "sleep-resume")
+        sleepResumeAcceptance();
       networkAcceptance(scenario);
       return 0;
     }

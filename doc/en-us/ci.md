@@ -1,8 +1,9 @@
 # Continuous integration and releases
 
 GitHub Actions in the public repository build and test Nextcloud-MyGo natively on Windows x64 and
-ARM64 for every push and pull request, and publish a `v*` tag as a pre-release with both
-installers. Only `GITHUB_TOKEN` is used; no workflow signs anything.
+ARM64 for every push and pull request, and publish a `v*` tag as a release with both installers.
+Besides `GITHUB_TOKEN`, only the release uses a secret, `MYGO_UPDATER_PRIVATE_KEY`, which signs the
+in-app updates; nothing is Authenticode-signed.
 
 | Workflow | Runs on | Does |
 |---|---|---|
@@ -20,6 +21,9 @@ runs on its own hardware: no job cross-compiles or emulates the other architectu
 CI is native x64 evidence too, which this ARM64 development machine cannot give
 ([platform notes](platform-notes.md)). On ARM64 the x64 host Qt's tools (moc, rcc, lrelease) run
 under the runner's x64 emulation, exactly as in the local builds; nothing they produce ships.
+The step "Cloud Files diagnostics" prints the image name and the state of the Cloud Files minifilter
+(`sc query/qc cldflt`, `fltmc`). Where Cloud Files cannot answer, `SyncDOnDemandContracts` reports its
+registration cases as skipped ([on-demand](on-demand.md#verification)).
 
 ## Steps of `build.yml`
 
@@ -134,13 +138,21 @@ Pushing a tag `vX.Y.Z` (after the commit, AGENTS.md) runs `release.yml`:
 2. `build.yml` with `package` on both architectures: everything above, then the installer, the
    architecture check of every PE file in the staged package (the ARM64 Visual C++ runtime is the
    accepted ARM64X exception, [packaging](packaging.md#architecture-check)), and the license bundle.
-3. A GitHub release marked **pre-release**, titled as an unsigned test build, with
-   `Nextcloud-MyGo-X.Y.Z-arm64-test-setup.exe`, `Nextcloud-MyGo-X.Y.Z-x64-test-setup.exe`,
-   `Nextcloud-MyGo-X.Y.Z-licenses.zip` and `SHA256SUMS` over the three. The notes say that the
-   installers are unsigned, that automatic updates are off and that the server tier ran outside CI.
+   With the secret `MYGO_UPDATER_PRIVATE_KEY`, passed only to the Package step, each package also gets
+   its signed update, `Nextcloud-MyGo-X.Y.Z-<arch>-update.zip` and `update-windows-<goarch>.json`
+   ([packaging](packaging.md#signed-updates)), uploaded with it.
+3. A GitHub release with `Nextcloud-MyGo-X.Y.Z-arm64-test-setup.exe`,
+   `Nextcloud-MyGo-X.Y.Z-x64-test-setup.exe`, `Nextcloud-MyGo-X.Y.Z-licenses.zip`, the update files of
+   both architectures when there are any (one architecture alone fails the job) and `SHA256SUMS` over
+   all of them. With the updates it is marked **latest**, the release installed copies read their
+   manifests from, and titled as a test build whose installers are not code-signed; without them it is
+   a **pre-release** titled as an unsigned test build, and installed copies cannot update to it. The
+   notes say that the installers are not Authenticode-signed, so SmartScreen warns on the first install,
+   whether in-app updates are available, and that the server tier ran outside CI.
 
-The installers are never signed in CI: signing waits for a trusted signing chain (PLAN.md §16.2),
-whose keys will live only in GitHub secrets and the maintainer's offline copy.
+The installers are never Authenticode-signed: there is no Windows code-signing certificate. The update
+key lives only in the GitHub secret and the maintainer's offline copy; `tools/pkg sign-update` reads it
+from the environment and never prints it, and `mygo build` never gets it.
 
 ### License bundle
 

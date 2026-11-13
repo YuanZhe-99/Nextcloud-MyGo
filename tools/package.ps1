@@ -5,15 +5,23 @@
 # a SyncD rebuilt in build/syncd-<Arch>-testversion from -SyncDBuild's cache settings, and the manifest
 # (marked testVersion), without editing any committed file. SyncD's dependencies must come from
 # tools/bootstrap-deps.ps1: the license bundle (tools/licenses.ps1) needs the texts it stages.
-# Side effects: writes build/package/<Arch> (build/package/<Arch>-testversion) and
-# build/package/Nextcloud-MyGo-<version>[-testversion]-<arch>-test-setup.exe; never writes into -SyncDBuild,
-# never installs, registers or signs anything. Every step is bounded; see doc/en-us/packaging.md.
+# With MYGO_UPDATER_PRIVATE_KEY set (the release secret, or a throwaway `mygo keygen` key for tests) the
+# UI gets the update channel of mygo.json's `updates` and the installer a signed update; without it the
+# package offers and publishes no updates. -UpdatePublicKey, with -TestVersion only, trusts another key
+# than mygo.json's, for update tests with a throwaway key.
+# Side effects: writes build/package/<Arch> (build/package/<Arch>-testversion),
+# build/package/Nextcloud-MyGo-<version>[-testversion]-<arch>-test-setup.exe and, signed, the archive and
+# update-windows-<goarch>.json in build/package/update-<Arch>[-testversion]; never writes into -SyncDBuild,
+# never installs, registers or Authenticode-signs anything, never prints the key. Every step is bounded;
+# see doc/en-us/packaging.md.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][ValidateSet('ARM64', 'x64')][string]$Arch,
     [string]$SyncDBuild = '',
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$TestVersion = ''
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$TestVersion = '',
+    [string]$UpdatePublicKey = ''
 )
+if ($UpdatePublicKey -and -not $TestVersion) { throw '-UpdatePublicKey is for -TestVersion packages only; releases trust mygo.json''s key' }
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $goarch = @{ ARM64 = 'arm64'; x64 = 'amd64' }[$Arch]
@@ -29,7 +37,9 @@ function Invoke-Step([string]$Name, [int]$Seconds, [string]$File, [string[]]$Arg
     foreach ($a in $Arguments) { $info.ArgumentList.Add($a) }
     $info.UseShellExecute = $false
     $info.WorkingDirectory = $root
-    foreach ($k in $Environment.Keys) { $info.Environment[$k] = $Environment[$k] }
+    foreach ($k in $Environment.Keys) {
+        if ($null -eq $Environment[$k]) { [void]$info.Environment.Remove($k) } else { $info.Environment[$k] = $Environment[$k] }
+    }
     $p = [Diagnostics.Process]::Start($info)
     if (-not $p.WaitForExit($Seconds * 1000)) {
         $p.Kill($true)
@@ -78,9 +88,10 @@ Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $work | Out-Null
 $tool = Join-Path $out 'pkg.exe'
 $payload = Join-Path $root 'packaging/windows/setup/payload.zip'
-$version = (Get-Content (Join-Path $root 'mygo.json') -Raw | ConvertFrom-Json).version
+$config = Get-Content (Join-Path $root 'mygo.json') -Raw | ConvertFrom-Json
+$version = $config.version
 $name = $version
-$stamp = @{}
+$ldflags = @()
 $testFlags = @()
 if ($TestVersion) {
     if ($TestVersion -eq $version) { throw "-TestVersion must differ from mygo.json's $version" }
@@ -88,9 +99,21 @@ if ($TestVersion) {
     $name = "$version-testversion"
     # Only this build links the test version (internal/version.Version is a variable for this);
     # MYGO_LDFLAGS come after mygo build's own -X flags, so they win.
-    $stamp = @{ MYGO_LDFLAGS = "-X github.com/YuanZhe-99/Nextcloud-MyGo/internal/version.Version=$version -X github.com/egoist/mygo.packageVersion=$version" }
+    $ldflags += "-X github.com/YuanZhe-99/Nextcloud-MyGo/internal/version.Version=$version -X github.com/egoist/mygo.packageVersion=$version"
     $testFlags = @('-test-version', $version)
 }
+# The update channel exists only in a package whose update is signed (doc/en-us/packaging.md, Updates).
+$signing = [bool]$env:MYGO_UPDATER_PRIVATE_KEY
+$updateKey = if ($UpdatePublicKey) { $UpdatePublicKey.Trim() } else { $config.updates.publicKey }
+$updates = Join-Path $out "update-$Arch$(if ($TestVersion) { '-testversion' })"
+if ($signing) {
+    if (-not $updateKey -or -not $config.updates.github) { throw 'mygo.json has no updates.publicKey and updates.github' }
+    $ldflags += "-X github.com/YuanZhe-99/Nextcloud-MyGo/internal/release.UpdateFeed=https://github.com/$($config.updates.github)/releases/latest/download/ -X github.com/YuanZhe-99/Nextcloud-MyGo/internal/release.UpdateKey=$updateKey"
+}
+# mygo build never gets the key: its own update archive would hold the UI alone, which must not update
+# without SyncD (PLAN.md §16.2).
+$stamp = @{ MYGO_UPDATER_PRIVATE_KEY = $null }
+if ($ldflags) { $stamp.MYGO_LDFLAGS = $ldflags -join ' ' }
 $setup = Join-Path $out "Nextcloud-MyGo-$name-$($Arch.ToLower())-test-setup.exe"
 $target = @{ GOOS = 'windows'; GOARCH = $goarch; CGO_ENABLED = '0' }
 try {
@@ -135,6 +158,12 @@ try {
     Write-Host "version ${version}: manifest, SyncD --version and UI agree$(if ($TestVersion) { ' (test version)' })"
     Invoke-Step 'installer' 300 'go' @('build', '-trimpath', '-tags', 'payload', '-o', $setup, './packaging/windows/setup') $target
     Invoke-Step 'check installer' 60 $tool @('check', '-arch', $Arch, $setup)
+    Remove-Item -Recurse -Force $updates -ErrorAction SilentlyContinue
+    if ($signing) {
+        Invoke-Step 'sign update' 120 $tool @('sign-update', '-arch', $Arch, '-version', $version, '-setup', $setup, '-key', $updateKey, '-out', $updates)
+    } else {
+        Write-Host 'MYGO_UPDATER_PRIVATE_KEY is not set: this package offers and publishes no updates'
+    }
 } finally {
     Remove-Item -Force $payload -ErrorAction SilentlyContinue
 }

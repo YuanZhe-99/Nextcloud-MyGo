@@ -295,7 +295,7 @@
   "AboutAbout": "The version you run, where its source lives, and how it updates.",
   "SectionUpdates": "Updates",
   "UpdateAvailable": "Version {version} is available",
-  "UpdateAvailableHint": "Signed and checked. It installs once sync reaches a safe point.",
+  "UpdateAvailableHint": "Its signature is checked before it installs, once sync reaches a safe point.",
   "ActionInstallRestart": "Install and restart",
   "Installing": "Installing…",
   "UpdateWaits": "The update waits until sync reaches a safe point: files are moving or an address is changing. It is tried again later.",

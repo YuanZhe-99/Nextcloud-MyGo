@@ -288,7 +288,7 @@
   "AboutAbout": "你正在运行的版本、源代码位置以及更新方式。",
   "SectionUpdates": "更新",
   "UpdateAvailable": "{version} 版可用",
-  "UpdateAvailableHint": "已签名并校验。同步到达安全点后安装。",
+  "UpdateAvailableHint": "安装前先校验签名，并等同步到达安全点。",
   "ActionInstallRestart": "安装并重启",
   "Installing": "正在安装…",
   "UpdateWaits": "更新会等同步到达安全点：有文件正在传输，或正在切换地址。稍后会再次尝试。",

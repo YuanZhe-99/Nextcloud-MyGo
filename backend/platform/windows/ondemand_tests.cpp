@@ -43,6 +43,47 @@ void require(bool value, const char *message) {
 /// step names each case so a failure says where it stopped.
 void step(const char *name) { std::fprintf(stderr, "STEP %s\n", name); }
 
+/// skipped is the exit code CTest reports as a skip (SKIP_RETURN_CODE).
+constexpr int skipped = 77;
+
+/// ownershipAnswers checks how simulated Cloud Files answers classify: an
+/// unavailable Cloud Files (as on Windows Server runners) is unsupported, never
+/// a folder owned by someone else, and an unexplained failure while the filter
+/// runs still refuses as owned (fail closed).
+void ownershipAnswers() {
+  const auto free = HRESULT_FROM_WIN32(ERROR_CLOUD_FILE_NOT_UNDER_SYNC_ROOT);
+  const struct {
+    long result;
+    bool running;
+    QString provider;
+    bool own;
+    QString want;
+  } cases[] = {
+      {free, true, {}, false, {}},
+      {free, false, {}, false, {}},
+      {S_OK, true, OnDemandRoot::provider, true, {}},
+      {S_OK, true, OnDemandRoot::provider, false, "FOLDER_OWNED"},
+      {S_OK, true, "OneDrive", false, "FOLDER_OWNED"},
+      {HRESULT_FROM_WIN32(ERROR_CLOUD_FILE_PROVIDER_NOT_RUNNING), true, {}, false,
+       "UNSUPPORTED_FOLDER_MODE"},
+      {HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED), true, {}, false,
+       "UNSUPPORTED_FOLDER_MODE"},
+      {HRESULT_FROM_WIN32(ERROR_INVALID_FUNCTION), true, {}, false,
+       "UNSUPPORTED_FOLDER_MODE"},
+      {HRESULT_FROM_WIN32(ERROR_ACCESS_DENIED), false, {}, false,
+       "UNSUPPORTED_FOLDER_MODE"},
+      {HRESULT_FROM_WIN32(ERROR_ACCESS_DENIED), true, {}, false, "FOLDER_OWNED"},
+  };
+  for (const auto &c : cases)
+    if (OnDemandRoot::ownershipReason(c.result, c.running, c.provider, c.own) !=
+        c.want) {
+      std::fprintf(stderr, "case 0x%08lx running=%d provider=%s\n",
+                   static_cast<unsigned long>(c.result), c.running,
+                   qPrintable(c.provider));
+      throw std::runtime_error("a Cloud Files answer was misclassified");
+    }
+}
+
 /// OfflineCredentials gives the account a network manager without secrets;
 /// every request it creates goes to a closed loopback port.
 class OfflineCredentials final : public OCC::AbstractCredentials {
@@ -217,7 +258,39 @@ int main(int argc, char **argv) {
       require(kept.open(QIODevice::WriteOnly) && kept.write("kept") == 4,
               "kept fixture missing");
     }
-    require(OnDemandRoot::available(), "CFAPI plugin did not load");
+    step("ownership answers (simulated Cloud Files results)");
+    ownershipAnswers();
+
+    // The registration cases need a Cloud Files that answers for this volume.
+    // Where it cannot, on-demand must read as unsupported and the cases are
+    // reported as skipped, never as passed.
+    const auto running = OnDemandRoot::cloudFilesRunning();
+    CF_SYNC_ROOT_PROVIDER_INFO probeInfo{};
+    DWORD probeLength = 0;
+    const auto probe = CfGetSyncRootInfoByPath(
+        reinterpret_cast<LPCWSTR>(QDir::toNativeSeparators(root).utf16()),
+        CF_SYNC_ROOT_INFO_PROVIDER, &probeInfo, sizeof(probeInfo), &probeLength);
+    if (probe != HRESULT_FROM_WIN32(ERROR_CLOUD_FILE_NOT_UNDER_SYNC_ROOT))
+      std::fprintf(stderr, "NOTE CfGetSyncRootInfoByPath(%s) 0x%08lx, CldFlt %s\n",
+                   qPrintable(QDir::toNativeSeparators(root)),
+                   static_cast<unsigned long>(probe),
+                   running ? "running" : "not running");
+    if (OnDemandRoot::ownershipReason(probe, running, {}, false) ==
+        "UNSUPPORTED_FOLDER_MODE") {
+      require(OnDemandRoot::ownershipError(root, identity) ==
+                  "UNSUPPORTED_FOLDER_MODE",
+              "unavailable Cloud Files read as a folder owner");
+      require(running || !OnDemandRoot::available(),
+              "on-demand offered without the Cloud Files filter");
+      std::fprintf(stderr,
+                   "SKIP Cloud Files registration cases: Cloud Files cannot "
+                   "answer here (CfGetSyncRootInfoByPath 0x%08lx, CldFlt %s)\n",
+                   static_cast<unsigned long>(probe),
+                   running ? "running" : "not running");
+      return skipped;
+    }
+    require(OnDemandRoot::available(),
+            "CFAPI plugin did not load or the Cloud Files filter is not running");
 
     step("ownership before registration");
     require(OnDemandRoot::ownershipError(root, identity).isEmpty(),
