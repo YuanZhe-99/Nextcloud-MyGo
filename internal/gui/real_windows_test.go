@@ -50,7 +50,14 @@ func startReal(t *testing.T, ctx context.Context) *realApp {
 	hash := sha256.Sum256([]byte(profile))
 	dir := filepath.Join(os.Getenv("LOCALAPPDATA"), "Nextcloud-MyGo", "syncd", fmt.Sprintf("%x", hash[:12]))
 	t.Cleanup(func() {
-		if err := os.RemoveAll(dir); err != nil {
+		// Retried: a scanner may still hold a just-closed file (seen on hosted runners).
+		var err error
+		for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(200 * time.Millisecond) {
+			if err = os.RemoveAll(dir); err == nil || time.Now().After(deadline) {
+				break
+			}
+		}
+		if err != nil {
 			t.Error(err)
 		}
 	})

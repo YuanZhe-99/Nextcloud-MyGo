@@ -34,7 +34,7 @@ func realDaemon(t *testing.T, ctx context.Context, name string) (profile, exe st
 	hash := sha256.Sum256([]byte(profile))
 	dir := filepath.Join(os.Getenv("LOCALAPPDATA"), "Nextcloud-MyGo", "syncd", fmt.Sprintf("%x", hash[:12]))
 	t.Cleanup(func() {
-		if err := os.RemoveAll(dir); err != nil {
+		if err := removeProfileDir(dir); err != nil {
 			t.Error(err)
 		}
 	})
@@ -47,6 +47,17 @@ func realDaemon(t *testing.T, ctx context.Context, name string) (profile, exe st
 		return cmd
 	}
 	return profile, exe, start
+}
+
+// removeProfileDir removes a test profile after its daemon exited, retrying for up to 10 s:
+// a scanner such as Defender may still hold a just-closed file (seen on hosted runners).
+func removeProfileDir(dir string) error {
+	var err error
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(200 * time.Millisecond) {
+		if err = os.RemoveAll(dir); err == nil || time.Now().After(deadline) {
+			return err
+		}
+	}
 }
 
 // rawPipe is a hostile or careless client: it writes arbitrary bytes and reads whole frames only if asked.

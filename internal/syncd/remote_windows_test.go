@@ -48,7 +48,7 @@ func TestRealPipeUnavailableStopsINV11INV12(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if err := os.RemoveAll(dir); err != nil {
+		if err := removeProfileDir(dir); err != nil {
 			t.Error(err)
 		}
 	})
@@ -125,7 +125,7 @@ func TestRealPipeINV12INV13(t *testing.T) {
 	hash := sha256.Sum256([]byte(profile))
 	dir := filepath.Join(os.Getenv("LOCALAPPDATA"), "Nextcloud-MyGo", "syncd", fmt.Sprintf("%x", hash[:12]))
 	t.Cleanup(func() {
-		if err := os.RemoveAll(dir); err != nil {
+		if err := removeProfileDir(dir); err != nil {
 			t.Error(err)
 		}
 	})
@@ -218,7 +218,7 @@ func TestRealPipeCrashBackoffActivates(t *testing.T) {
 	hash := sha256.Sum256([]byte(profile))
 	dir := filepath.Join(os.Getenv("LOCALAPPDATA"), "Nextcloud-MyGo", "syncd", fmt.Sprintf("%x", hash[:12]))
 	t.Cleanup(func() {
-		if err := os.RemoveAll(dir); err != nil {
+		if err := removeProfileDir(dir); err != nil {
 			t.Error(err)
 		}
 	})
@@ -292,7 +292,7 @@ func TestRealConnectOnlyNeverStarts(t *testing.T) {
 	profile := "ipc-connect-only-" + operationKey()
 	hash := sha256.Sum256([]byte(profile))
 	dir := filepath.Join(os.Getenv("LOCALAPPDATA"), "Nextcloud-MyGo", "syncd", fmt.Sprintf("%x", hash[:12]))
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Cleanup(func() { _ = removeProfileDir(dir) })
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	r := ConnectRemote(ctx, profile, exe)
@@ -321,7 +321,7 @@ func TestRealPrepareUpdate(t *testing.T) {
 	hash := sha256.Sum256([]byte(profile))
 	dir := filepath.Join(os.Getenv("LOCALAPPDATA"), "Nextcloud-MyGo", "syncd", fmt.Sprintf("%x", hash[:12]))
 	t.Cleanup(func() {
-		if err := os.RemoveAll(dir); err != nil {
+		if err := removeProfileDir(dir); err != nil {
 			t.Error(err)
 		}
 	})
