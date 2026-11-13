@@ -120,6 +120,15 @@ struct NetworkTestAccess {
     c.networkOutcome(account, *probe, reason, 5);
     return state.networkBlocked;
   }
+  /// priority loads the account's trusted addresses through the production
+  /// refresh. Returns: the policy priority configured for endpoint.
+  static int priority(Control &c, const QString &account,
+                      const QString &endpoint) {
+    c.network_ = std::make_unique<Control::NetworkState>();
+    c.network_->clock.start();
+    c.refreshNetwork(account);
+    return c.network_->accounts.at(account).nodes.at(endpoint).config.priority;
+  }
   /// history drives aggregate persistence under the production outbox
   /// transaction.
   static void history(Control &c, const QString &account) {
@@ -568,6 +577,60 @@ void recoveringProbes() {
   }
 #endif
 }
+/// kindPriorities pins PLAN §8.4's default priority for each address kind:
+/// home 90, vpn 70, internet 50; the sign-in address is internet. Notes: a
+/// preference among trusted addresses, never a trust input (INV-04/15).
+void kindPriorities() {
+#ifdef SYNCD_WITH_ENGINE
+  QTemporaryDir root;
+  require(root.isValid(), "priority profile unavailable");
+  const auto path = root.filePath("control.sqlite"), connection = uuid();
+  auto db = QSqlDatabase::addDatabase("QSQLITE", connection);
+  db.setDatabaseName(path);
+  {
+    Control c(path);
+    call(c, "accounts.login.start",
+         {{"canonicalBaseUrl", "https://primary.example.invalid/"}});
+    require(db.open(), "priority fixture DB unavailable");
+    sql(db, "UPDATE accounts SET "
+            "state='ready',uid='owned-user',root_id='owned-root',login_name='"
+            "owned-user'");
+    QSqlQuery q(db);
+    require(q.exec("SELECT id,endpoint_id FROM accounts") && q.next(),
+            "priority fixture account unavailable");
+    const auto account = q.value(0).toString(), primary = q.value(1).toString();
+    q.finish();
+    const struct {
+      const char *kind;
+      int priority;
+    } rows[] = {{"home", 90}, {"vpn", 70}, {"internet", 50}};
+    QStringList ids;
+    for (const auto &row : rows) {
+      ids.append(uuid());
+      q.prepare("INSERT INTO endpoints(id,account_id,name,base_url,approved,"
+                "state,expires,operation_id,kind) VALUES(?,?,?,?,1,'verified',"
+                "'',?,?)");
+      q.addBindValue(ids.last());
+      q.addBindValue(account);
+      q.addBindValue(QString("owned-") + row.kind);
+      q.addBindValue(QString("https://%1.example.invalid/").arg(row.kind));
+      q.addBindValue(uuid());
+      q.addBindValue(row.kind);
+      require(q.exec(), "priority endpoint reservation failed");
+      q.finish();
+    }
+    for (qsizetype i = 0; i < ids.size(); ++i)
+      require(NetworkTestAccess::priority(c, account, ids[i]) ==
+                  rows[i].priority,
+              "address kind priority drifted from PLAN §8.4");
+    require(NetworkTestAccess::priority(c, account, primary) == 50,
+            "sign-in address priority drifted from PLAN §8.4");
+    db.close();
+  }
+  db = {};
+  QSqlDatabase::removeDatabase(connection);
+#endif
+}
 /// requestConstraints keeps permissions, locks and throttling outside endpoint
 /// circuit and credential failures (PLAN §12.1, INV-04/13/14, N18).
 void requestConstraints() {
@@ -748,6 +811,7 @@ int main(int argc, char **argv) {
     privacyAndHistory();
     hardBusinessFailures();
     recoveringProbes();
+    kindPriorities();
     nativeResume();
     requestConstraints();
     std::puts(

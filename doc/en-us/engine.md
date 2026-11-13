@@ -113,7 +113,9 @@ the mid-body reset counted, a dead upload after a sleep read as `SYNC_FAILED` (s
 regression). The cycle after any unsuccessful one starts on a new network access manager for the
 account (`Account::resetNetworkAccessManager`), never on connections the failure may have left
 behind: with the old manager, the first listing after the network came back was never sent and the
-folder stayed in discovery (S05 regression, `interrupted-change`).
+folder stayed in discovery (S05 regression, `interrupted-change`). The engine gets the folder path
+with its trailing slash, as upstream requires: without it the exclude list (`sync-exclude.lst`)
+matched nothing and an interrupted download's `.<name>.~<id>` temporary file was uploaded (S05).
 
 Nextcloud writes a PUT that replaces an existing file over it in place, so a body cut short
 leaves the server copy truncated ([upstream](upstream.md#nextcloud-server-apis)). Its file cache

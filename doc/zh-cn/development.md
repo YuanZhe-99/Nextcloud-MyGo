@@ -194,7 +194,7 @@ N22）、`redirect`（N05）、`subpath`（N06）、`revoke-switch`（N17）、`
 
 `-Scenario data-safety` 针对一次性服务器运行数据安全与恢复用例
 （`backend/data_safety_acceptance.cpp`），每个用例使用自己的进程和配置目录；`-Case` 用于选择。
-`interrupted-change`（S05）让一个本地修改和一个远程修改停在传输中途，然后拒绝两个地址；
+`interrupted-change`（S05）让一个本地修改和一个远程修改停在传输中途，然后拒绝两个地址，且任何传输临时文件都不得到达服务器；
 `watcher`（S09、S10）在上传被扣住时于发现之后写入一个变化，并在控制线程忙碌时让监视缓冲区溢出；
 `root-denied`（S13）通过 ACL 拒绝列出映射根目录，然后恢复；`maintenance`（S14）用 `occ` 让实例
 进入维护模式；`partial-listing`（S14）移走挂载在文件夹内的 `files_external` 存储，使其列表以 207
@@ -241,7 +241,7 @@ M0 CTest 运行排除 `UtilityTest`，因为其中的启动测试会实际创建
 | 层 | 预算 | ARM64（原生） | x64（在 ARM64 主机上模拟） |
 |---|---|---|---|
 | `fast` | 2 分钟，无服务器 | `gofmt`、`go vet`、包含真实 Go↔C++ 管道测试的 `go test ./...`、全部 SyncD CTest 目标 | 为 amd64 构建的 `go test ./...`、全部 SyncD CTest 目标 |
-| `server` | 10 分钟，含容器 | 下文所有真实服务器场景，分六个并行通道 | 一个冒烟场景（在 `committed` 阶段的 `switch-kill`） |
+| `server` | 10 分钟，含容器 | 下文发布关键的真实服务器场景，分六个相隔 3 秒启动的并行通道，然后单独运行 `maintenance` | 一个冒烟场景（在 `committed` 阶段的 `switch-kill`） |
 
 服务器层用 `tools/test-server.ps1 -Start` 启动自己的一次性 Nextcloud（默认 `wslc`，在 Docker 能运行 Linux
 容器的地方用 `-Runtime docker`；GitHub 的 Windows 运行器不能，因此 [CI](ci.md) 只运行快速层），结束后用 `-Stop` 删除：一个带标签、使用匿名卷、只监听回环端口的容器；仅当本次运行拉取了镜像时才删除镜像；
@@ -249,12 +249,22 @@ M0 CTest 运行排除 `UtilityTest`，因为其中的启动测试会实际创建
 （`SYNCD_TEST_CA_*`）；不修改任何信任存储、hosts 文件或代理设置，TLS 检查始终开启。客户端通过夹具中继以
 `primary.syncd.test` 和 `alternate.syncd.test` 访问服务器，清理步骤和 `lifetime` 用例使用直接回环源。
 该层不需要私有服务器。`-ServerVersion` 选择服务器版本（默认 `35.0.2`，即最新版）；也要用上一个受支持主版本的
-最新发行版运行（2026-11-12 使用 `-ServerVersion 34.0.5`：ARM64 通过，用时 431.4 秒）。
+最新发行版运行（2026-11-13 使用 `-ServerVersion 34.0.5`：ARM64 通过，用时 498.2 秒）。2026-11-13 默认的 ARM64 层连续三次通过，用时 483.6、502.2 和
+539.0 秒（容器启动 66.1–105.9 秒，单独运行的 `maintenance` 67.5–68.1 秒）；`-Extended` 用时 566.3 秒，
+另加其三个通道的 115.2 秒；仿真 x64 冒烟用时 156.6 秒。
 
 每个用例都在独立的进程和配置目录中运行，因此每个用例都从健康的端点开始，而不必等待前一个用例留下的熔断历史：
 `network-active` 将 `upload`、`download` 和 `unacknowledged-upload` 作为独立用例运行，`network-uncertain`
 运行 `move`、`delete` 和 `final-move`（在 `tools/test-reauth-lifetime.ps1` 中用 `-Case` 选择），
-`switch-kill` 逐个运行 `-Stage`。相互独立的用例共享容器并在并行通道中运行。中继不再限速：
+`switch-kill` 逐个运行 `-Stage`，`switching` 和 `data-safety` 逐个运行 `-Case`。相互独立的用例共享容器并在并行通道中运行。
+默认层运行除八个切换和数据安全用例之外的所有场景：`tls-circuit`、`subpath`、`new-folder`、`root-change`、
+`names`、`watcher`、`root-denied` 和 `excluded` 只在 `-Extended` 下运行，位于预算之外的另外三个通道中。
+`maintenance` 让整个实例进入维护模式，因此最后单独运行。各通道相隔 3 秒启动：同时启动时，它们的首次未认证探测
+在新服务器上超出了 4 秒的公开探测截止时间。通道在 `lifetime`（直接访问服务器）之后恢复经中继的地址；
+曾有一个紧随其后的用例在没有中继的情况下运行。超过六个通道会让本机变慢，使受时序约束的用例错过其窗口
+（30 秒内的溢出审计、丢失的最终 MOVE 的故障切换）。一次性服务器关闭了暴力破解保护
+（`auth.bruteforce.protection.enabled=false`，已检查：失败的登录不留下尝试记录，也不产生延迟），
+因此吊销用例的失败登录不会拖慢其他通道的登录。中继不再限速：
 传输在某个字节偏移处被保持为未完成（`NetworkTunnel::setStallAfter`，仅作用于主地址或备用地址的中继，
 小于 1 MiB 的请求不受影响），再由用例指定的故障打断。用例剩余的大部分时间是守护进程自身的故障切换、
 熔断和协调时序，测试不缩短这些时序。
@@ -270,7 +280,7 @@ M0 CTest 运行排除 `UtilityTest`，因为其中的启动测试会实际创建
 它从不重放流程。其客户端在整个 `abort` 期间存在；它曾只存在于 75 秒的连接等待内，在较慢的账户删除中途关闭了自己的管道。守护进程拒绝删除账户时，`abort` 保留配置目录、根目录和状态文件并说明原因，
 因为只有根目录存在时，被中断的切换才能完成。
 
-预算之外、需显式开关的项目：`-Large` 加入 `network-large`（一个超过 4 GiB 的分块会话在 4 GiB 边界之后被切断，
+预算之外、需显式开关的项目：`-Extended` 加入上文列出的八个用例；`-Large` 加入 `network-large`（一个超过 4 GiB 的分块会话在 4 GiB 边界之后被切断，
 约 30 分钟，服务器需约 9 GiB 可用空间）；`-SharedServer` 加入针对 `NEXTCLOUD_TEST_*` 中已批准共享服务器的配对守护进程夹具
 `tools/test-login.ps1`：配对守护进程只信任公共受信任的证书链，因此不能使用一次性服务器。`wrong-instance`
 需要第二个实例，单独运行。

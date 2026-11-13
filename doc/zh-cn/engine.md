@@ -86,7 +86,8 @@ B05 引入围绕上游 `SyncEngine` 的进程内适配器，而非 CLI 子进程
 休眠后失效的上传会被读作 `SYNC_FAILED`（sleep-resume 回归）。任何不成功的周期之后，下一个
 周期为账号使用新的网络访问管理器（`Account::resetNetworkAccessManager`），绝不沿用故障可能
 遗留的连接：沿用旧管理器时，网络恢复后的第一个列表请求始终没有发出，目录一直停在发现阶段
-（S05 回归，`interrupted-change`）。
+（S05 回归，`interrupted-change`）。引擎按上游要求拿到带末尾斜杠的目录路径：没有斜杠时排除列表
+（`sync-exclude.lst`）什么都不匹配，被中断下载的 `.<name>.~<id>` 临时文件会被上传（S05）。
 
 Nextcloud 把替换已有文件的 PUT 直接覆盖写入原文件，因此正文被截断时服务器副本也被截断
 （[上游](upstream.md#nextcloud-服务器-api)）。其文件缓存在有人读取该文件之前保留旧 ETag；

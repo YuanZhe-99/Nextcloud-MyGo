@@ -153,11 +153,22 @@ struct Mapping {
                                        QUrl::toPercentEncoding(name, "/")));
   }
 };
-/// remoteHash reads one remote file; a missing one has no hash.
+/// remoteHash reads one remote file; a missing one has no hash. Notes: a file
+/// the running cycle holds locked (423) or a server busy with parallel lanes
+/// (5xx, no answer) is read again for up to 10 s; it never counts as missing.
 QByteArray remoteHash(const Mapping &m, const QString &name) {
-  const auto reply = request("GET", m.path(name));
+  auto reply = request("GET", m.path(name));
+  for (int attempt = 0; attempt < 20 && (reply.status == 0 ||
+                                         reply.status == 423 ||
+                                         reply.status >= 500);
+       ++attempt) {
+    spin(500);
+    reply = request("GET", m.path(name));
+  }
   if (reply.status == 404)
     return {};
+  if (reply.status != 200)
+    std::fprintf(stderr, "remote read: HTTP %d\n", reply.status);
   require(reply.status == 200, "owned remote read failed");
   return sha256(reply.body);
 }
@@ -217,8 +228,14 @@ Mapping mapFolder(Control &c, const AcceptanceCalls &calls,
                   const QString &root, const QString &account,
                   const QString &sub = {}) {
   Mapping m;
-  m.uid = QJsonDocument::fromJson(
-              request("GET", "ocs/v2.php/cloud/user?format=json").body)
+  // A server busy with parallel lanes is asked again for up to 10 s.
+  auto user = request("GET", "ocs/v2.php/cloud/user?format=json");
+  for (int attempt = 0; attempt < 20 && user.status != 200; ++attempt) {
+    std::fprintf(stderr, "fixture user: HTTP %d\n", user.status);
+    spin(500);
+    user = request("GET", "ocs/v2.php/cloud/user?format=json");
+  }
+  m.uid = QJsonDocument::fromJson(user.body)
               .object()
               .value("ocs")
               .toObject()
@@ -498,6 +515,9 @@ void interruptedChange(Control &c, const AcceptanceCalls &calls,
               decisions(c).isEmpty() && calls.binding(account) == binding,
           "owned S05 loss left a copy, a decision or another address");
   const auto reason = folder(c, m.folder).value("reasonCode").toString();
+  // An interrupted download leaves .<name>.~<id> behind; one is planted too,
+  // so the check does not depend on which transfer the cut caught.
+  writeLocal(m.local + "/.planted.bin.~0123abcd", randomContent(4096));
   cut(false);
   converge(c, calls, m,
            [&] {
@@ -509,11 +529,16 @@ void interruptedChange(Control &c, const AcceptanceCalls &calls,
   require(sameFiles(m.local, {"edit.bin", "remote.bin"}) &&
               calls.binding(account).first == binding.first,
           "owned S05 recovery left a conflict copy or switched address");
+  // Upstream's exclude list (`]*.~*`) keeps transfer temporaries local.
+  const auto listing = request("PROPFIND", m.path(), {}, {{"Depth", "1"}});
+  require(listing.status == 207 && listing.body.count("<d:response>") == 3 &&
+              !listing.body.contains(".~"),
+          "owned S05 a transfer's temporary file reached the server");
   std::printf("PASS data-safety S05: a 5 MiB local and a 5 MiB remote "
               "modification (%d upload, %d download unfinished) cut with both "
               "addresses down end as %s; each side kept a whole version, the "
-              "old one where cut, no conflict copy, same address, then "
-              "converge\n",
+              "old one where cut, no conflict copy, no temporary file sent, "
+              "same address, then converge\n",
               uploading, downloading, qPrintable(word(reason)));
 }
 

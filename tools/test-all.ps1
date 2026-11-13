@@ -4,6 +4,8 @@
 #   -ServerVersion picks the disposable server's Nextcloud release (default the latest tested one;
 #   run the previous supported major too, PLAN.md §15.3).
 #   -Large adds the opt-in above-4-GiB chunk scenario (about 30 min, outside the budget).
+#   -Extended adds the eight switching and data-safety cases outside the release-critical set in three
+#   more lanes after the default ones (about 2.5 min, outside the budget).
 #   -SharedServer adds the paired-daemon login fixture against the already approved server in
 #   NEXTCLOUD_TEST_* (outside the budget: the paired daemon trusts only a publicly trusted chain).
 #   -Build selects the SyncD tree (default build/syncd-<arch>).
@@ -18,6 +20,7 @@ param(
     [ValidateSet('wslc', 'docker')][string]$Runtime = 'wslc',
     [ValidatePattern('^\d+\.\d+\.\d+$')][string]$ServerVersion = '35.0.2',
     [switch]$Large,
+    [switch]$Extended,
     [switch]$SharedServer,
     [string]$Build = ''
 )
@@ -90,11 +93,15 @@ function Lanes([object[]]$Groups) {
     $exe = Join-Path $release 'syncd_reauth_tests.exe'
     $children = @()
     foreach ($group in $Groups) {
+        # Lanes start 3 s apart: all sign-ins and first probes at once outran the 4 s public probe
+        # deadline on a fresh server (NETWORK_UNAVAILABLE at the first endpoints.stage).
+        if ($children) { Start-Sleep -Seconds 3 }
         $lines = foreach ($case in $group) {
             $extra = if (-not $case[2]) { '' } elseif ($case[1] -eq 'switch-kill') { " -Stage '$($case[2])'" } else { " -Case '$($case[2])'" }
-            # The lifetime case addresses the fixture server directly; the others go through the relay names.
-            $url = if ($case[1] -eq 'lifetime') { '$env:NEXTCLOUD_TEST_URL = $env:NEXTCLOUD_TEST_CLEANUP_URL; ' } else { '' }
-            "`$w = [Diagnostics.Stopwatch]::StartNew(); try { $url& '$wrapper' -Executable '$exe' -Scenario '$($case[1])'$extra | Where-Object { `$_ -match '^\s+step at ' }; 'PASS {0,-34} {1,7:N1} s' -f '$($case[0])', `$w.Elapsed.TotalSeconds } catch { 'FAIL {0,-34} {1,7:N1} s: {2}' -f '$($case[0])', `$w.Elapsed.TotalSeconds, `$_.Exception.Message; exit 1 }"
+            # The lifetime case addresses the fixture server directly; the others go through the relay names,
+            # so the lane's address comes back after it (a later case once ran unrelayed and unheld).
+            $url, $restore = if ($case[1] -eq 'lifetime') { '$relayed = $env:NEXTCLOUD_TEST_URL; $env:NEXTCLOUD_TEST_URL = $env:NEXTCLOUD_TEST_CLEANUP_URL; ', '$env:NEXTCLOUD_TEST_URL = $relayed; ' } else { '', '' }
+            "`$w = [Diagnostics.Stopwatch]::StartNew(); try { $url& '$wrapper' -Executable '$exe' -Scenario '$($case[1])'$extra | Where-Object { `$_ -match '^\s+step at ' }; $restore'PASS {0,-34} {1,7:N1} s' -f '$($case[0])', `$w.Elapsed.TotalSeconds } catch { 'FAIL {0,-34} {1,7:N1} s: {2}' -f '$($case[0])', `$w.Elapsed.TotalSeconds, `$_.Exception.Message; exit 1 }"
         }
         $info = [Diagnostics.ProcessStartInfo]::new((Join-Path $PSHOME 'pwsh'))
         foreach ($a in '-NoProfile', '-NonInteractive', '-Command', (($lines -join '; ') + "; exit 0")) { $info.ArgumentList.Add($a) }
@@ -168,14 +175,29 @@ try {
             # Every case below uses its own process, profile, relay and remote collection, so the
             # cases run in parallel lanes; each lane stops at its first failure and a failure stops
             # every lane. Most of a case's time is the daemon's own failover and recovery timing.
+            # Six lanes, as before the switching and data-safety cases joined: a seventh made the host slow
+            # enough for a lost final MOVE to miss its failover window once, and nine made an overflow audit
+            # miss its 30 s window. -Extended adds the cases outside the release-critical set in three lanes.
             Lanes @(
-                , @(@('active upload', 'network-active', 'upload'), @('active download', 'network-active', 'download'), @('active lost PUT reply', 'network-active', 'unacknowledged-upload'))
-                , @(@('lost MOVE reply', 'network-uncertain', 'move'), @('lost DELETE reply', 'network-uncertain', 'delete'), @('lost final MOVE reply', 'network-uncertain', 'final-move'), @('switch held past its window', 'switch-quota', ''))
-                , @(@('kill at prepared', 'switch-kill', 'prepared'), @('kill at quiescing', 'switch-kill', 'quiescing'), @('kill at verifying', 'switch-kill', 'verifying'), @('file safety, 100 deletions', 'file-safety-bulk', ''))
-                , @(@('kill at committed', 'switch-kill', 'committed'), @('kill at reconciling', 'switch-kill', 'reconciling'), @('file safety', 'file-safety', ''))
-                , @(@('chunk session resume', 'network-chunked', ''), @('held revocation', 'held-revocation', ''), @('slow server stays healthy', 'slow-server', ''), @('sleep and resume, simulated', 'sleep-resume', ''))
-                , @(@('network failover and fixed target', 'network', ''), @('renewal lifetime', 'lifetime', ''), @('two accounts, two folders each', 'multi-account', ''))
+                , @(@('kill at prepared', 'switch-kill', 'prepared'), @('kill at quiescing', 'switch-kill', 'quiescing'), @('switch: automatic', 'switching', 'auto-switch'), @('file safety', 'file-safety', ''), @('switch: TLS trust', 'switching', 'tls-trust'))
+                , @(@('kill at verifying', 'switch-kill', 'verifying'), @('kill at committed', 'switch-kill', 'committed'), @('switch: redirect', 'switching', 'redirect'), @('switch: revoked app password', 'switching', 'revoke-switch'), @('sleep and resume, simulated', 'sleep-resume', ''))
+                , @(@('kill at reconciling', 'switch-kill', 'reconciling'), @('chunk session resume', 'network-chunked', ''), @('switch: TLS and sign-in', 'switching', 'tls-auth'))
+                , @(@('active upload', 'network-active', 'upload'), @('active download', 'network-active', 'download'), @('active lost PUT reply', 'network-active', 'unacknowledged-upload'), @('switch: automatic fallback', 'switching', 'auto-fallback'), @('data: journal kept', 'data-safety', 'journal'), @('data: root replaced', 'data-safety', 'root-replaced'), @('data: partial listing', 'data-safety', 'partial-listing'), @('held revocation', 'held-revocation', ''), @('slow server stays healthy', 'slow-server', ''))
+                , @(@('lost MOVE reply', 'network-uncertain', 'move'), @('lost DELETE reply', 'network-uncertain', 'delete'), @('lost final MOVE reply', 'network-uncertain', 'final-move'), @('switch held past its window', 'switch-quota', ''), @('switch: late epoch', 'switching', 'late-epoch'))
+                , @(@('network failover and fixed target', 'network', ''), @('renewal lifetime', 'lifetime', ''), @('two accounts, two folders each', 'multi-account', ''), @('data: interrupted change', 'data-safety', 'interrupted-change'), @('data: discovery killed', 'data-safety', 'discovery-kill'), @('data: revocation', 'data-safety', 'revocation'), @('file safety, 100 deletions', 'file-safety-bulk', ''))
             )
+            if ($Extended) {
+                $watch = [Diagnostics.Stopwatch]::StartNew()
+                Lanes @(
+                    , @(@('switch: TLS circuit', 'switching', 'tls-circuit'), @('switch: subpath', 'switching', 'subpath'))
+                    , @(@('switch: new folder', 'switching', 'new-folder'), @('switch: root changed', 'switching', 'root-change'), @('data: names', 'data-safety', 'names'))
+                    , @(@('data: watcher boundary', 'data-safety', 'watcher'), @('data: root denied', 'data-safety', 'root-denied'), @('data: excluded trees', 'data-safety', 'excluded'))
+                )
+                $results.Add([pscustomobject]@{ Name = 'extended lanes'; Seconds = $watch.Elapsed.TotalSeconds; Outside = $true })
+                Write-Output ('PASS {0,-34} {1,7:N1} s (opt-in, outside budget)' -f 'extended lanes', $watch.Elapsed.TotalSeconds)
+            }
+            # Maintenance mode is instance-wide, so it runs after every lane, alone.
+            Lanes @(, @(, @('data: maintenance mode', 'data-safety', 'maintenance')))
             if ($Large) { Step 'above-4-GiB chunk resume' { Acceptance 'network-large' } -OutsideBudget }
         }
     }

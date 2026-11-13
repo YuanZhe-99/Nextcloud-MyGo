@@ -239,7 +239,7 @@ the daemon's own. Each case takes 40–110 s on ARM64.
 `-Scenario data-safety` runs the data-safety and recovery cases against the disposable server
 (`backend/data_safety_acceptance.cpp`), each in its own process and profile; `-Case` selects them.
 `interrupted-change` (S05) holds a local and a remote modification mid-transfer and then refuses both
-addresses; `watcher` (S09, S10) writes a change after discovery while an upload is held, and
+addresses, and no transfer temporary file may reach the server; `watcher` (S09, S10) writes a change after discovery while an upload is held, and
 overflows the watch buffer while the control thread is busy; `root-denied` (S13) denies listing of
 the mapped root through its ACL and restores it; `maintenance` (S14) puts the instance into
 maintenance mode with `occ`; `partial-listing` (S14) takes away a `files_external` storage mounted
@@ -294,7 +294,7 @@ the same or on the other architecture.
 | Tier | Budget | ARM64 (native) | x64 (emulated on ARM64 hosts) |
 |---|---|---|---|
 | `fast` | 2 min, no server | `gofmt`, `go vet`, `go test ./...` with the real Go↔C++ pipe tests, all SyncD CTest targets | `go test ./...` built for amd64, all SyncD CTest targets |
-| `server` | 10 min including the container | every real-server scenario below, in six parallel lanes | one smoke scenario (`switch-kill` at `committed`) |
+| `server` | 10 min including the container | the release-critical real-server scenarios below in six parallel lanes started 3 s apart, then `maintenance` alone | one smoke scenario (`switch-kill` at `committed`) |
 
 The server tier starts its own disposable Nextcloud with `tools/test-server.ps1 -Start` (`wslc` by
 default, `-Runtime docker` where Docker runs Linux containers; GitHub's Windows runners cannot, so
@@ -306,14 +306,27 @@ file or proxy setting changes, and TLS checks stay on. Clients address the serve
 `primary.syncd.test` and `alternate.syncd.test` through the fixture relay, the cleanup step and the
 `lifetime` case use the direct loopback origin. The tier needs no private server.
 `-ServerVersion` picks the server release (default `35.0.2`, the latest); run it with the newest
-release of the previous supported major too (`-ServerVersion 34.0.5` on 2026-11-12: passed on ARM64
-in 431.4 s).
+release of the previous supported major too (`-ServerVersion 34.0.5` on 2026-11-13: passed on ARM64
+in 498.2 s). On 2026-11-13 the default ARM64 tier passed three times in a row in 483.6, 502.2 and
+539.0 s (container start 66.1–105.9 s, `maintenance` alone 67.5–68.1 s), `-Extended` in 566.3 s
+plus 115.2 s for its three lanes, and the emulated x64 smoke in 156.6 s.
 
 Its cases each run in a process and profile of their own, so every case starts on healthy
 endpoints instead of waiting out the circuit history of the one before it: `network-active` runs
 `upload`, `download` and `unacknowledged-upload` as separate cases, `network-uncertain` runs `move`,
 `delete` and `final-move` (`-Case` selects them in `tools/test-reauth-lifetime.ps1`), and
-`switch-kill` runs each `-Stage`. Independent cases share the container and run in parallel lanes.
+`switch-kill` runs each `-Stage`, and `switching` and `data-safety` run each `-Case`. Independent
+cases share the container and run in parallel lanes. The default tier runs every scenario except
+eight switching and data-safety cases: `tls-circuit`, `subpath`, `new-folder`, `root-change`,
+`names`, `watcher`, `root-denied` and `excluded` run only with `-Extended`, in three more lanes
+outside the budget. `maintenance` puts the whole instance into maintenance mode, so it runs last and
+alone. Lanes start 3 s apart: started together, their first unauthenticated probes outran the 4 s
+public-probe deadline on a fresh server. A lane restores its relayed address after `lifetime`, which
+addresses the server directly; a case that followed it once ran without its relay. More than six
+lanes slowed this host enough for timing-bound cases to miss their windows (an overflow audit
+within 30 s, a lost final MOVE's failover). The disposable server has brute-force protection off
+(`auth.bruteforce.protection.enabled=false`, checked: failed sign-ins leave no attempts and no
+delay), so the failed sign-ins of the revocation cases never slow another lane's sign-in.
 The relay is no longer throttled: a transfer is held unfinished at a byte offset
 (`NetworkTunnel::setStallAfter`, primary or alternate relays only, requests below 1 MiB unaffected)
 and broken by the fault the case names. Most of a case's remaining time is the daemon's own
@@ -336,7 +349,7 @@ own pipe in the middle of a slow account removal.
 When the daemon refuses to remove the account, the abort keeps the profile, roots and state file
 and says so, because only an existing root lets an interrupted switch finish.
 
-Outside the budget, by explicit switch: `-Large` adds `network-large` (a chunk session above 4 GiB
+Outside the budget, by explicit switch: `-Extended` adds the eight cases named above; `-Large` adds `network-large` (a chunk session above 4 GiB
 cut after its 4 GiB boundary, about 30 min, about 9 GiB free on the server), and `-SharedServer`
 adds the paired-daemon fixture `tools/test-login.ps1` against the approved shared server in
 `NEXTCLOUD_TEST_*`: the paired daemon trusts only a publicly trusted chain, so it cannot use the

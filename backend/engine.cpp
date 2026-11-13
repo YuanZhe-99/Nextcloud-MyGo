@@ -627,10 +627,13 @@ void EngineAdapter::start() {
                             // protection; never setIsCmd(true).
   if (s.onDemand)
     options._vfs = s.onDemand->vfs();
+  // Upstream expects the trailing slash: without it ExcludedFiles keyed its
+  // patterns to a base path no file is ever below, and an interrupted
+  // download's temporary file (.name.~id, `]*.~*`) was uploaded.
   try {
-    s.engine = std::make_unique<OCC::SyncEngine>(s.account, s.binding.localPath,
-                                                 options, s.binding.remotePath,
-                                                 s.journal.get());
+    s.engine = std::make_unique<OCC::SyncEngine>(
+        s.account, s.binding.localPath + '/', options, s.binding.remotePath,
+        s.journal.get());
   } catch (...) {
     s.active = false;
     throw;

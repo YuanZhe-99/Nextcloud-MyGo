@@ -686,11 +686,14 @@ the upstream engine with patch 0018, ARM64; each case three times through the wr
   thresholds. A cycle that would remove a mount point or all of its content now stops as
   `DISCOVERY_INCOMPLETE` and retries ([engine](engine.md#completion-and-safety)).
 
+Fixed on 2026-11-13: the interrupted download's temporary file (`.remote.bin.~<id>`, 3 MiB of the
+new remote content) was uploaded as a new file by the recovery cycle, although `]*.~*` is in the
+exclude list. The engine was given the folder path without its trailing slash, so upstream keyed
+the exclude patterns to a base path no file is below and applied none of them; SyncD now passes the
+slash ([engine](engine.md#completion-and-safety)). S05 plants a `.<name>.~<id>` file too and
+requires the server listing to hold only the two real files.
+
 Found, not fixed:
-- The interrupted download's temporary file (`.remote.bin.~<id>`, 3 MiB of the new remote content)
-  was uploaded as a new file by the recovery cycle, although `]*.~*` is in the exclude list; in some
-  runs a later cycle deleted it from the server again. Seen in every S05 run with an
-  interrupted download.
 - Hard folder blocks (`UNSUPPORTED_FOLDER_MODE`, `JOURNAL_ERROR`, `FOLDER_ROOT_CHANGED`) stay after
   their cause is gone until a restart, and "Sync now" does not clear them. This follows `PLAN.md`
   §12.2 (a manual retry never bypasses a safety block); whether an explicit retry should re-run
@@ -766,7 +769,26 @@ folder's own root change; writes stop either way. `revoke-switch` leaves four fa
 the server's brute-force record for the relay's address (about 1.6 s of delay for every later
 sign-in from it, growing with each run); the runs above reset it between rounds with
 `occ security:bruteforce:reset` on the disposable server. An earlier emulated x64 round that ran
-after several revocations failed every later case at sign-in for that reason.
+after several revocations failed every later case at sign-in for that reason. `tools/test-server.ps1`
+now starts the disposable server with brute-force protection off; on 2026-11-13 six failed sign-ins
+in a row there left no recorded attempt and no delay (`occ security:bruteforce:attempts`).
+
+Rebuild for 0.1.0 on 2026-11-13, native ARM64 host, on the bootstrapped `.dev/ci-verify` prefixes
+as CI builds: the engine trees with all eighteen patches (`build/cv/ae-40B9DDC19708`, `xe-…`) and
+SyncD for both architectures; 24/24 SyncD CTest targets on each, including the new address-kind
+priority row (home 90, vpn 70, internet 50). The upstream suite with `UtilityTest` and
+`SyncCfApiTest` left out passed 96/96 on ARM64 (437.3 s) and emulated x64 (526.2 s), `ChunkingNgTest`
+with `testSmallModificationIsChunked` included. `tools/test-all.ps1 -Tier fast` passed on ARM64
+(71.1 s) and x64 (55.3 s), `TestRealDaemonInterface` included. The server tier now holds the
+`switching` and `data-safety` cases ([development](development.md#test-tiers)): the default ARM64
+tier passed three times in a row against Nextcloud 35.0.2 (483.6, 502.2 and 539.0 s), once against
+34.0.5 (498.2 s) and once with `-Extended` (566.3 s, plus 115.2 s for the eight extended cases:
+`tls-circuit` 94.4 s, `watcher` 59.2 s, `new-folder` 33.3 s, the others 17–29 s); the emulated x64
+smoke passed in 156.6 s. Found while getting there: lanes started together failed their first
+`endpoints.stage` as `NETWORK_UNAVAILABLE` on a fresh server; a lane kept the direct address of
+`lifetime` for the cases after it, so `late-epoch` waited for a held request on a relay it never
+used and S05's transfers finished unheld; fixture reads of a file the cycle held locked or of a busy
+server now retry for 10 s instead of failing the case.
 
 ## Known limitations
 

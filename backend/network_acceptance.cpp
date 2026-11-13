@@ -749,6 +749,14 @@ void networkAcceptance(const QString &scenario) {
                                   {"name", "Owned alternate"},
                                   {"baseUrl", alternate.toString()},
                                   {"kind", alternateKind}}));
+  if (receipt.value("state") != "succeeded")
+    std::fprintf(stderr, "alternate stage: %s\n",
+                 qPrintable(receipt.value("error")
+                                .toObject()
+                                .value("data")
+                                .toObject()
+                                .value("reasonCode")
+                                .toString()));
   require(receipt.value("state") == "succeeded",
           "real alternate public probe failed");
   const auto staging =

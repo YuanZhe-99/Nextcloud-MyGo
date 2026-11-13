@@ -52,6 +52,7 @@ function RunProfile([object[]]$Steps) {
     $profile = Join-Path $root ('build/reauth-lifetime-' + [Guid]::NewGuid().ToString('N'))
     $null = New-Item -ItemType Directory -Path $profile
     $env:SYNCD_REAUTH_LIFETIME_ROOT = $profile
+    $failure = ''
     try {
         foreach ($step in $Steps) {
             $result = RunOwned $step.Argument
@@ -62,7 +63,7 @@ function RunProfile([object[]]$Steps) {
                 $steps = @([regex]::Matches($result.Output, '(?m)^STEP (\d+) ([A-Za-z0-9 _,/().-]{3,160})\r?$') | Select-Object -Last 6)
                 foreach ($s in $steps) { Write-Output ('  step at {0} ms: {1}' -f $s.Groups[1].Value, $s.Groups[2].Value) }
                 $lastStep = if ($steps) { $steps[-1].Groups[2].Value } else { 'setup' }
-                $summary = if ($result.Code -eq -1) { "child exceeded its $($result.Budget) s budget in step: $lastStep" } else { ([regex]::Matches($result.Error, '(?m)^[A-Za-z][A-Za-z0-9 _,/().:-]{3,160}\r?$') | Select-Object -Last 1).Value }
+                $summary = if ($result.Code -eq -1) { "child exceeded its $($result.Budget) s budget in step: $lastStep" } else { (([regex]::Matches($result.Error, '(?m)^[A-Za-z][A-Za-z0-9 _,/().:-]{3,160}\r?$') | Select-Object -Last 3).Value.Trim() -join '; ') }
                 throw ('Owned network/renewal acceptance failed (' + $step.Argument + ', exit 0x' + [Convert]::ToString([int]$result.Code,16) + '). ' + $summary)
             }
             $passed = [regex]::Matches($result.Output, '(?m)^PASS .*\r?$') | ForEach-Object { $_.Value.Trim() }
@@ -70,10 +71,14 @@ function RunProfile([object[]]$Steps) {
             # SYNCD_TEST_STEPS=1 shows each step's start time (ms since the child started) to find slow steps.
             if ($env:SYNCD_TEST_STEPS -eq '1') { [regex]::Matches($result.Output, '(?m)^STEP \d+ [A-Za-z0-9 _,/().-]{3,160}\r?$') | ForEach-Object { Write-Output $_.Value.Trim() } }
         }
+    } catch {
+        $failure = $_.Exception.Message
+        throw
     } finally {
         $cleanup = RunOwned '--cleanup'
         $env:SYNCD_REAUTH_LIFETIME_ROOT = $saved
-        if ($cleanup.Code -ne 0) { throw 'Owned content/native credential cleanup needs attention; profile retained.' }
+        # A failed cleanup keeps the case's own failure in its message.
+        if ($cleanup.Code -ne 0) { throw ("Owned content/native credential cleanup needs attention; profile retained. " + $failure).Trim() }
         Remove-Item -LiteralPath $profile -Recurse -Force
     }
 }
