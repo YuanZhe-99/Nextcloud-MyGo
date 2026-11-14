@@ -34,7 +34,7 @@ SyncD 连通基础已实现；完整同步尚未完成。见 [IPC](../ipc.md) �
 | `protocol/` | 协议 1.10 清单、schema 及共享恶意输入夹具 | `contract.json`、`message.schema.json`、`folders.schema.json`、`endpoints.schema.json`、`switch.schema.json`、`reauthentication.schema.json`、`policy.schema.json`、`startup.examples.json`、`constraints.examples.json`、`fixtures.json` |
 | `tools/build-syncd.ps1` | ARM64/x64 SyncD 构建与核心契约测试 | 脚本参数 |
 | `tools/pkg`、`tools/package.ps1`、`tools/package-smoke.ps1` | 带必需许可证包的 DLL 闭包暂存、安装包清单、原生架构 PE 检查、运行中 SyncD 的启动报告、测试版本安装包、更新签名以及真实安装、升级与应用内更新测试（[打包](../packaging.md)） | `stageCommand`、`requireNotices`、`reportCommand`、`signUpdateCommand`、`check`、`inspect`、`native` |
-| `packaging/windows/setup` | 按版本目录的当前用户安装、替换文件前的更新安全点、协调的双进程停止、卸载及可选的用户数据删除 | `install`、`stopApp`、`prepare`、`prepareUpdate`、`shutdown`、`uninstallApp`、`admit`、`extract` |
+| `packaging/windows/setup` | 按版本目录的当前用户安装、替换文件前的更新安全点、协调的双进程停止、卸载及可选的用户数据删除 | `install`、`stopApp`、`prepare`、`prepareUpdate`、`shutdown`、`uninstallApp`、`removeTree`、`admit`、`extract` |
 | `internal/release` | `tools/pkg` 写入、安装器校验的安装包清单；签名更新：其归档与清单、检查、下载与签名校验、交给 setup（[打包](../packaging.md#签名更新)） | `Manifest`、`Parse`、`Verify`、`SignUpdate`、`CheckUpdate`、`Update.Download`、`StartSetup` |
 | `locales` | 界面字符串（en、zh-Hans）及生成的访问函数 | `en.json`、`In` |
 | `internal/version` | 产品版本 | `Version`、`Older` |

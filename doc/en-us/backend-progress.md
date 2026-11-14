@@ -45,10 +45,10 @@ Not done:
 
 What the interface must respect until those pass:
 
-- The `fullSync` and `virtualFiles` capabilities stay `false`; never present them as supported.
-  `fullSync` was assessed on 2026-11-11 against the cases it depends on: the first three rows above
-  name what it still lacks. `endpointAutoSwitch` is `true` for engine builds since 2026-11-12, by the
-  user's decision once its cases passed on real runs ([acceptance](acceptance.md#capability-evidence)).
+- The `virtualFiles` capability stays `false`; never present it as supported. `endpointAutoSwitch`
+  is `true` for engine builds since 2026-11-12 and `fullSync` since 2026-11-13, each by the user's
+  decision once its cases passed on real runs ([acceptance](acceptance.md#capability-evidence)); a
+  build without the engine reports both `false`.
 - While `daemon.stateAvailable` is `false` nothing is shown as healthy, and a missing collection is
   unknown, not empty.
 - The interface goes only through IPC ([IPC](ipc.md)); the account and engine rules are in

@@ -223,6 +223,7 @@ each account through `accounts.remove`, which deletes its saved credential and r
 password on the server, then deletes the profile's SyncD data and interface settings. An unconfirmed
 revocation is reported and does not block the uninstall; an account SyncD cannot remove keeps the
 user data in place and is reported. Neither option touches synced folders or server content.
+Folders are removed bottom-up by path, not with Go's `os.RemoveAll` ([upstream](upstream.md#go)).
 An on-demand folder keeps its Cloud Files registration through an uninstall, so a reinstall serves
 it again. `-remove-user-data` cannot remove an account that still has folders, so it keeps that data and
 never orphans a registration; removing the folders first at uninstall is an open item ([on-demand](on-demand.md)).

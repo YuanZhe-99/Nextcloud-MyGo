@@ -179,6 +179,18 @@ if(BUILD_TESTING)
   endif()
 endif()
 
+# Tests that write the current user's Windows credential store never run at the
+# same time: concurrent writes from several processes lose updates there (a
+# write reported as done is gone, a deleted credential comes back), so parallel
+# CTest runs failed at random (doc/en-us/upstream.md#windows).
+foreach(test SyncDDurableConstraintContracts SyncDEndpointContracts
+             SyncDFolderErrorContracts SyncDLoginContracts SyncDNetworkContracts
+             SyncDReauthenticationContracts SyncDConnectedStartupContracts)
+  if(TEST ${test})
+    set_tests_properties(${test} PROPERTIES RESOURCE_LOCK credential-store)
+  endif()
+endforeach()
+
 # Every test finds the exact DLLs this build linked against, whatever PATH its
 # caller has: Qt, the recorded upstream build and the native dependencies, the
 # same directories tools/test-all.ps1 uses. A stale PATH (an older upstream

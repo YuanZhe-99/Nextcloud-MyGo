@@ -14,7 +14,7 @@ param(
     [ValidateRange(10, 240)][int]$Minutes = 60,
     [ValidateSet('ARM64', 'x64')][string]$Architecture = 'ARM64',
     [ValidateSet('wslc', 'docker')][string]$Runtime = 'wslc',
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$ServerVersion = '35.0.2',
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$ServerVersion = '35.0.3',
     [string]$Build = '',
     # -State reuses a disposable server that is already running (its state.json); it is left running.
     [string]$State = ''

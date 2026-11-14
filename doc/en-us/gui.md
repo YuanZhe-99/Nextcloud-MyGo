@@ -25,7 +25,8 @@ kept there.
   did not send are unknown: no "no folders", no "nothing yet".
 - **Disconnected is not current.** After the pipe drops, the last known lists stay under a banner
   that says so; commands are disabled until SyncD is back, and nothing reads as healthy.
-- **Capabilities gate features.** Sign-in needs `login`. While `fullSync` is false, adding folders
+- **Capabilities gate features.** Sign-in needs `login`. While `fullSync` is false (a SyncD without
+  the engine; engine builds report it `true` since 0.1.0), adding folders
   first says that file sync is still being verified, and no state is ever green: a folder SyncD
   reports up to date reads "Last sync finished". Automatic and Always use one address are offered
   only while SyncD reports `endpointAutoSwitch`; without it each account uses the one address chosen. A further account needs `multiAccount`

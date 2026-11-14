@@ -414,9 +414,9 @@ func snapApp(t *testing.T, s syncd.Snapshot) *App {
 	return a
 }
 
-// realSnapshot is what SyncD 1.9 reports for one signed-in account with
-// one folder: fixed policy, no automatic switching, full sync and
-// on-demand files not yet supported capabilities.
+// realSnapshot is what SyncD 1.9 reported for one signed-in account with
+// one folder: fixed policy, and automatic switching, full sync and on-demand
+// files not yet supported (0.1.0 enables the first two in engine builds).
 func realSnapshot() syncd.Snapshot {
 	return syncd.Snapshot{
 		Daemon:    syncd.Daemon{Connected: true, StateAvailable: true, StartupState: syncd.StartupNormal, Version: "0.1.0", Protocol: 1, ProtocolMinor: 9, Capabilities: map[string]bool{"login": true, "multiAccount": true, "fullSync": false, "endpointAutoSwitch": false, "virtualFiles": false}},
@@ -459,9 +459,10 @@ func TestUnknownIsNotEmpty(t *testing.T) {
 	}
 }
 
-// TestRealDaemonCapabilities: with SyncD's real capabilities the window
-// never offers automatic address choice, never shows green "up to date",
-// and adding folders says file sync is not yet supported.
+// TestRealDaemonCapabilities: with a SyncD that does not offer automatic
+// switching or full sync, the window never offers automatic address choice,
+// never shows green "up to date", and adding folders says file sync is not
+// yet supported.
 func TestRealDaemonCapabilities(t *testing.T) {
 	a := snapApp(t, realSnapshot())
 	tt := ui.NewTester(a.view, 1200, 780)

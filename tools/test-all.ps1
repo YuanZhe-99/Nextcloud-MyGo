@@ -18,7 +18,7 @@ param(
     [ValidateSet('fast', 'server')][string]$Tier = 'fast',
     [ValidateSet('ARM64', 'x64')][string]$Architecture = 'ARM64',
     [ValidateSet('wslc', 'docker')][string]$Runtime = 'wslc',
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$ServerVersion = '35.0.2',
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$ServerVersion = '35.0.3',
     [switch]$Large,
     [switch]$Extended,
     [switch]$SharedServer,

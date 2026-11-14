@@ -116,3 +116,15 @@ remain unverified. These sources retain their own SPDX headers and bundled licen
 |---|---|---|
 | MyGo's distribution documents `windows/arm64` | the UI can be native ARM64 | read; the Go module builds and tests on Windows 11 ARM64 |
 | MyGo is a Go tool dependency (`go tool mygo …`) | its version moves with `go.mod` | built |
+
+## Go
+
+| Point | Consequence | Checked |
+|---|---|---|
+| `os.RemoveAll` (Go 1.27.4) opens each directory relative to its parent with `OBJ_DONT_REPARSE`; on Windows 11 build 26300 that open fails with `STATUS_REPARSE_POINT_ENCOUNTERED`, reported as "openfdat …: too many levels of symbolic links", for a non-empty folder directly under `AppData`, `AppData\Local` or `AppData\Roaming` (none of them a reparse point); an empty folder, a deeper one or one in the home folder is removed | the uninstaller removes folders bottom-up with `os.Remove` (`removeTree`), so `-remove-user-data` removes the settings folder under `%APPDATA%` | on this ARM64 host, 2026-11-13: reproduced outside the product, and by `TestRemoveAllUnderAppData` |
+
+## Windows
+
+| Point | Consequence | Checked |
+|---|---|---|
+| Generic credentials (`CredWriteW`, `CredDeleteW`, `CredReadW`, persisted per machine) written by several processes at the same moment can lose updates: four processes each writing, deleting and reading back their own credentials lost 23 of 1,600 writes (reported done, then "not found" on delete), and in SyncD's tests a credential deleted by one process was found again | SyncD is the only writer of its profile's credentials and writes them from its control thread, so its own writes never race; another program writing its credentials at the same moment could still lose a SyncD write (the account then asks to sign in again) or bring back a removed one (whose app password was already revoked). Tests that use the credential store share one CTest `RESOURCE_LOCK` | on this ARM64 host (build 26300), 2026-11-13: a throwaway stress program, and random failures of the credential tests under `ctest -j 4` |

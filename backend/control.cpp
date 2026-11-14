@@ -53,10 +53,12 @@ QJsonObject capabilities(bool available = true) {
   // multiAccount: two accounts with two folders each passed on a real server
   // (multi-account acceptance, 2026-11-12). endpointAutoSwitch: the
   // automatic policy's cases passed on real runs (switching acceptance,
-  // 2026-11-12); it needs the engine that switches.
+  // 2026-11-12). fullSync: the basic-sync, file-safety and soak cases passed
+  // on real runs and the installed interface showed a real cycle's activity
+  // (capability evidence, 2026-11-13). Both need the engine.
   return {{"multiAccount", available},
           {"login", available},
-          {"fullSync", false},
+          {"fullSync", engine && available},
           {"endpointAutoSwitch", engine && available},
           {"virtualFiles", false},
           {"endToEndEncryption", false},

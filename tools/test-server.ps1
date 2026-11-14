@@ -13,7 +13,7 @@
 [CmdletBinding(DefaultParameterSetName = 'Start')]
 param(
     [Parameter(ParameterSetName = 'Start')][switch]$Start,
-    [Parameter(ParameterSetName = 'Start')][string]$Version = '35.0.2',
+    [Parameter(ParameterSetName = 'Start')][string]$Version = '35.0.3',
     [ValidateSet('wslc', 'docker')][string]$Runtime = 'wslc',
     [Parameter(ParameterSetName = 'Stop', Mandatory)][switch]$Stop,
     [Parameter(ParameterSetName = 'Stop', Mandatory)][string]$State

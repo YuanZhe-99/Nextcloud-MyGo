@@ -29,9 +29,7 @@ native ARM64).
 
 Known limitations:
 
-- File sync (`fullSync`) is not yet declared verified: adding a folder says so, and a folder that
-  is up to date reads "Last sync finished" rather than a green state. On-demand files are built but
-  not offered (`virtualFiles`).
+- On-demand files are built but not offered (`virtualFiles`).
 - The installers are not Authenticode-signed, so Windows SmartScreen warns on the first install.
 - Tested on one native ARM64 machine. x64 binaries passed their tests under emulation there; the x64
   installer has not run on x64 hardware.
@@ -43,6 +41,9 @@ Known limitations:
   not added up.
 - A safety block (a changed certificate, a server that is not the expected one) stays until SyncD
   restarts.
+- On the test machine, Windows Credential Manager lost updates when several processes wrote to it
+  at the same moment. SyncD's own writes never overlap, but another program writing at that moment
+  could make an account ask you to sign in again.
 - One access violation in SyncD during a 20-minute test run was not reproduced in about five hours
   of later runs and is not explained.
 - macOS is not part of this release.
@@ -51,6 +52,14 @@ Versions: Nextcloud Desktop v35.0.3 (engine), tested against Nextcloud server 35
 previous major 34.0.5; Go 1.27.4; MyGo v0.9.0; Qt 6.12.0; OpenSSL 3.6.5.
 
 ## Development of 0.1.0
+
+- Release readiness (2026-11-13): patch 0019 keeps a local rename whose MOVE got no answer; the
+  pipe frees its instance when a client vanishes; the uninstaller removes the settings folder under
+  `%APPDATA%` (Go's `os.RemoveAll` failed there on this Windows build). A real cycle's renames and
+  deletions showed in the installed interface's Activity, and the user enabled `fullSync` for engine
+  builds. Tests: P09 runs 20 seeds (the CI x64 runner hit the 60 s limit), and the tests that use
+  the Windows credential store no longer run in parallel (concurrent writes lose updates). Go 1.27.4 / MyGo v0.9.0 / Desktop v35.0.3 / server v35.0.2 (previous major v34.0.5)
+  checked, unchanged.
 
 - Multi-account and protocol 1.9 (2026-11-12): several accounts (`multiAccount` after a real 2×2
   run), account removal that never waits on a stuck switch, credential renewal that reconciles with

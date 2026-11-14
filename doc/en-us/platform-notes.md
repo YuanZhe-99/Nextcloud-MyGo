@@ -534,6 +534,29 @@ it is recorded as unresolved, not passed. The server tier on ARM64 stopped at `c
 which exceeded its 150 s budget by 2.1 s (148.3 s before) under the same load; every case run before
 it passed. The B14 steps were not run again through the installed interface.
 
+### Activity through the installed interface
+
+Same ARM64 host, 2026-11-13, against the shared test server (Nextcloud 35.0.2), driven by Windows UI
+Automation as in B14, on a profile of its own. The package came from the current tree with SyncD on
+patches 0001–0019 (`tools/package.ps1 -Arch ARM64 -SyncDBuild`; 29 PE files, all native ARM64).
+
+| Step | Result |
+|---|---|
+| Setup | passed: install 2 s; Your server, sign-in through Login Flow v2 (the copied link granted in memory), Folders with Refresh, a local parent chosen in the system folder picker, Documents and Photos unticked; the Start step offered start at sign-in and notifications, both on; start at sign-in was turned off and no startup entry was written; first sync of five files in 11 s |
+| B14 step 2, Activity | passed: a local rename and a local deletion reached the server in 8 s, a server rename and a server deletion reached this PC in 32 s; Activity listed each with its direction ("Renamed 1 item on the server", "Deleted 1 file on the server", "Renamed 1 item on this PC", "Deleted 1 file on this PC") and in local time |
+| Network | Automatic and Always use one address offered; the account kept its one address fixed, as an account without a chosen policy does ([engine](engine.md)) |
+| Remove the account | passed: asked first, setup came back, files stayed on both sides |
+| `uninstall.exe -uninstall -remove-user-data` | failed, then fixed: the accounts, SyncD data, program files and Apps entry went, but removing the settings folder failed with "too many levels of symbolic links" and the uninstall exited 1 ([upstream](upstream.md#go)); the uninstaller now removes folders itself (`TestRemoveAllUnderAppData`, which fails without the fix on this host) |
+
+With this run the user enabled `fullSync` for engine builds ([acceptance](acceptance.md#capability-evidence)).
+
+The final tree then passed the fast tier on ARM64 (55.0 s) and emulated x64 (60.0 s), the credential
+tests 20 of 20 rounds under `ctest -j 4` with their shared lock (about one round in five failed
+without it), and the ARM64 server tier in 519.5 s. The server tier run before that one stopped once
+at `held revocation`: the held credential was gone at the usual time (61.3 s), but the outcome or
+the account list then differed from what the case expects; the cause was not established, and the
+case passed in the next run and in every earlier one.
+
 ### Simulated sleep and resume (R15)
 
 Same ARM64 host, 2026-11-12, Nextcloud 35.0.2 in a disposable container. The user ruled out a real

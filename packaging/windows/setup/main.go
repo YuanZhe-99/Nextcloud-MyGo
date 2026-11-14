@@ -20,8 +20,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -358,7 +360,7 @@ func uninstallApp(root, profile string, removeData bool) error {
 		if err := removeLater(self, root); err != nil {
 			return err
 		}
-	} else if err := os.RemoveAll(root); err != nil {
+	} else if err := removeAll(root); err != nil {
 		return err
 	}
 	if dataErr != nil {
@@ -441,12 +443,41 @@ func removeUserData(root, profile, executable string) error {
 func removeAll(p string) error {
 	var err error
 	for range 10 {
-		if err = os.RemoveAll(p); err == nil {
+		if err = removeTree(p); err == nil {
 			return nil
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
 	return err
+}
+
+// removeTree deletes a file or directory tree bottom-up by path, without
+// following links: a link inside is removed, never its target.
+// Notes: not os.RemoveAll, which opens each directory relative to its parent
+// with OBJ_DONT_REPARSE; on a Windows 11 build that open fails with ELOOP
+// ("too many levels of symbolic links") for a non-empty folder directly under
+// AppData, AppData\Local or AppData\Roaming, where the settings live.
+func removeTree(p string) error {
+	var paths []string
+	err := filepath.WalkDir(p, func(path string, _ fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		paths = append(paths, path)
+		return nil
+	})
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, path := range slices.Backward(paths) {
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
 }
 
 // equalBase reports whether a path names the given file, ignoring case.

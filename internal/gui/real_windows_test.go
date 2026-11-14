@@ -106,7 +106,7 @@ func TestRealDaemonInterface(t *testing.T) {
 	r := startReal(t, ctx)
 	r.await("a connected snapshot", func() bool { return r.snap.Daemon.Connected })
 	s := r.snap
-	if s.Daemon.Demo || s.Daemon.ProtocolMinor < 7 || s.Daemon.Capabilities["fullSync"] || !s.Daemon.Capabilities["endpointAutoSwitch"] {
+	if s.Daemon.Demo || s.Daemon.ProtocolMinor < 7 || !s.Daemon.Capabilities["fullSync"] || !s.Daemon.Capabilities["endpointAutoSwitch"] {
 		t.Fatalf("unexpected daemon: demo %v, protocol 1.%d, capabilities %v", s.Daemon.Demo, s.Daemon.ProtocolMinor, s.Daemon.Capabilities)
 	}
 	tt := ui.NewTester(r.view, 1200, 780)
@@ -118,8 +118,8 @@ func TestRealDaemonInterface(t *testing.T) {
 		t.Fatal("sign-in shown as unavailable with a live login capability")
 	}
 	shoot(t, tt, "realpipe-setup")
-	if o := overallOf(s); o == overallUpToDate {
-		t.Fatal("a build without full sync reads as up to date")
+	if o := overallOf(s); o == overallUnknown {
+		t.Fatal("a connected daemon with readable state reads as unknown")
 	}
 
 	// Pause every folder from Settings, through settings.update.

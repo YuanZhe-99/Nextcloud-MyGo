@@ -150,8 +150,9 @@ func TestRealPipeINV12INV13(t *testing.T) {
 	if err := verifyPipeServer(pipe, filepath.Join(filepath.Dir(exe), "not-the-paired-daemon.exe")); err == nil {
 		t.Fatal("wrong server executable accepted")
 	}
-	if r.Snapshot().Daemon.Demo || r.Snapshot().Daemon.Capabilities["fullSync"] {
-		t.Fatal("daemon advertises unsupported workflow")
+	// File sync is offered exactly by a build that links the engine.
+	if caps := r.Snapshot().Daemon.Capabilities; r.Snapshot().Daemon.Demo || caps["fullSync"] != caps["engine"] {
+		t.Fatalf("daemon advertises a workflow its build cannot run: %v", caps)
 	}
 	if server := os.Getenv("NEXTCLOUD_TEST_URL"); server != "" {
 		login, err := r.StartLogin(server)

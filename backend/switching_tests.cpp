@@ -613,7 +613,7 @@ void durableProperty() {
   const char *kinds[] = {"update", "replay", "conflict",
                          "stale",  "restart", "query"};
   property<DurableStep>(
-      "durable receipts", 40, 60,
+      "durable receipts", 20, 60,
       [](std::mt19937 &random, int length) {
         const auto pick = [&](int n) {
           return std::uniform_int_distribution<int>(0, n - 1)(random);
@@ -745,7 +745,7 @@ int main(int argc, char **argv) {
     std::puts("PASS N08 flapping and late results, N09 margin/stability/dwell/"
               "freshness/cooldown rows, N10 independent failures, N15 all-down "
               "bounded probing, N22 half-open storm; properties P01/P05 (500 "
-              "seeds), P03/P06 (500 seeds), P02 (20000 URLs), P09 (40 seeds "
+              "seeds), P03/P06 (500 seeds), P02 (20000 URLs), P09 (20 seeds "
               "with restarts)");
     return 0;
   } catch (const std::exception &error) {

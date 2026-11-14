@@ -115,7 +115,7 @@ the run. Cases the plan numbers only as a list (§20.5) get `P` numbers here in 
 | P06 | `passed` | `SyncDSwitchingContracts`, the same switch run: a request or proof naming another epoch, an untrusted target and an older epoch's reconciliation are refused; ARM64 and x64e | none |
 | P07 | `not run` | No run is recorded | All of it |
 | P08 | `passed` | [platform notes](platform-notes.md#acceptance-audit-for-010): the same run: no automatic or fixed proposal ever names an endpoint that is disabled, unapproved, unverified, without valid TLS, not allowed on the network, quarantined or blocked for authentication, and a fixed target never falls back to another one; a deliberately wrong model failed with seed 1 and shrank to two steps | none |
-| P09 | `passed` | `SyncDSwitchingContracts`, 40 seeded sequences of mutations, replays, conflicts, stale revisions and restarts on a real Control database: every accepted receipt returned unchanged after restarts; ARM64 and x64e | none |
+| P09 | `passed` | `SyncDSwitchingContracts`, 20 seeded sequences of 60 steps (40 until 2026-11-13; the CI x64 runner exceeded its 60 s test limit) of mutations, replays, conflicts, stale revisions and restarts on a real Control database: every accepted receipt returned unchanged after restarts; ARM64 and x64e | none |
 
 The property run prints its seed and the minimal failing sequence on a failure;
 `SYNCD_PROPERTY_SEED` replays one seed.
@@ -147,7 +147,7 @@ The property run prints its seed and the minimal failing sequence on a failure;
 | 23.3-5 auto-update only with a trusted chain | `partial` | [packaging](packaging.md#signed-updates): updates exist only in packages built with the `mygo keygen` key, kept in a GitHub secret; the app installs only archives signed with the key in `mygo.json`, off until the user turns it on; package smoke: a signed 0.1.1 test update from loopback HTTP installed over 0.1.0 with a throwaway key, ARM64 | A release signed with the project key, read from GitHub; Authenticode is a [limitation](#known-limitations-for-010) |
 | 23.3-6 §17.1 desktop features | `partial` | [platform notes](platform-notes.md): B14: tray icon and flyout, close to tray, Start menu reopen, Quit and stop syncing; setup reaches `daemon.prepareUpdate` before stopping SyncD (package smoke) | `daemon.prepareUpdate` refusals with a real deletion waiting; notifications; start at sign-in; a real sleep is a [limitation](#known-limitations-for-010) |
 | 23.3-7 licenses, source, limits, diagnostics notes | `partial` | [platform notes](platform-notes.md): known limitations; this page's limitation list | User guide; release source materials |
-| 23.3-8 no unverified capability listed as supported | `partial` | [Capability evidence](#capability-evidence): `fullSync` and `virtualFiles` stay `false`; `endpointAutoSwitch` is `true` with its evidence | Release list |
+| 23.3-8 no unverified capability listed as supported | `passed` | [Capability evidence](#capability-evidence): `virtualFiles` stays `false`; `endpointAutoSwitch` and `fullSync` are `true` with their evidence; the 0.1.0 summary in the [version history](version-history.md) offers no on-demand files | none |
 
 ## Milestone exits (§18)
 
@@ -158,7 +158,7 @@ The property run prints its seed and the minimal failing sequence on a failure;
 | M2 reliability and file safety | `partial` | [engine](engine.md): scheduler, root lease, deletion veto; S04–S10, S12–S17, S20 passed | S11, S18, S21 |
 | M3 endpoint registry, read-only policy | `partial` | [ipc](ipc.md): consent, namespace check, policy; N01, N02 passed | N04, N06; N07 is a [limitation](#known-limitations-for-010) |
 | M4 safe automatic switching | `partial` | [platform notes](platform-notes.md): manual and failover switching real, uncertain writes recovered (S07, S08), every switch stage killed and recovered (R03); automatic capability `false` | Automatic switching evidence ([Capability evidence](#capability-evidence)); VPN is a [limitation](#known-limitations-for-010) |
-| M5 frontend, first release | `partial` | [platform notes](platform-notes.md): B14 joint acceptance on ARM64, 35.0.2, six of nine steps passed; the B14 findings fixed in SyncD and setup | Steps 2, 6 and 8 again through the interface; upgrade between versions with an account; the rename revert the soak found (R21) |
+| M5 frontend, first release | `partial` | [platform notes](platform-notes.md): B14 joint acceptance on ARM64, 35.0.2, six of nine steps passed; the B14 findings fixed in SyncD and setup | Steps 6 and 8 again through the interface; upgrade between versions with an account |
 | M6 cloud-file frameworks | `partial` | [on-demand](on-demand.md), [platform notes](platform-notes.md): Windows on-demand registration, hydration, free up space, always keep, switch boundary, crash recovery and unregistration on native ARM64 and x64e against server 35.0.2 through the engine runtime; hosts where Cloud Files cannot answer skip instead of passing | Paired daemon and interface, another origin, deletion protection and offline with placeholders, uninstall unregistration; `virtualFiles` false; the macOS half is outside 0.1.0 by the user's decision of 2026-11-11 |
 
 ## Joint release acceptance (B14)
@@ -169,7 +169,7 @@ Native Windows 11 ARM64, installed package, real window driven by UI Automation,
 | Step | Status | Checked by |
 |---|---|---|
 | 1 install, setup, sign in, folder, first sync | `passed` | interface; the setup's Start step not exercised |
-| 2 local and remote changes, Activity | `partial` | interface and state; times in UTC; protocol 1.10 adds `deletedLocal`, `renamedRemote` and `renamedLocal` (`testCycleActivity`), shown by the interface against the Mock (`TestActivityKinds110`), not yet from a real cycle |
+| 2 local and remote changes, Activity | `passed` | interface, WebDAV and local files, again on 2026-11-13 through the installed package ([platform notes](platform-notes.md#activity-through-the-installed-interface)): a local rename and deletion and a server rename and deletion each listed in Activity with its direction and local time |
 | 3 bulk deletion review | `passed` | interface and server |
 | 4 conflict | `passed` | interface and files |
 | 5 folder pause through pause all and resume all | `passed` | interface and server |
@@ -181,13 +181,13 @@ Native Windows 11 ARM64, installed package, real window driven by UI Automation,
 
 ## Capability evidence
 
-Only the user decides to enable a capability. `endpointAutoSwitch` is `true` for engine builds since
-2026-11-12, by the user's decision once the cases below passed on real runs; `fullSync` and
-`virtualFiles` stay `false`. What exists and what is missing for each:
+Only the user decides to enable a capability. For engine builds `endpointAutoSwitch` is `true` since
+2026-11-12 and `fullSync` since 2026-11-13, each by the user's decision once the cases below passed
+on real runs; `virtualFiles` stays `false`. What exists and what is missing for each:
 
 | Capability | Evidence | Missing to enable it |
 |---|---|---|
-| `fullSync` | S01–S04, S06–S08, S12, S20 passed on a real server (ARM64 and x64e for most); conflicts, deletion review, pause and resume through the installed interface (B14); two accounts with two folders each (R05 partial); the daemon survives the UI (R01, 23.1-3) | S18 and S21 E2EE; Activity of local deletions and renames from a real cycle (B14 step 2) |
+| `fullSync` (`true`) | S01–S08, S11, S12, S20 passed on a real server (ARM64 and x64e for most); conflicts, deletion review, pause and resume through the installed interface (B14); a real cycle's local and server renames and deletions in Activity (B14 step 2, 2026-11-13); two accounts with two folders each (R05 partial); the daemon survives the UI (R01, 23.1-3); the accelerated soak with no rename undone (R21) | E2EE folders (S18, S21), a [limitation](#known-limitations-for-010) |
 | `endpointAutoSwitch` (`true`) | Manual and fixed switching real, deferred to a safe point (N11, B14 step 6); failover with drainage and a fresh epoch (N12); every switch stage killed and recovered (R03); uncertain writes recovered (S07, S08); the automatic policy on real runs: N03–N06, N08–N11, N13–N20 and N22 ([platform notes](platform-notes.md#automatic-switching-acceptance)); P01–P06, P08 and P09; the Network page offers Automatic and Fixed exactly when the capability is true (`TestAutomaticChoiceFollowsCapability`, a native screenshot against the Mock) | Strict VPN egress (N07, N23, not advertised); a real sleep (R15, simulated only); the automatic choice through the installed interface against a real server |
 | `virtualFiles` | Windows on-demand folders through the engine runtime on a real server: placeholders, hydration, free up space, always keep, a switch waiting for a hydration, a kill during a hydration and unregistration, ARM64 and x64e (M6) | The paired daemon and interface choosing the mode; another origin; deletion protection and offline behavior with placeholders; uninstall unregistration; the shell extension for thumbnails and overlays |
 

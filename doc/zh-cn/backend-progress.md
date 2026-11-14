@@ -42,9 +42,9 @@ Desktop v35.0.3 及十八个已登记补丁。
 
 在上述各项通过之前，界面必须遵守：
 
-- `fullSync` 和 `virtualFiles` 能力保持 `false`；绝不把它们呈现为已支持。`fullSync` 已于
-  2026-11-11 对照其依赖的用例作了评估：上表前三行列出它仍缺少的内容。自 2026-11-12 起，在其用例
-  通过真实运行后，按用户决定，引擎构建的 `endpointAutoSwitch` 为 `true`（[验收](acceptance.md#能力证据)）。
+- `virtualFiles` 能力保持 `false`；绝不把它呈现为已支持。引擎构建的 `endpointAutoSwitch` 自 2026-11-12 起、
+  `fullSync` 自 2026-11-13 起为 `true`，各自在其用例通过真实运行后按用户决定开启（[验收](acceptance.md#能力证据)）；
+  不含引擎的构建两者都报告 `false`。
 - `daemon.stateAvailable` 为 `false` 时不显示任何健康状态，缺失的集合是未知，不是空。
 - 界面只通过 IPC（见 [IPC](ipc.md)）；账号和引擎规则见[账号](accounts.md)和[引擎](engine.md)。
 

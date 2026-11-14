@@ -104,3 +104,15 @@ macOS 扩展目标在 `shell_integration/MacOSX/NextcloudIntegration/FileProvide
 |---|---|---|
 | MyGo 的发布文档列出 `windows/arm64` | 界面可以是原生 ARM64 | 已阅读；Go 模块在 Windows 11 ARM64 上构建并通过测试 |
 | MyGo 是 Go 工具依赖（`go tool mygo …`） | 其版本随 `go.mod` 变化 | 已构建 |
+
+## Go
+
+| 要点 | 影响 | 核对 |
+|---|---|---|
+| `os.RemoveAll`（Go 1.27.4）以 `OBJ_DONT_REPARSE` 相对父目录打开每个目录；在 Windows 11 build 26300 上，对直接位于 `AppData`、`AppData\Local` 或 `AppData\Roaming` 下的非空目录（三者都不是重解析点），该打开以 `STATUS_REPARSE_POINT_ENCOUNTERED` 失败，报告为“openfdat …: too many levels of symbolic links”；空目录、更深层的目录或主目录下的目录可以删除 | 卸载程序用 `os.Remove` 自下而上删除目录（`removeTree`），因此 `-remove-user-data` 能删除 `%APPDATA%` 下的设置目录 | 在这台 ARM64 主机上，2026-11-13：在产品之外复现，`TestRemoveAllUnderAppData` 亦复现 |
+
+## Windows
+
+| 要点 | 影响 | 核对 |
+|---|---|---|
+| 多个进程同时写入的通用凭据（`CredWriteW`、`CredDeleteW`、`CredReadW`，按计算机持久保存）会丢失更新：四个进程各自写入、删除并读回自己的凭据，1,600 次写入中丢失 23 次（报告完成，删除时却“未找到”）；在 SyncD 的测试中，一个进程已删除的凭据又被找到 | SyncD 是其 profile 凭据的唯一写入者，并从控制线程写入，因此它自己的写入不会互相竞争；但另一个程序恰好同时写入其凭据时，仍可能丢失 SyncD 的一次写入（账号随后要求重新登录），或让已删除的凭据重新出现（其应用密码已被吊销）。使用凭据库的测试共用一个 CTest `RESOURCE_LOCK` | 在这台 ARM64 主机上（build 26300），2026-11-13：一个临时压力测试程序，以及 `ctest -j 4` 下凭据测试的随机失败 |
