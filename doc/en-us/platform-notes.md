@@ -555,7 +555,10 @@ tests 20 of 20 rounds under `ctest -j 4` with their shared lock (about one round
 without it), and the ARM64 server tier in 519.5 s. The server tier run before that one stopped once
 at `held revocation`: the held credential was gone at the usual time (61.3 s), but the outcome or
 the account list then differed from what the case expects; the cause was not established, and the
-case passed in the next run and in every earlier one.
+case passed in the next run and in every earlier one. Against the new server releases the same
+build passed the ARM64 server tier with 34.0.6 (484.4 s) and with 35.0.3 on the third run (512.7 s);
+the two 35.0.3 runs before it each stopped at one case's first request under the lanes' load, and
+both cases passed alone three times ([development](development.md)).
 
 ### Simulated sleep and resume (R15)
 

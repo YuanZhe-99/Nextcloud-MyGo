@@ -48,8 +48,8 @@ Known limitations:
   of later runs and is not explained.
 - macOS is not part of this release.
 
-Versions: Nextcloud Desktop v35.0.3 (engine), tested against Nextcloud server 35.0.2 and the
-previous major 34.0.5; Go 1.27.4; MyGo v0.9.0; Qt 6.12.0; OpenSSL 3.6.5.
+Versions: Nextcloud Desktop v35.0.3 (engine), tested against Nextcloud server 35.0.3, 35.0.2 and
+the previous major 34.0.6; Go 1.27.4; MyGo v0.9.0; Qt 6.12.0; OpenSSL 3.6.5.
 
 ## Development of 0.1.0
 
@@ -58,8 +58,9 @@ previous major 34.0.5; Go 1.27.4; MyGo v0.9.0; Qt 6.12.0; OpenSSL 3.6.5.
   `%APPDATA%` (Go's `os.RemoveAll` failed there on this Windows build). A real cycle's renames and
   deletions showed in the installed interface's Activity, and the user enabled `fullSync` for engine
   builds. Tests: P09 runs 20 seeds (the CI x64 runner hit the 60 s limit), and the tests that use
-  the Windows credential store no longer run in parallel (concurrent writes lose updates). Go 1.27.4 / MyGo v0.9.0 / Desktop v35.0.3 / server v35.0.2 (previous major v34.0.5)
-  checked, unchanged.
+  the Windows credential store no longer run in parallel (concurrent writes lose updates). Go
+  1.27.4 / MyGo v0.9.0 / Desktop v35.0.3 checked, unchanged; the test server moved to v35.0.3
+  (previous major v34.0.6), both passing the server tier on ARM64.
 
 - Multi-account and protocol 1.9 (2026-11-12): several accounts (`multiAccount` after a real 2×2
   run), account removal that never waits on a stuck switch, credential renewal that reconciles with

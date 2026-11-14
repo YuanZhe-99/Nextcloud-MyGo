@@ -309,9 +309,12 @@ root is trusted only inside each acceptance process (`SYNCD_TEST_CA_*`); no trus
 file or proxy setting changes, and TLS checks stay on. Clients address the server as
 `primary.syncd.test` and `alternate.syncd.test` through the fixture relay, the cleanup step and the
 `lifetime` case use the direct loopback origin. The tier needs no private server.
-`-ServerVersion` picks the server release (default `35.0.2`, the latest); run it with the newest
-release of the previous supported major too (`-ServerVersion 34.0.5` on 2026-11-13: passed on ARM64
-in 498.2 s). On 2026-11-13 the default ARM64 tier passed three times in a row in 483.6, 502.2 and
+`-ServerVersion` picks the server release (default `35.0.3`, the latest); run it with the newest
+release of the previous supported major too (`-ServerVersion 34.0.6` on 2026-11-13: passed on ARM64
+in 484.4 s). With 35.0.3 the ARM64 tier passed in 512.7 s on its third run; the first two each
+stopped at one case under the six lanes' load (`data: revocation`, then `file safety, 100
+deletions`, each failing at its first request), and each of those passed alone three times. On
+35.0.2 the default ARM64 tier passed three times in a row in 483.6, 502.2 and
 539.0 s (container start 66.1–105.9 s, `maintenance` alone 67.5–68.1 s), `-Extended` in 566.3 s
 plus 115.2 s for its three lanes, and the emulated x64 smoke in 156.6 s.
 
