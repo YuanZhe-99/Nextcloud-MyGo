@@ -1,0 +1,94 @@
+diff --git a/src/libsync/propagateremotemove.cpp b/src/libsync/propagateremotemove.cpp
+--- a/src/libsync/propagateremotemove.cpp
++++ b/src/libsync/propagateremotemove.cpp
+@@ -203,6 +203,18 @@ void PropagateRemoteMove::slotMoveJobFinished()
+     if (err != QNetworkReply::NoError) {
+         SyncFileItem::Status status = classifyError(err, _item->_httpErrorCode,
+             &propagator()->_anotherSyncNeeded);
++        // Without an answer from the server (a refused or lost connection, a timeout, an aborted
++        // sync) or with a gateway or availability error (502, 503, 504), the move was not refused;
++        // it may even have been made. Keep the local rename and the old journal record: the next
++        // discovery finds the same rename and sends the MOVE again, or finds the server's copy
++        // already at the new name and adopts it. An answer about this move (4xx, 500, 507) still
++        // restores the old name below.
++        if (_item->_httpErrorCode == 0 || (_item->_httpErrorCode >= 502 && _item->_httpErrorCode <= 504)) {
++            qCWarning(lcPropagateRemoteMove) << "Could not MOVE file" << _item->_originalFile << "to" << _item->_renameTarget
++                                             << "with error:" << _job->errorString() << "keeping the local rename for the next sync";
++            done(status, _job->errorString(), ErrorCategory::GenericError);
++            return;
++        }
+         const auto filePath = propagator()->fullLocalPath(_item->_renameTarget);
+         const auto filePathOriginal = propagator()->fullLocalPath(_item->_originalFile);
+         const auto oldFile = QFileInfo{filePathOriginal};
+diff --git a/test/testsyncmove.cpp b/test/testsyncmove.cpp
+--- a/test/testsyncmove.cpp
++++ b/test/testsyncmove.cpp
+@@ -1048,6 +1048,68 @@ private Q_SLOTS:
+         QVERIFY(!fakeFolder.currentRemoteState().find(dest));
+     }
+ 
++    void testMoveWithoutServerRefusalKeepsLocalRename_data()
++    {
++        QTest::addColumn<int>("httpCode");
++        QTest::addColumn<QNetworkReply::NetworkError>("networkError");
++        QTest::addColumn<bool>("committed");
++
++        QTest::newRow("connection refused") << 0 << QNetworkReply::ConnectionRefusedError << false;
++        QTest::newRow("timed out") << 0 << QNetworkReply::OperationCanceledError << false;
++        QTest::newRow("service unavailable") << 503 << QNetworkReply::ServiceUnavailableError << false;
++        QTest::newRow("gateway timeout") << 504 << QNetworkReply::UnknownServerError << false;
++        QTest::newRow("made, reply lost") << 0 << QNetworkReply::OperationCanceledError << true;
++    }
++
++    /// Verifies that a MOVE the server did not refuse keeps the local rename, and that the next
++    /// sync sends the same MOVE again, or adopts the one the server made, instead of an upload,
++    /// a download or a deletion.
++    void testMoveWithoutServerRefusalKeepsLocalRename()
++    {
++        QFETCH(int, httpCode);
++        QFETCH(QNetworkReply::NetworkError, networkError);
++        QFETCH(bool, committed);
++        FakeFolder fakeFolder{FileInfo::A12_B12_C12_S12()};
++        auto failMove = true;
++        auto moves = 0;
++        auto transfers = 0;
++        fakeFolder.setServerOverride([&](QNetworkAccessManager::Operation op, const QNetworkRequest &request, QIODevice *) -> QNetworkReply * {
++            if (op == QNetworkAccessManager::PutOperation || op == QNetworkAccessManager::GetOperation || op == QNetworkAccessManager::DeleteOperation) {
++                ++transfers;
++            } else if (request.attribute(QNetworkRequest::CustomVerbAttribute).toByteArray() == "MOVE") {
++                ++moves;
++                if (std::exchange(failMove, false)) {
++                    if (committed) {
++                        fakeFolder.remoteModifier().rename(QStringLiteral("A/a1"), QStringLiteral("A/a1m"));
++                    }
++                    const auto reply = new FakeErrorReply(op, request, this, httpCode);
++                    reply->setError(networkError, QStringLiteral("Fake transport failure"));
++                    return reply;
++                }
++            }
++            return nullptr;
++        });
++
++        fakeFolder.localModifier().rename("A/a1", "A/a1m");
++        QVERIFY(!fakeFolder.syncOnce());
++        QCOMPARE(moves, 1);
++        QVERIFY(fakeFolder.currentLocalState().find("A/a1m"));
++        QVERIFY(!fakeFolder.currentLocalState().find("A/a1"));
++        QCOMPARE(fakeFolder.currentRemoteState().find("A/a1") != nullptr, !committed);
++        SyncJournalFileRecord record;
++        QVERIFY(fakeFolder.syncJournal().getFileRecord(QStringLiteral("A/a1"), &record));
++        QVERIFY(record.isValid());
++
++        // A server error is retried once its blacklist entry expires; skip the wait.
++        QVERIFY(fakeFolder.syncJournal().wipeErrorBlacklist() >= 0);
++        QVERIFY(fakeFolder.syncOnce());
++        QCOMPARE(moves, committed ? 1 : 2);
++        QCOMPARE(transfers, 0);
++        QVERIFY(fakeFolder.currentRemoteState().find("A/a1m"));
++        QVERIFY(!fakeFolder.currentRemoteState().find("A/a1"));
++        QCOMPARE(fakeFolder.currentLocalState(), fakeFolder.currentRemoteState());
++    }
++
+     void testRenameDeepHierarchy()
+     {
+         FakeFolder fakeFolder{FileInfo{}};

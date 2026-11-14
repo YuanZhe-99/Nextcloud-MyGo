@@ -17,7 +17,7 @@ Nextcloud-MyGo 依赖上游的哪些行为，以及每一点核对到什么程�
 | 账号 URL 与凭据存储相互耦合（`account.cpp`、`httpcredentials.cpp`） | 调用 `Account::setUrl()` 不等于端点切换 | 已阅读 |
 | `Account::setCapabilities` 在 `create(false)` 后仍会重新进入状态/推送设置 | 补丁 0015 在适配器安装已验证同步能力元数据前保留无头生命周期 | 窄回归在修复前失败；集成构建待完成 |
 | 文件带有 GPL-2.0-or-later 及其他文件级许可证 | 见 [third-party.md](third-party.md) | 已阅读 |
-| `PropagateRemoteMove::slotMoveJobFinished` 在 MOVE 因任何原因失败时（包括传输失败）把本地文件改回旧名，并在 journal 中记录旧名 | 地址故障期间做的本地重命名会被撤销：两侧都保留旧名，内容不丢失，但用户的重命名丢失；未打补丁（未解决，[验收](acceptance.md) R21） | 已阅读；加速浸泡运行中出现三次，ARM64，35.0.2，2026-11-13 |
+| `PropagateRemoteMove::slotMoveJobFinished`（`propagateremotemove.cpp:211`）在 MOVE 因任何原因失败时（包括传输失败）把本地文件改回旧名，并在 journal 中记录旧名 | 地址故障期间做的本地重命名曾被撤销：两侧都保留旧名，内容未丢失，但用户的重命名丢失了。补丁 0019 在 MOVE 没有得到应答（连接被拒绝或丢失、超时、周期被中止）或得到 502、503 或 504 时保留该重命名和 journal 中的旧记录；下一次发现按本地文件 ID（inode）把新名称与旧记录配对并再次发送 MOVE，或在丢失应答的 MOVE 已完成时接纳服务器上的副本。针对该移动本身的应答（4xx，如 403 或被禁止的目标；500；507）仍会撤销，这是上游自身测试的要求（[引擎](engine.md#completion-and-safety)） | 加速浸泡运行中出现三次，ARM64，35.0.2，2026-11-13；补丁 0019 附 `testMoveWithoutServerRefusalKeepsLocalRename` 和真实的 `rename-cut` 用例 |
 
 ### 发行版审计：Desktop v35.0.2
 

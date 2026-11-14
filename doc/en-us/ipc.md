@@ -232,7 +232,9 @@ Overlapped Win32 pipes reject remote clients, restrict access to the logon SID, 
 instance-creation rights and reserve the first instance. Both peers check user and session identity;
 the Go client additionally checks the server executable path. One UI connection is served at a time;
 the sole pipe instance remains reserved across reconnects, with bounded output queues and stalled-I/O
-deadlines. The frontend starts its sibling
+deadlines. A connection that ends, however and whenever, frees the instance within one poll (10 ms):
+a read or write that fails at the call counts as no I/O in flight, so the disconnect never waits for
+it, and a dropped client's unread requests are never dispatched. The frontend starts its sibling
 `nextcloud-mygo-syncd.exe` once when absent. `NEXTCLOUD_MYGO_MOCK=1` explicitly selects demo mode.
 
 ## Verification
@@ -251,7 +253,7 @@ including restart persistence, reconnect and refusal of an unexpected server exe
 The native frontend opened its paired daemon; its screenshot showed the unavailable-login message
 and disabled Continue control. Hostile clients on the real pipe (`internal/syncd/pipe_windows_test.go`,
 [platform notes](platform-notes.md#acceptance-audit-for-010)) cover malformed and stalled frames, a
-client that never reads, lost replies and reused operation keys across reconnect and restart, a
+client that never reads, clients that vanish before the first read or before a reply, lost replies and reused operation keys across reconnect and restart, a
 different protocol major, a process that takes the pipe name first, a remote client and a Control
 database of a newer schema. Cross-user and cross-session connections need a second Windows account
 or logon session and are not run. Full sync is not verified.

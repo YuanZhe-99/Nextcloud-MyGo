@@ -587,7 +587,7 @@ added for cases that had no real run:
 | `TestRealNewerControlSchemaR17` (real pipe) | R17 | passed, 2.3 s | passed, 2.6 s |
 | `SyncDPropertyContracts` (`backend/property_tests.cpp`) | P04, P08 | passed, 0.18 s | passed, 0.40 s |
 | `TestUpdateInterruptedDownload` (`internal/release`) | R16 | passed | passed |
-| `file-safety`: 100 server deletions under a fifth of the baseline | S11 | not run yet: the server tier waits for another session | not run (x64 runs the smoke only) |
+| `file-safety`: 100 server deletions under a fifth of the baseline | S11 | passed in five server tiers on 2026-11-13, 61.0–69.8 s (35.0.2 and 34.0.5) | not run (x64 runs the smoke only) |
 
 What they showed. A frame split inside its length prefix and its body is one message, and two frames
 in one write are answered in order. A zero length, a length above 1 MiB, invalid UTF-8, a duplicate
@@ -641,6 +641,7 @@ x64e did not run these cases.
 | `discovery-kill` | R02 | passed, 62.8 s |
 | `revocation` | R07, R22 | passed, 45.4 s |
 | `interrupted-change` | S05 | passed three times, 79.3–82.0 s, with the upload and the download both cut; before the fixes the server kept a truncated file, and the folder never left discovery once the network came back |
+| `rename-cut` | S04 | passed three times alone, 12.8–16.1 s (an earlier revision of patch 0019), and in the server tier, 13.5 s; failed without the patch: the old name came back and the server never got the MOVE |
 | `TestRealPipeConcurrentSourceR12` (real pipe) | R12 | passed, 2.5 s |
 | `SyncDRootContracts` long path (`root_tests.cpp`) | S17 regression | passed, 6.1 s; failed before the fix |
 
@@ -692,6 +693,18 @@ exclude list. The engine was given the folder path without its trailing slash, s
 the exclude patterns to a base path no file is below and applied none of them; SyncD now passes the
 slash ([engine](engine.md#completion-and-safety)). S05 plants a `.<name>.~<id>` file too and
 requires the server listing to hold only the two real files.
+
+Fixed on 2026-11-13 (found by the soak): a local rename whose MOVE failed without the server
+refusing it was renamed back by upstream ([engine](engine.md#completion-and-safety)); patch 0019
+keeps it. Rebuilt from the bootstrapped prefixes (`.dev/ci-verify`, `-BuildRoot build/cv`, patches
+0001–0019, tree `9AD005FA79FF`): upstream tests 96 of 96 on ARM64 (557.5 s, beside other builds)
+and on emulated x64 (503.4 s), `UtilityTest` and `SyncCfApiTest` excluded as usual; the first
+revision of the patch, which kept every 5xx, failed `renameError` (500) and the two 507 tests, so
+those answers still revert. SyncD CTest 24 of 24 on both; fast tier 68.9 s on ARM64 and 56.5 s on
+x64e; ARM64 server tier with `rename-cut` in the third lane 537.7 s of 600. The tier's first run
+stopped at `two accounts, two folders each` after 2 s (the alternate address's first verification
+failed right after a 128 s container start); its five killed lanes' profiles were cleaned by hand
+(native test credentials removed, the server already gone) and the rerun passed every case.
 
 Found, not fixed:
 - Hard folder blocks (`UNSUPPORTED_FOLDER_MODE`, `JOURNAL_ERROR`, `FOLDER_ROOT_CHANGED`) stay after
@@ -819,7 +832,15 @@ everything; no duplicate upload (718 confirmed of 736 changes; the 18 others wer
 rediscovery after a cut lost their reply) and upload bytes 75 MB above the changes' own, within the
 235.6 MB the relay's 635 cut connections had carried; no deletion beyond the soak's own and no
 deletion proposal; no switch across a running cycle. One check failed: three local renames ended at
-their old name, the upstream MOVE restore described in [upstream](upstream.md) (open).
+their old name, the upstream MOVE restore described in [upstream](upstream.md).
+
+Rerun with patch 0019 (same host and server, SyncD of `build/cv/syncd19-ARM64`, 2026-11-13), twice.
+The first run passed every check, `noRenameReverted` included (332 local renames, none undone), and
+every slope, but failed one band: TCP connections 65 against 60 (slope +14/h of 20; single samples
+4–86, probes and transfers). The second passed everything: 352 local renames, none undone; 89
+converged cycles; 73 switches (55 `unreachable`, 18 `faster`); private bytes +2.9 MB/h, handles
+−19/h, threads −1.2/h, TCP −7/h with band 52, Control database +37 KB/h; no duplicate upload or
+download and no unexpected deletion; the interface client connected in 296 of 297 cycles.
 
 Fixed on the way: the Control database grew by about 2 MB a minute, a full projection in the outbox
 for every state change; the outbox now keeps the latest 100 events ([IPC](ipc.md),

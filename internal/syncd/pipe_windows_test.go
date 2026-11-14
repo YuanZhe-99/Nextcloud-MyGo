@@ -523,6 +523,9 @@ func TestRealPipeSlowClientR13(t *testing.T) {
 	t.Logf("non-reading client dropped after %d requests, %.1f s", sent, time.Since(started).Seconds())
 	reconnected := time.Now()
 	p := dialRaw(t, ctx, profile, exe, true)
+	if wait := time.Since(reconnected); wait > time.Second {
+		t.Fatalf("next client accepted only after %.1f s", wait.Seconds())
+	}
 	p.negotiate(t)
 	if wait := time.Since(reconnected); wait > 5*time.Second {
 		t.Fatalf("next client served only after %.1f s", wait.Seconds())
@@ -533,6 +536,48 @@ func TestRealPipeSlowClientR13(t *testing.T) {
 	}
 	if daemon.ProcessState != nil {
 		t.Fatal("daemon exited under a slow client")
+	}
+}
+
+// TestRealPipeVanishingClientR13 checks that a client ending at any point frees the only pipe instance at
+// once (R13): one that closes right after connecting, before the daemon's first read, and one that closes
+// right after a request, before its reply is written. The daemon's read or write then fails at the call; it
+// used to wait forever for that never-started I/O, so every later client saw "All pipe instances are busy".
+// Notes: the daemon polls its pipe every 10 ms and these clients close within microseconds, so they land in
+// those windows on a fast or a slow machine. The daemon used to never recover, so the generous 5 s bound
+// keeps the verdict independent of machine speed; the slowest accept is logged.
+func TestRealPipeVanishingClientR13(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	profile, exe, start := realDaemon(t, ctx, "ipc-vanish")
+	daemon := start()
+	ready := dialRaw(t, ctx, profile, exe, true)
+	ready.negotiate(t)
+	ready.conn.Close()
+
+	hello := request("hello", "session.hello", map[string]any{"protocol": map[string]int{"major": 1, "minor": protocolMinor}})
+	var slowest time.Duration
+	for i := 0; i < 40; i++ {
+		began := time.Now()
+		conn, err := dialPipe(ctx, profile, exe)
+		for err != nil && time.Since(began) < 5*time.Second {
+			time.Sleep(time.Millisecond)
+			conn, err = dialPipe(ctx, profile, exe)
+		}
+		if err != nil {
+			t.Fatalf("client %d not accepted within 5 s after the previous one ended: %v", i, err)
+		}
+		slowest = max(slowest, time.Since(began))
+		if i%2 == 1 {
+			_, _ = conn.Write(hello)
+		}
+		conn.Close()
+	}
+	t.Logf("slowest accept after a vanished client: %v", slowest)
+	dialRaw(t, ctx, profile, exe, true).negotiate(t)
+	if daemon.ProcessState != nil {
+		t.Fatal("daemon exited after vanishing clients")
 	}
 }
 

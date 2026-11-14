@@ -247,7 +247,11 @@ inside the folder, so its listing answers 207 with one failing member; `names` (
 clash, names Windows cannot hold, NFD and non-BMP Unicode, paths above 300 characters and a locked
 local file; `excluded` (S18, S21) adds a junction and an offline file to a new and to a synced
 folder; `revocation` (R07, R22) signs in an owned user with an app password, revokes it on the
-server, then scans the profile, the support bundle and the daemon's log. `journal` (S16),
+server, then scans the profile, the support bundle and the daemon's log; `rename-cut` (S04) has the
+relay refuse the MOVE of a local rename at its connection, as it refuses a faulted address (the
+next request to the old path; a listener that only closed the new tunnel left Qt's request waiting
+for its transfer timeout instead) and requires the user's name to hold throughout, a later cycle to make the MOVE
+with the same server file ID and content, the local file untouched and nothing of the folder in the trash. `journal` (S16),
 `root-replaced` (S15) and `discovery-kill` (R02) end their first process (exit 75) and check the
 restarted one on the same profile: a damaged journal header, a root replaced by an empty folder (and
 a `DefineDosDevice` drive alias, removed again), a kill during remote discovery. `maintenance` and
@@ -372,8 +376,8 @@ address a large upload is running on once 4 MiB of it are sent. Each cycle must 
 sides hold exactly the expected names and SHA-256 hashes, then, with polls paused, every folder is
 idle and still matches (polled 24 times as often, some folder is nearly always in a cycle); a
 deletion proposal or review state fails the run. A local rename the daemon undoes is counted
-(`renamesReverted`, a failed check) and followed: upstream renames the file back when its MOVE
-fails, a transport failure included ([upstream](upstream.md#nextcloud-desktop)). The daemon's timers run 24 times faster through the
+(`renamesReverted`, a failed check) and followed: upstream renamed the file back when its MOVE
+failed, a transport failure included, until patch 0019 ([upstream](upstream.md#nextcloud-desktop)). The daemon's timers run 24 times faster through the
 test's access to Control: pending probes, circuit cooldowns, the switch cooldown and the 120 s
 dwell are pulled forward, and each folder's poll and the daily audit are queued as their own timers
 would; stability, freshness and debounce windows, server throttles and every trust check stay the

@@ -120,9 +120,10 @@ struct PipeServer::Impl {
         p.output += frame;
     }
     /// messages dispatches bounded batches in arrival order and subscribes at the bootstrap cursor.
+    /// Notes: stops at the first frame that ends the connection, so a dropped client's backlog is never dispatched.
     void messages(Peer &p) {
         int processed = 0;
-        while (p.input.size() >= 4 && processed++ < 32) {
+        while (!p.dead && p.input.size() >= 4 && processed++ < 32) {
             auto size = qFromLittleEndian<quint32>(p.input.constData());
             if (!size || size > 1048576) { p.dead = true; return; }
             if (p.input.size() < size + 4) return;
@@ -168,13 +169,17 @@ struct PipeServer::Impl {
             if (!p.writing) {
                 if (p.sending.isEmpty()) p.sending.swap(p.output);
                 if (!p.sending.isEmpty()) {
-                    ResetEvent(p.write.hEvent); p.writing = true;
-                    if (!WriteFile(p.pipe, p.sending.constData(), DWORD(p.sending.size()), nullptr, &p.write) && GetLastError() != ERROR_IO_PENDING) p.dead = true;
+                    ResetEvent(p.write.hEvent);
+                    // A call that fails at once (the client already ended) started no I/O; marking it pending
+                    // would make the disconnect below wait forever on an event nobody sets.
+                    p.writing = WriteFile(p.pipe, p.sending.constData(), DWORD(p.sending.size()), nullptr, &p.write) || GetLastError() == ERROR_IO_PENDING;
+                    if (!p.writing) { p.dead = true; continue; }
                 }
             }
             if (!p.reading && !control.shutdownRequested()) {
-                ResetEvent(p.read.hEvent); p.reading = true;
-                if (!ReadFile(p.pipe, p.chunk.data(), DWORD(p.chunk.size()), nullptr, &p.read) && GetLastError() != ERROR_IO_PENDING) p.dead = true;
+                ResetEvent(p.read.hEvent);
+                p.reading = ReadFile(p.pipe, p.chunk.data(), DWORD(p.chunk.size()), nullptr, &p.read) || GetLastError() == ERROR_IO_PENDING;
+                if (!p.reading) { p.dead = true; continue; }
             }
             if ((!p.input.isEmpty() || p.writing || !p.negotiated) && p.stalled.elapsed() > 15000) p.dead = true;
         }

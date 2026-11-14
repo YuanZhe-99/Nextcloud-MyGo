@@ -1,6 +1,56 @@
 # Version history
 
-## 0.1.0 (in progress)
+## 0.1.0
+
+The first release: a test build for Windows 11, one per-user installer per architecture (x64 and
+native ARM64).
+
+- **One account, several addresses.** Each account can have several trusted addresses of the same
+  server (internet, home network, VPN). An address serves the account only after its server, its
+  TLS certificate and its folder namespace are verified. SyncD picks the address automatically, or
+  keeps the one you fix, and switches only between sync cycles, all folders of the account together.
+  A sign-in or certificate failure blocks an address; no score overrides it.
+- **The Nextcloud Desktop engine.** Discovery, reconcile, propagation and the journal are upstream
+  Nextcloud Desktop's, with 19 small patches, in SyncD, a background process of the current user.
+  The interface (Go and MyGo) talks to it over a local Named Pipe, protocol 1.10; closing the
+  window never stops sync.
+- **File safety.** Deletion protection holds large or unusual deletions for your review. An
+  unconfirmed upload, move or deletion is recovered by rediscovery; an unreachable server or an
+  unreadable folder never reads as empty. A modification cut mid-transfer leaves the server's
+  previous version in place (it is sent as a chunked upload). A local rename whose move fails on
+  the network stays renamed and is sent again.
+- **Several accounts**, each with several folders; signing in through the browser; renewal and
+  revocation of the app password; a full server or a slow one each reported as such.
+- **The interface:** Overview, Accounts & folders, Network, Activity with the deletion review,
+  Settings, the tray and its flyout; English and Simplified Chinese.
+- **Installation and updates:** per-user installers that upgrade in place and check that every
+  binary matches the architecture. In-app updates install only an archive signed with the
+  project's update key; they are off until turned on in Settings.
+
+Known limitations:
+
+- File sync (`fullSync`) is not yet declared verified: adding a folder says so, and a folder that
+  is up to date reads "Last sync finished" rather than a green state. On-demand files are built but
+  not offered (`virtualFiles`).
+- The installers are not Authenticode-signed, so Windows SmartScreen warns on the first install.
+- Tested on one native ARM64 machine. x64 binaries passed their tests under emulation there; the x64
+  installer has not run on x64 hardware.
+- Not shown: a real sleep and resume (simulated only), a 24-hour run (replaced by a 1-hour
+  accelerated soak), strict VPN egress, a second Windows session or user, end-to-end encrypted
+  folders, drive-letter reuse by another volume, and a journal restored by hand. Start at sign-in
+  is checked after the release.
+- Deletion protection counts each sync cycle on its own: deletions spread over several cycles are
+  not added up.
+- A safety block (a changed certificate, a server that is not the expected one) stays until SyncD
+  restarts.
+- One access violation in SyncD during a 20-minute test run was not reproduced in about five hours
+  of later runs and is not explained.
+- macOS is not part of this release.
+
+Versions: Nextcloud Desktop v35.0.3 (engine), tested against Nextcloud server 35.0.2 and the
+previous major 34.0.5; Go 1.27.4; MyGo v0.9.0; Qt 6.12.0; OpenSSL 3.6.5.
+
+## Development of 0.1.0
 
 - Multi-account and protocol 1.9 (2026-11-12): several accounts (`multiAccount` after a real 2×2
   run), account removal that never waits on a stuck switch, credential renewal that reconciles with

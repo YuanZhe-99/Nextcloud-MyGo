@@ -250,16 +250,20 @@ void soakAcceptance(Control &c, const QString &root, const SoakControls &k,
 /// dataSafetyAcceptance runs one named data-safety case against the
 /// disposable server (PLAN §20.2, §20.4): interrupted-change (S05), watcher
 /// (S09, S10), root-denied (S13), maintenance and partial-listing (S14), names
-/// (S17), excluded (S18, S21), revocation (R07, R22), and the first half of the
-/// restart cases
+/// (S17), excluded (S18, S21), revocation (R07, R22), rename-cut (S04 with a
+/// failed MOVE), and the first half of the restart cases
 /// journal (S16), root-replaced (S15) and discovery-kill (R02), which end
 /// this process with exit code 75.
 /// Inputs: cut refuses (true) or restores (false) every connection to both
-/// addresses: a plain network loss with nowhere to fail over to.
+/// addresses: a plain network loss with nowhere to fail over to. cutNext
+/// with a path suffix makes the relay refuse the next request to either
+/// address whose path ends with it, once, at its CONNECT, as it refuses a
+/// faulted address; with an empty suffix it returns whether that happened.
 void dataSafetyAcceptance(Control &c, const QString &root,
                           const QString &account, const QString &name,
                           const AcceptanceCalls &calls,
-                          const std::function<void(bool)> &cut);
+                          const std::function<void(bool)> &cut,
+                          const std::function<bool(const QString &)> &cutNext);
 /// dataSafetyBeforeRestart changes what the restarted daemon of a restart
 /// case finds, before it opens its profile: a corrupt journal (S16) or a
 /// replaced root directory (S15); nothing for discovery-kill (R02).

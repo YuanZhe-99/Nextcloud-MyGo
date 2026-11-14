@@ -59,6 +59,22 @@
     "cleanup": "owned-containers-volumes-vault-entries-remote-collections-local-roots-and-sync-root-registrations-removed-preexisting-container-untouched",
     "see": "doc/en-us/platform-notes.md"
   },
+  "renameRevertFix": {
+    "date": "2026-11-13",
+    "product": "0.1.0",
+    "upstreamPatches": 19,
+    "upstreamPatchesAdded": 1,
+    "prefix": ".dev/ci-verify",
+    "arm64UpstreamTests": "passed-96-of-96-557.49s-build/cv/at-9AD005FA79FF-UtilityTest-and-SyncCfApiTest-excluded",
+    "x64UpstreamTests": "passed-emulated-96-of-96-503.40s-build/cv/xt-9AD005FA79FF-UtilityTest-and-SyncCfApiTest-excluded",
+    "arm64SyncdContracts": "passed-24-of-24-ctest-52.17s",
+    "x64SyncdContracts": "passed-emulated-24-of-24-ctest-62.92s",
+    "fastTier": "passed-arm64-68.9s-and-emulated-x64-56.5s",
+    "arm64ServerTier": "passed-537.7s-of-600s-with-rename-cut-13.5s-after-one-run-stopped-at-multi-account-alternate-verification",
+    "arm64Soak60": "run1-all-checks-and-slopes-passed-332-renames-none-undone-tcp-band-65-of-60-failed-run2-passed-everything-352-renames-none-undone",
+    "serverTested": "35.0.2",
+    "see": "doc/en-us/platform-notes.md"
+  },
   "nextcloudDesktop": {
     "repository": "https://github.com/nextcloud/desktop",
     "tag": "v35.0.3",
@@ -155,6 +171,11 @@
         "path": "patches/nextcloud/0018-chunk-uploads-that-replace-a-server-file.patch",
         "sha256": "4d12844e0b3e62e71fd219798348a79c25871d6dc050bd0806a2bae2cd591779",
         "reason": "Send every nonempty upload that replaces a server file as a chunked (v2) upload when the server supports it, not as one PUT: Nextcloud 35 writes an update over the existing file in place, so a PUT cut mid-body left the server copy truncated (S05), and once the server re-read it the next cycle's conflict put the truncated copy at the user's path. The final MOVE assembles on the server. New files below the chunk size still use one PUT; testSmallModificationIsChunked covers both; connectionDroppedBeforeEtagRecieved keeps its single-PUT case on a server without chunking."
+      },
+      {
+        "path": "patches/nextcloud/0019-keep-local-rename-when-move-is-not-refused.patch",
+        "sha256": "bcc0e6d204d5f4c2c34d710fceb4756ad8af3dcc7e6aee16deb5d541079b9b1b",
+        "reason": "Keep a local rename whose MOVE got no answer (refused or lost connection, timeout, aborted sync) or a 502, 503 or 504, instead of renaming the file back and recording the old name: the journal keeps the old record, so the next discovery finds the same rename and sends the MOVE again, or adopts the server's copy when the lost MOVE was made. The 1-hour soak saw three renames undone by address faults. An answer about the move itself (4xx, 500, 507) is still reverted, as upstream's testMovedWithError (403), renameError (500) and the two 507 tests require; testMoveWithoutServerRefusalKeepsLocalRename covers refused, timed out, 503, 504 and made-with-reply-lost."
       }
     ]
   },

@@ -128,6 +128,20 @@ below the chunk size still use one PUT (a cut one leaves nothing). The cost is t
 per modified file (the session's MKCOL and the final MOVE) and one more server-side copy; servers
 without chunking v2 keep the single PUT and its risk.
 
+A local rename is sent as one MOVE. Upstream renamed the file back to its old name whenever that
+MOVE failed, so a rename made while a connection was cut or an address switched was silently undone
+([upstream](upstream.md#nextcloud-desktop)). Patch 0019 keeps the local rename when the MOVE got no
+answer (a refused or lost connection, a timeout, a cycle aborted by a switch) or a 502, 503 or 504,
+and leaves the journal's record at the old name. The next discovery then finds what the first one
+found: a new local name whose file ID matches a record whose file is gone locally, with the server
+entry unchanged. That is the same rename, sent again as a MOVE, never a deletion and an upload. If
+the lost MOVE was made, the server copy already has the new name: the new name exists on both sides
+with the same size and modification time, so only the journal is updated, and the old record goes.
+An answer about the move itself is still reverted: a 4xx (403, a target the server forbids), a 500
+or a 507, as upstream's own tests require. The real `rename-cut` case has the relay refuse the MOVE
+at its connection and requires the user's name to hold throughout and the server to end with the
+same file ID and content.
+
 The server lists an external storage it cannot reach (`files_external` whose backing directory is
 gone) as missing or as an empty folder, the same as one that was emptied. A cycle whose local
 removals would take away a mount point recorded in the journal (permission `M`), or every baseline

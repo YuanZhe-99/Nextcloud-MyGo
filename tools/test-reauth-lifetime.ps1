@@ -11,7 +11,7 @@ param(
     # data-safety runs its cases the same way; journal, root-replaced and discovery-kill end their
     # first process (exit 75) and check the restarted one on the same profile.
     [ValidateSet('upload','download','unacknowledged-upload','move','delete','final-move',
-        'interrupted-change','watcher','root-denied','maintenance','partial-listing','names','excluded','revocation',
+        'interrupted-change','watcher','root-denied','maintenance','partial-listing','names','excluded','revocation','rename-cut',
         'journal','root-replaced','discovery-kill',
         'auto-switch','auto-fallback','tls-trust','tls-auth','tls-circuit','redirect','subpath','revoke-switch','new-folder','root-change','late-epoch')][string[]]$Case = @()
 )
@@ -88,7 +88,7 @@ if ($Scenario -eq 'switch-kill') {
         RunProfile @(@{ Argument = "--switch-kill=$name"; Code = 75 }, @{ Argument = "--switch-recover=$name"; Code = 0 })
     }
 } elseif ($Scenario -eq 'data-safety') {
-    $cases = if ($Case) { $Case } else { @('interrupted-change','watcher','root-denied','maintenance','partial-listing','names','excluded','revocation','journal','root-replaced','discovery-kill') }
+    $cases = if ($Case) { $Case } else { @('interrupted-change','watcher','root-denied','maintenance','partial-listing','names','excluded','revocation','rename-cut','journal','root-replaced','discovery-kill') }
     foreach ($name in $cases) {
         if ($name -in 'journal','root-replaced','discovery-kill') { RunProfile @(@{ Argument = "--data-safety=$name"; Code = 75 }, @{ Argument = "--data-recover=$name"; Code = 0 }) }
         else { RunProfile @(@{ Argument = "--data-safety=$name"; Code = 0 }) }

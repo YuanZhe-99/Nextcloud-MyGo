@@ -1215,12 +1215,128 @@ void revocation(Control &c, const AcceptanceCalls &calls, const QString &root,
               qPrintable(word(reason)), scanned,
               static_cast<long long>(log.size()));
 }
+
+/// remoteFileId reads one remote entry's server file ID; a missing entry has
+/// none. Notes: a busy server (5xx, no answer) is asked again for up to 10 s.
+QString remoteFileId(const Mapping &m, const QString &name) {
+  const QByteArray body =
+      "<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\" "
+      "xmlns:oc=\"http://owncloud.org/ns\"><d:prop><oc:fileid/></d:prop>"
+      "</d:propfind>";
+  const QList<std::pair<QByteArray, QByteArray>> headers{
+      {"Depth", "0"}, {"Content-Type", "application/xml"}};
+  auto reply = request("PROPFIND", m.path(name), body, headers);
+  for (int attempt = 0; attempt < 20 && (reply.status == 0 || reply.status >= 500);
+       ++attempt) {
+    spin(500);
+    reply = request("PROPFIND", m.path(name), body, headers);
+  }
+  if (reply.status == 404)
+    return {};
+  const auto match = QRegularExpression("<oc:fileid>(\\d+)</oc:fileid>")
+                         .match(QString::fromUtf8(reply.body));
+  require(reply.status == 207 && match.hasMatch(),
+          "owned remote file ID unavailable");
+  return match.captured(1);
+}
+/// localIdentity is one local file's NTFS file ID: a download that replaced
+/// the file gives it a new one. A missing file has none.
+QByteArray localIdentity(const QString &path) {
+  const auto native = QDir::toNativeSeparators(path);
+  const auto handle =
+      CreateFileW(reinterpret_cast<LPCWSTR>(native.utf16()), FILE_READ_ATTRIBUTES,
+                  FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                  nullptr, OPEN_EXISTING, 0, nullptr);
+  if (handle == INVALID_HANDLE_VALUE)
+    return {};
+  FILE_ID_INFO identity{};
+  const auto ok = GetFileInformationByHandleEx(handle, FileIdInfo, &identity,
+                                               sizeof(identity));
+  CloseHandle(handle);
+  return ok ? QByteArray(reinterpret_cast<const char *>(&identity),
+                         sizeof(identity))
+            : QByteArray();
+}
+
+/// renameCut (S04 with a failed MOVE): the relay refuses the MOVE of a local
+/// rename at its CONNECT, as a network cut or an address switch fails it. The
+/// user's name must stay, and a later cycle must make the same MOVE on the server:
+/// same server file ID and content, nothing deleted, uploaded or downloaded.
+/// Notes: the old name sorts first, so discovery pairs the rename with the old
+/// name's local deletion and sends nothing to the old path before the MOVE.
+/// Before patch 0019 upstream renamed the file back and kept the old name.
+void renameCut(Control &c, const AcceptanceCalls &calls, const Mapping &m,
+               const std::function<bool(const QString &)> &cutNext) {
+  const auto content = randomContent(256 * 1024);
+  const QString from = "rename-1-old.bin", to = "rename-2-new.bin";
+  writeLocal(m.local + '/' + from, content);
+  converge(c, calls, m, [&] { return remoteHash(m, from) == sha256(content); },
+           "owned rename baseline did not converge");
+  const auto id = remoteFileId(m, from);
+  const auto identity = localIdentity(m.local + '/' + from);
+  require(!id.isEmpty() && !identity.isEmpty(),
+          "owned rename baseline identity unavailable");
+  cutNext('/' + from);
+  require(QFile::rename(m.local + '/' + from, m.local + '/' + to),
+          "owned local rename failed");
+  // From here on the user's name must hold, through the failed cycle and after.
+  bool undone = false;
+  QTimer watch;
+  QObject::connect(&watch, &QTimer::timeout, &watch, [&] {
+    undone = undone || QFile::exists(m.local + '/' + from) ||
+             !QFile::exists(m.local + '/' + to);
+  });
+  watch.start(50);
+  // A failed wait names which side holds which name, never content or paths.
+  const auto named = qScopeGuard([&] {
+    if (std::uncaught_exceptions())
+      std::fprintf(stderr,
+                   "rename: local old %d new %d, server old %d new %d, same "
+                   "file ID %d, undone %d\n",
+                   QFile::exists(m.local + '/' + from),
+                   QFile::exists(m.local + '/' + to),
+                   !remoteFileId(m, from).isEmpty(),
+                   !remoteFileId(m, to).isEmpty(), remoteFileId(m, to) == id,
+                   undone);
+  });
+  syncNow(c, calls, m.folder);
+  waitUntil([&] { return cutNext({}); }, "owned rename MOVE was not sent",
+            60000, 50);
+  converge(c, calls, m, [&] { return remoteFileId(m, to) == id; },
+           "owned rename was not made on the server", 90000);
+  watch.stop();
+  require(!undone, "owned local rename was undone");
+  require(remoteFileId(m, from).isEmpty() &&
+              remoteHash(m, to) == sha256(content) &&
+              localHash(m.local + '/' + to) == sha256(content),
+          "owned rename left the old name or changed the content");
+  require(localIdentity(m.local + '/' + to) == identity,
+          "owned renamed file was replaced by a download");
+  require(sameFiles(m.local, {to}) && decisions(c).isEmpty(),
+          "owned rename left a copy or a decision");
+  // A delete and upload instead of the MOVE leaves the old name in the trash.
+  const auto trash = request(
+      "PROPFIND",
+      "remote.php/dav/trashbin/" +
+          QString::fromLatin1(QUrl::toPercentEncoding(m.uid)) + "/trash",
+      "<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\" "
+      "xmlns:nc=\"http://nextcloud.org/ns\"><d:prop>"
+      "<nc:trashbin-original-location/></d:prop></d:propfind>",
+      {{"Depth", "1"}, {"Content-Type", "application/xml"}});
+  require(trash.status == 207 && !trash.body.contains(m.collection.toUtf8()),
+          "owned rename deleted the old name on the server");
+  std::printf("PASS data-safety S04: a local rename whose MOVE was refused at "
+              "its connection kept the user's name throughout; a later cycle "
+              "made the MOVE (same server file ID, same content, same local "
+              "file), nothing deleted, uploaded or downloaded\n");
+}
 } // namespace
 
 void dataSafetyAcceptance(Control &c, const QString &root,
                           const QString &account, const QString &name,
                           const AcceptanceCalls &calls,
-                          const std::function<void(bool)> &cut) {
+                          const std::function<void(bool)> &cut,
+                          const std::function<bool(const QString &)> &cutNext) {
   if (name == "revocation") {
     qInstallMessageHandler(capture);
     revocation(c, calls, root, account);
@@ -1242,6 +1358,8 @@ void dataSafetyAcceptance(Control &c, const QString &root,
     names(c, calls, m);
   else if (name == "excluded")
     excluded(c, calls, m, root, account);
+  else if (name == "rename-cut")
+    renameCut(c, calls, m, cutNext);
   else if (name == "journal" || name == "root-replaced" ||
            name == "discovery-kill") {
     QJsonObject files;

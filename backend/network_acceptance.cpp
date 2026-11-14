@@ -378,6 +378,12 @@ struct FaultState {
   std::map<QString, quint16> routes;
   QString refuseAlternate;
   quint16 abortPort = 0; // a listener that aborts every connection
+  // The next request to either address whose path ends with this suffix
+  // reaches cutPort, which refuses it as a faulted origin is refused (503);
+  // then the rule clears itself (under withholdLock).
+  QString cutSuffix;
+  bool cut = false;
+  quint16 cutPort = 0;
 };
 /// FaultProxy refuses selected HTTPS tunnels through a process-local closed
 /// proxy without TLS interception.
@@ -408,6 +414,14 @@ public:
         ++state_->refused;
         return {QNetworkProxy(QNetworkProxy::HttpProxy, "127.0.0.1",
                               state_->abortPort)};
+      }
+      if ((host == state_->primary || host == state_->alternate) &&
+          !state_->cutSuffix.isEmpty() &&
+          query.url().path().endsWith(state_->cutSuffix)) {
+        state_->cutSuffix.clear();
+        state_->cut = true;
+        return {QNetworkProxy(QNetworkProxy::HttpProxy, "127.0.0.1",
+                              state_->cutPort)};
       }
       if (const auto route = state_->routes.find(host);
           route != state_->routes.end())
@@ -703,6 +717,16 @@ void networkAcceptance(const QString &scenario) {
           },
           {}, true);
   });
+  // Closing a new tunnel right after its CONNECT leaves Qt's request waiting
+  // for its transfer timeout; a refusal fails it at once, as a cut does.
+  QTcpServer cutting;
+  require(cutting.listen(QHostAddress::LocalHost, 0),
+          "owned cutting proxy unavailable");
+  faults->cutPort = cutting.serverPort();
+  QObject::connect(&cutting, &QTcpServer::newConnection, &cutting, [&] {
+    while (auto *socket = cutting.nextPendingConnection())
+      new NetworkTunnel(socket, base, alternate, [](bool) { return true; });
+  });
   QTcpServer aborting;
   require(aborting.listen(QHostAddress::LocalHost, 0),
           "owned aborting proxy unavailable");
@@ -974,11 +998,21 @@ void networkAcceptance(const QString &scenario) {
     try {
       if (dataSafety)
         // A plain network loss refuses both addresses: nowhere to fail over.
-        dataSafetyAcceptance(c, root, account, stage, calls, [&](bool cut) {
-          faults->failPrimary = cut;
-          faults->failAlternate = cut;
-          NetworkTestAccess::changed(c);
-        });
+        dataSafetyAcceptance(
+            c, root, account, stage, calls,
+            [&](bool cut) {
+              faults->failPrimary = cut;
+              faults->failAlternate = cut;
+              NetworkTestAccess::changed(c);
+            },
+            [&](const QString &suffix) {
+              QMutexLocker lock(&faults->withholdLock);
+              if (!suffix.isEmpty()) {
+                faults->cutSuffix = suffix;
+                faults->cut = false;
+              }
+              return faults->cut;
+            });
       else if (scenario == "switch-quota")
         switchQuotaAcceptance(c, root, base, calls);
       else
