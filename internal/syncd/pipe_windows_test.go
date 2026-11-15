@@ -120,6 +120,16 @@ func request(id, method string, params any) []byte {
 	return frame(body)
 }
 
+// writeBy writes b to a real pipe with a deadline, so a daemon that stops reading fails the write
+// instead of blocking the test until the package timeout (which reports no test name in the tier log).
+func writeBy(conn io.Writer, b []byte, deadline time.Time) error {
+	if err := conn.(*os.File).SetWriteDeadline(deadline); err != nil {
+		return err
+	}
+	_, err := conn.Write(b)
+	return err
+}
+
 // send writes bytes as one write, so several frames arrive stuck together.
 func (p *rawPipe) send(t *testing.T, parts ...[]byte) {
 	t.Helper()
@@ -127,7 +137,7 @@ func (p *rawPipe) send(t *testing.T, parts ...[]byte) {
 	for _, part := range parts {
 		all = append(all, part...)
 	}
-	if _, err := p.conn.Write(all); err != nil {
+	if err := writeBy(p.conn, all, time.Now().Add(15*time.Second)); err != nil {
 		t.Fatalf("raw pipe write: %v", err)
 	}
 }
@@ -418,7 +428,7 @@ func TestRealPipeReplayR10R11R14(t *testing.T) {
 		t.Fatalf("shutdown refused: %+v", m)
 	}
 	// Reading the stop's receipt lets it end the process; the daemon may already be closing the pipe.
-	_, _ = p.conn.Write(request("stop-status", "operations.get", map[string]any{"operationId": stop.ID}))
+	_ = writeBy(p.conn, request("stop-status", "operations.get", map[string]any{"operationId": stop.ID}), time.Now().Add(15*time.Second))
 	if !p.closed(15 * time.Second) {
 		t.Fatal("explicit stop did not end the connection")
 	}
@@ -511,8 +521,8 @@ func TestRealPipeSlowClientR13(t *testing.T) {
 		for i := 0; i < 64; i++ {
 			batch = append(batch, request(fmt.Sprint(sent+i), "state.bootstrap", map[string]any{})...)
 		}
-		if _, err := slow.conn.Write(batch); err != nil {
-			dropped = true
+		if err := writeBy(slow.conn, batch, started.Add(40*time.Second)); err != nil {
+			dropped = !errors.Is(err, os.ErrDeadlineExceeded)
 			break
 		}
 		sent += 64
@@ -570,7 +580,7 @@ func TestRealPipeVanishingClientR13(t *testing.T) {
 		}
 		slowest = max(slowest, time.Since(began))
 		if i%2 == 1 {
-			_, _ = conn.Write(hello)
+			_ = writeBy(conn, hello, time.Now().Add(5*time.Second))
 		}
 		conn.Close()
 	}

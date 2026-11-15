@@ -261,7 +261,9 @@ func TestRealVersionReport(t *testing.T) {
 	if exe == "" {
 		t.Skip("set SYNCD_TEST_EXE to the compiled native daemon")
 	}
-	out, err := exec.Command(exe, "--version").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, exe, "--version").Output()
 	if err != nil {
 		t.Fatal(err)
 	}
