@@ -38,6 +38,7 @@ SyncD 连通基础已实现；完整同步尚未完成。见 [IPC](../ipc.md) �
 | `packaging/windows/setup` | 按版本目录的当前用户安装、替换文件前的更新安全点、协调的双进程停止、卸载（先让 SyncD 释放每个按需目录并删除遗留导航窗格条目）及可选的用户数据删除 | `install`、`stopApp`、`prepare`、`prepareUpdate`、`shutdown`、`uninstallApp`、`releaseOnDemand`、`uninstallSequence`、`removeNavigation`、`removeTree`、`admit`、`extract` |
 | `internal/release` | `tools/pkg` 写入、安装器校验的安装包清单；签名更新：其归档与清单、检查、下载与签名校验、交给 setup（[打包](../packaging.md#签名更新)） | `Manifest`、`Parse`、`Verify`、`SignUpdate`、`CheckUpdate`、`Update.Download`、`StartSetup` |
 | `locales` | 界面字符串（en、zh-Hans）及生成的访问函数 | `en.json`、`In` |
+| `internal/testprofile` | 仅供测试：删除真实守护进程测试的一次性 SyncD 配置文件；30 秒后仍被锁定的文件，只有在 SyncD 持有时（通过重启管理器查得）才判测试失败，否则记录持有者并保留该配置文件 | `Remove` |
 | `internal/version` | 产品版本 | `Version`、`Older` |
 | `tools/checkdocs` | 文档镜像检查 | `main` |
 | `tools/bootstrap-deps.ps1` | 按记录的版本与提交精确组装原生依赖前缀（Qt、vcpkg 端口、ECM、QtKeychain、KDSingleApplication、KArchive、libp11、pkgconf、许可证文本）（[CI](../ci.md)） | `Get-Source`、`CMakeProject`、标记文件与 `env-<arch>.json` |

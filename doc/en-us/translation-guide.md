@@ -64,6 +64,7 @@ and Latin words only where it helps readability.
 | test build | 测试构建 |
 | dependency bootstrap | 依赖引导 |
 | runner (CI) | 运行器 |
+| Restart Manager (Windows) | 重启管理器 |
 | pre-release | 预发布 |
 | license bundle | 许可证包 |
 | corresponding source | 对应源代码 |

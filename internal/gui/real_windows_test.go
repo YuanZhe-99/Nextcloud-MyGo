@@ -15,6 +15,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"github.com/YuanZhe-99/Nextcloud-MyGo/internal/syncd"
+	"github.com/YuanZhe-99/Nextcloud-MyGo/internal/testprofile"
 	L "github.com/YuanZhe-99/Nextcloud-MyGo/locales"
 )
 
@@ -49,18 +50,8 @@ func startReal(t *testing.T, ctx context.Context) *realApp {
 	profile := fmt.Sprintf("gui-test-%x", b)
 	hash := sha256.Sum256([]byte(profile))
 	dir := filepath.Join(os.Getenv("LOCALAPPDATA"), "Nextcloud-MyGo", "syncd", fmt.Sprintf("%x", hash[:12]))
-	t.Cleanup(func() {
-		// Retried: a scanner may still hold a just-closed file (seen on hosted runners).
-		var err error
-		for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(200 * time.Millisecond) {
-			if err = os.RemoveAll(dir); err == nil || time.Now().After(deadline) {
-				break
-			}
-		}
-		if err != nil {
-			t.Error(err)
-		}
-	})
+	t.Cleanup(func() { testprofile.Remove(t, dir, exe) })
+
 	cmd := exec.CommandContext(ctx, exe, "--profile", profile)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)

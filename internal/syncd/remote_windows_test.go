@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/YuanZhe-99/Nextcloud-MyGo/internal/testprofile"
 )
 
 // awaitConnected waits for a real negotiated snapshot with a bounded test deadline.
@@ -47,11 +49,7 @@ func TestRealPipeUnavailableStopsINV11INV12(t *testing.T) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		if err := removeProfileDir(dir); err != nil {
-			t.Error(err)
-		}
-	})
+	t.Cleanup(func() { testprofile.Remove(t, dir, exe) })
 	corrupt := []byte("owned corrupt Control database; preserve exactly")
 	database := filepath.Join(dir, "control.sqlite")
 	if err := os.WriteFile(database, corrupt, 0600); err != nil {
@@ -124,11 +122,7 @@ func TestRealPipeINV12INV13(t *testing.T) {
 	profile := "ipc-test-" + operationKey()
 	hash := sha256.Sum256([]byte(profile))
 	dir := filepath.Join(os.Getenv("LOCALAPPDATA"), "Nextcloud-MyGo", "syncd", fmt.Sprintf("%x", hash[:12]))
-	t.Cleanup(func() {
-		if err := removeProfileDir(dir); err != nil {
-			t.Error(err)
-		}
-	})
+	t.Cleanup(func() { testprofile.Remove(t, dir, exe) })
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	start := func() *exec.Cmd {
@@ -218,11 +212,7 @@ func TestRealPipeCrashBackoffActivates(t *testing.T) {
 	profile := "ipc-backoff-" + operationKey()
 	hash := sha256.Sum256([]byte(profile))
 	dir := filepath.Join(os.Getenv("LOCALAPPDATA"), "Nextcloud-MyGo", "syncd", fmt.Sprintf("%x", hash[:12]))
-	t.Cleanup(func() {
-		if err := removeProfileDir(dir); err != nil {
-			t.Error(err)
-		}
-	})
+	t.Cleanup(func() { testprofile.Remove(t, dir, exe) })
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	crashed := exec.CommandContext(ctx, exe, "--profile", profile)
@@ -295,7 +285,7 @@ func TestRealConnectOnlyNeverStarts(t *testing.T) {
 	profile := "ipc-connect-only-" + operationKey()
 	hash := sha256.Sum256([]byte(profile))
 	dir := filepath.Join(os.Getenv("LOCALAPPDATA"), "Nextcloud-MyGo", "syncd", fmt.Sprintf("%x", hash[:12]))
-	t.Cleanup(func() { _ = removeProfileDir(dir) })
+	t.Cleanup(func() { testprofile.Remove(t, dir, exe) })
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	r := ConnectRemote(ctx, profile, exe)
@@ -323,11 +313,7 @@ func TestRealPrepareUpdate(t *testing.T) {
 	profile := "ipc-update-" + operationKey()
 	hash := sha256.Sum256([]byte(profile))
 	dir := filepath.Join(os.Getenv("LOCALAPPDATA"), "Nextcloud-MyGo", "syncd", fmt.Sprintf("%x", hash[:12]))
-	t.Cleanup(func() {
-		if err := removeProfileDir(dir); err != nil {
-			t.Error(err)
-		}
-	})
+	t.Cleanup(func() { testprofile.Remove(t, dir, exe) })
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	command := exec.CommandContext(ctx, exe, "--profile", profile)
