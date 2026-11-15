@@ -149,7 +149,9 @@ PE 文件，因此 CI 可在任何平台运行。
 
 - Windows 运行的架构与安装包不同（x64 包在 ARM64 上会以仿真运行）；
 - 已安装版本更新，或其 Control schema 更新（PLAN.md §16.3）；
-- 已安装的是另一架构的包：先卸载；文件与设置保留。
+- 已安装的是另一架构的包：先卸载；文件与设置保留；
+- setup 自身以 UAC 管理员的完整令牌运行（“以管理员身份运行”，或 Windows 的安装程序检测提升了没有清单的 setup，0.1.2 的就是如此）：
+  它会以提升权限启动应用，而应用绝不以提升权限运行。没有 UAC 拆分令牌的账号所有程序都在同一级别运行，可以安装。
 
 否则按以下顺序安装、重装或升级：
 
@@ -171,6 +173,7 @@ PE 文件，因此 CI 可在任何平台运行。
 
 | 情形 | 信息 |
 |---|---|
+| 应用以管理员身份运行（在关闭任何内容之前检查，卸载也检查） | Nextcloud MyGo is running as administrator, so setup cannot close it. Quit Nextcloud MyGo from its tray icon (Quit and stop syncing), then run setup again |
 | 删除等待复核 | Nextcloud MyGo is waiting for you to review a deletion. Open Nextcloud MyGo, review it, then run setup again |
 | 2 分钟后仍忙 | Nextcloud MyGo is still busy (signing in, checking or switching a server address, or finishing a sync) and did not get ready within 2 minutes. Wait a few minutes, then run setup again |
 | 2 分钟后仍无应答 | Nextcloud MyGo's background sync is running but did not answer within 2 minutes. Quit Nextcloud MyGo from its tray icon, then run setup again |

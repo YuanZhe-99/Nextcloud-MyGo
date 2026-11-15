@@ -27,6 +27,12 @@ Fixes and small features the user reported on 2026-11-15 after using 0.1.2.
   and Free up space, and a full-file folder's offers Use on-demand files (converted in place, nothing
   downloaded again) ([on-demand](on-demand.md#availability)). Explorer offers "Always keep on this device"
   and "Free up space" only inside a synced folder, not on the sidebar entry's base folder.
+- **Never elevated.** The 0.1.2 setup had no manifest, so Windows' installer detection elevated it and
+  the app it started then ran as administrator, against the rule that it never does. The 0.1.3
+  installer runs as the invoking user (`asInvoker`), refuses to run as administrator, and refuses before
+  closing anything when the running app is elevated: quit it from the tray first. An elevated SyncD
+  also made the lease checks of a second, normal SyncD on the same machine refuse every folder below a
+  shared parent (`FOLDER_OWNED`), which is how this was found.
 - **Renaming an address.** Every approved address, the main one too, can be renamed and given its kind.
 - **Tests.** Real-daemon tests remove their profile bottom-up, as setup does: `os.RemoveAll` fails with
   "too many levels of symbolic links" below `AppData\Local` on the ARM64 test machine (build 26300),

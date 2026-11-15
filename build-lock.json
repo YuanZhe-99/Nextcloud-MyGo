@@ -155,8 +155,8 @@
     "x64EngineTree": "build/xe-CF0C68C10DD7",
     "syncdContracts": "passed-arm64-25-of-25-and-emulated-x64-25-of-25-50.4s-with-temp-on-D-three-Cloud-Files-targets-fail-FOLDER_OWNED-with-temp-on-C",
     "realPipe": "passed-arm64-all-Real-tests-internal-syncd-and-internal-gui",
-    "arm64Package": "build/package/Nextcloud-MyGo-0.1.3-arm64-setup.exe-sha256-4d458c86ee290542542c133fcc9ee00a15b6f3588022bb632c1eb23a6bf9ceba-30-PE-native-ARM64",
-    "x64Package": "build/package/Nextcloud-MyGo-0.1.3-x64-setup.exe-sha256-319afcc6e715067ec9bdedf66b97da4e63fe1e2377bb747dad604238ad4f804f-31-PE-native-x64",
+    "arm64Package": "build/package/Nextcloud-MyGo-0.1.3-arm64-setup.exe-sha256-e960346d6c80d85b74e36b12294ea4e1dbff8dbb8a6f2bc24d8a64e6801b193d-30-PE-native-ARM64",
+    "x64Package": "build/package/Nextcloud-MyGo-0.1.3-x64-setup.exe-sha256-6de5311bb5a9b9784ab75afd67e89ecf43757937ce0c1b22f3d0e96ae596092a-31-PE-native-x64",
     "packagesSigned": false,
     "realServer": "not-run",
     "see": "doc/en-us/platform-notes.md"

@@ -171,7 +171,11 @@ The installer refuses before writing anything when:
 - Windows runs on another architecture than the package (an x64 package on ARM64 would run
   emulated);
 - the installed version is newer, or its Control schema is newer (PLAN.md §16.3);
-- the installed package is for the other architecture: uninstall first; files and settings stay.
+- the installed package is for the other architecture: uninstall first; files and settings stay;
+- setup itself runs with the full token of a UAC administrator (Run as administrator, or Windows'
+  installer detection on a setup without a manifest, as 0.1.2's was): it would start the app elevated,
+  which the app never is. An account without UAC's split token runs everything at one level and may
+  install.
 
 Otherwise it installs, reinstalls or upgrades in this order:
 
@@ -199,6 +203,7 @@ What setup prints when it stops at step 3, each followed by "the installed versi
 
 | Case | Message |
 |---|---|
+| app running as administrator (checked before anything is closed, also by the uninstall) | Nextcloud MyGo is running as administrator, so setup cannot close it. Quit Nextcloud MyGo from its tray icon (Quit and stop syncing), then run setup again |
 | deletion waiting | Nextcloud MyGo is waiting for you to review a deletion. Open Nextcloud MyGo, review it, then run setup again |
 | still busy after 2 minutes | Nextcloud MyGo is still busy (signing in, checking or switching a server address, or finishing a sync) and did not get ready within 2 minutes. Wait a few minutes, then run setup again |
 | no answer after 2 minutes | Nextcloud MyGo's background sync is running but did not answer within 2 minutes. Quit Nextcloud MyGo from its tray icon, then run setup again |

@@ -7,7 +7,30 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/windows"
 )
+
+// TestElevationChecks covers the guards against an elevated app (0.1.2's
+// setup had no manifest, so Windows elevated it and the app it started): a
+// process reads as elevated exactly as its token says, one that is gone
+// does not, and a process without an elevated token is never refused as
+// elevated itself.
+func TestElevationChecks(t *testing.T) {
+	self := windows.GetCurrentProcessToken().IsElevated()
+	if runsElevated(process{pid: uint32(os.Getpid())}) != self {
+		t.Fatal("this process's elevation was misread")
+	}
+	if runsElevated(process{pid: 0xfffffffc}) || elevatedApp([]process{{pid: 0xfffffffc}}) {
+		t.Fatal("a process that is gone was taken as elevated")
+	}
+	if elevatedApp([]process{{pid: uint32(os.Getpid())}}) {
+		t.Fatal("a process at setup's own level was refused")
+	}
+	if !self && elevatedByUAC() {
+		t.Fatal("a process without an elevated token was refused as elevated")
+	}
+}
 
 // TestSyncRoots reads this user's real sync root registrations (read-only):
 // every one listed is a Nextcloud-MyGo root of this user's SID, never the

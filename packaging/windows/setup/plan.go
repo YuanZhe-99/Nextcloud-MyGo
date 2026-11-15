@@ -31,6 +31,12 @@ var (
 	errNotQuiet        = errors.New("Nextcloud MyGo is still busy (signing in, checking or switching a server address, or finishing a sync) and did not get ready within 2 minutes. Wait a few minutes, then run setup again")
 	errNoAnswer        = errors.New("Nextcloud MyGo's background sync is running but did not answer within 2 minutes. Quit Nextcloud MyGo from its tray icon, then run setup again")
 	errNotPrepared     = errors.New("Nextcloud MyGo could not get ready for the update. Quit Nextcloud MyGo from its tray icon, then run setup again")
+	// errElevated: setup itself runs as administrator, and would start the
+	// app that way; Nextcloud MyGo never runs elevated.
+	errElevated = errors.New("setup is running as administrator. Nextcloud MyGo is installed for your user and never runs as administrator: start setup again normally, without Run as administrator")
+	// errElevatedApp: the running app was started as administrator (by the
+	// 0.1.2 setup), so setup, which is not, cannot close it.
+	errElevatedApp = errors.New("Nextcloud MyGo is running as administrator, so setup cannot close it. Quit Nextcloud MyGo from its tray icon (Quit and stop syncing), then run setup again")
 )
 
 // onStep, when set, also receives the text of each step; setup's window

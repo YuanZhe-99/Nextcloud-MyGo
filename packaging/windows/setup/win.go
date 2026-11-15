@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -251,6 +252,41 @@ func waitExit(ps []process, timeout time.Duration) []process {
 		windows.CloseHandle(h)
 	}
 	return left
+}
+
+// elevatedByUAC reports whether this process runs with the full token of a
+// UAC administrator: started with Run as administrator, or elevated by
+// Windows' installer detection (the 0.1.2 setup had no manifest).
+// Notes: an account without a split token (UAC off) runs everything at one
+// level and is not elevated in this sense.
+func elevatedByUAC() bool {
+	var kind, n uint32
+	err := windows.GetTokenInformation(windows.GetCurrentProcessToken(), windows.TokenElevationType, (*byte)(unsafe.Pointer(&kind)), 4, &n)
+	return err == nil && kind == 2 // TokenElevationTypeFull
+}
+
+// elevatedApp reports whether any of ps runs elevated while setup does not.
+func elevatedApp(ps []process) bool {
+	return !windows.GetCurrentProcessToken().IsElevated() && slices.ContainsFunc(ps, runsElevated)
+}
+
+// runsElevated reports whether p runs with an elevated token; false when it
+// is gone or its token cannot be read.
+// Notes: a medium-integrity setup may still terminate such a process (the
+// right counts as execute access), but SyncD's pipe and its safe point are
+// out of reach, so setup refuses before closing anything (stopApp).
+func runsElevated(p process) bool {
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, p.pid)
+	if err != nil {
+		return false
+	}
+	defer windows.CloseHandle(h)
+	var token windows.Token
+	if windows.OpenProcessToken(h, windows.TOKEN_QUERY, &token) != nil {
+		return false
+	}
+	defer token.Close()
+	return token.IsElevated()
 }
 
 // terminate ends processes at once and waits briefly for them to go.

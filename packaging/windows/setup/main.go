@@ -74,6 +74,10 @@ func main() {
 	if err == nil && t == taskNone {
 		err = errors.New("this build carries no package; run it with -uninstall")
 	}
+	// An install refuses to run elevated: it would start the app elevated.
+	if err == nil && t == taskInstall && elevatedByUAC() {
+		err = errElevated
+	}
 	if err != nil {
 		fail(o, "Nextcloud MyGo setup: "+err.Error(), 1)
 	}
@@ -270,6 +274,11 @@ func stopApp(root, profile, current, target string) error {
 				toPrepare = append(toPrepare, p)
 			}
 		}
+	}
+	// Before anything is closed: an app started as administrator (by the
+	// 0.1.2 setup) is out of a normal setup's reach, so it is quit first.
+	if elevatedApp(slices.Concat(ui, daemons)) {
+		return errElevatedApp
 	}
 	if len(ui) > 0 {
 		step("closing the interface (%d)", len(ui))

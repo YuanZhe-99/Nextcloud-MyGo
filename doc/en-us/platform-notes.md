@@ -1032,8 +1032,11 @@ Measured 2026-11-15 on the ARM64 machine (build 26300), outside a packaged host,
 - SyncD contracts (`build-syncd.ps1`): 25 of 25 passed on ARM64 and on x64 (emulated, 50.4 s) with the
   test's temporary folders on drive D:. With them on C:, `SyncDRootContracts`, `SyncDFolderErrorContracts` and `SyncDOnDemandContracts`
   fail with `FOLDER_OWNED`: every fresh folder below `C:\Users\<user>` is refused, while D: passes;
-  `root_windows.cpp` and its test are unchanged since 0.1.2. No ancestor holds an upstream journal
-  or a lease mutex of this product; the cause is not found yet.
+  `root_windows.cpp` and its test are unchanged since 0.1.2. The cause: the installed 0.1.2 ran
+  elevated (its setup had no manifest and was elevated by installer detection), and its SyncD's presence
+  events on the shared parent folders deny a medium-integrity process `CreateEventW`
+  (`ERROR_ACCESS_DENIED`), which the lease reads as `FOLDER_OWNED` (`root_windows.cpp:207`). The tokens
+  of the installed interface and SyncD read `TokenElevation=1` from a medium process.
   `SyncDFolderErrorContracts` includes the new `availability` case on real Cloud Files (a full-file folder
   refusing `alwaysLocal` and `onlineOnly`, converting on `onDemand` under its own registration, then the
   root's pin following all three values in the snapshot), and `SyncDEndpointContracts` the rename case.

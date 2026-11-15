@@ -861,8 +861,9 @@ x64 3/3 通过。`SyncCfApiTest`：ARM64（90.9 秒）与 x64（94.2 秒）均�
 
 - SyncD 契约测试（`build-syncd.ps1`）：测试的临时目录放在 D: 盘时，ARM64 和 x64（仿真，50.4 s）都 25 项全部通过。放在 C: 盘时，`SyncDRootContracts`、
   `SyncDFolderErrorContracts` 和 `SyncDOnDemandContracts` 以 `FOLDER_OWNED` 失败：`C:\Users\<user>` 下每个新建目录都被拒绝，
-  而 D: 盘通过；`root_windows.cpp` 及其测试自 0.1.2 起未改动。没有任何上级目录带有上游 journal 或本产品的租约互斥量；
-  原因尚未找到。`SyncDFolderErrorContracts` 包含新的 `availability` 用例，在真实 Cloud Files 上运行（完整文件目录拒绝 `alwaysLocal`
+  而 D: 盘通过；`root_windows.cpp` 及其测试自 0.1.2 起未改动。原因：已安装的 0.1.2 以提升权限运行（其安装器没有清单，被安装程序检测提升），
+  其 SyncD 在共用上级目录上的存在事件拒绝中完整性级别进程的 `CreateEventW`（`ERROR_ACCESS_DENIED`），租约将其视为 `FOLDER_OWNED`
+  （`root_windows.cpp:207`）。从中完整性级别进程读取，已安装界面和 SyncD 的令牌均为 `TokenElevation=1`。`SyncDFolderErrorContracts` 包含新的 `availability` 用例，在真实 Cloud Files 上运行（完整文件目录拒绝 `alwaysLocal`
   和 `onlineOnly`，在 `onDemand` 时以自己的注册完成转换，随后快照中根目录的固定状态依次跟随三个值），`SyncDEndpointContracts` 包含
   重命名用例。
 - 真实 Go 与 C++ 管道（`SYNCD_TEST_EXE`，ARM64 SyncD 0.1.3，协议 1.12，schema 13）：`internal/syncd` 和 `internal/gui` 中所有 `Real`
