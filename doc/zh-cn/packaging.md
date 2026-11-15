@@ -27,21 +27,21 @@ ARM64 与 x64 上原生运行，通过 `internal/syncd` 与 SyncD 通信，并�
 ./tools/build-syncd.ps1 -Architecture ARM64 -QtPrefix <target Qt> -QtHostPrefix <host Qt>
 ./tools/package.ps1 -Arch ARM64        # or x64; SyncD from build/syncd-<Arch>
 go run ./tools/pkg check -arch ARM64 build/package/ARM64/Nextcloud-MyGo-0.1.0-ARM64
-./tools/package-smoke.ps1 -Setup build/package/Nextcloud-MyGo-0.1.0-arm64-test-setup.exe
+./tools/package-smoke.ps1 -Setup build/package/Nextcloud-MyGo-0.1.0-arm64-setup.exe
 ```
 
 测试两个版本之间的升级：
 
 ```powershell
 ./tools/package.ps1 -Arch ARM64 -TestVersion 0.1.1
-./tools/package-smoke.ps1 -Setup build/package/Nextcloud-MyGo-0.1.0-arm64-test-setup.exe `
-    -UpgradeTo build/package/Nextcloud-MyGo-0.1.1-testversion-arm64-test-setup.exe
+./tools/package-smoke.ps1 -Setup build/package/Nextcloud-MyGo-0.1.0-arm64-setup.exe `
+    -UpgradeTo build/package/Nextcloud-MyGo-0.1.1-testversion-arm64-setup.exe
 ```
 
 `tools/package.ps1` 从 SyncD 构建的 `CMakeCache.txt` 读取其上游构建，再读取该构建的前缀（Qt、原生
 依赖、vcpkg），因此 DLL 只来自 SyncD 实际链接的构建树，外加已安装 Visual Studio 中最新的 Visual C++
 运行库。每一步都有时限。它写出 `build/package/<Arch>/Nextcloud-MyGo-<version>-<Arch>/` 与
-`build/package/Nextcloud-MyGo-<version>-<arch>-test-setup.exe`，不安装任何东西。暂存之后，它运行已暂存
+`build/package/Nextcloud-MyGo-<version>-<arch>-setup.exe`（0.1.3 之前为 `-test-setup.exe`），不安装任何东西。暂存之后，它运行已暂存
 SyncD 的 `--version`，其版本、Control schema 或协议与清单不一致时即失败，因此安装包绝不会把界面与由其他
 源码构建的 SyncD 配在一起。
 
@@ -53,7 +53,7 @@ SyncD 的 `--version`，其版本、Control schema 或协议与清单不一致�
 作为 `SYNCD_VERSION`），在其中只构建 SyncD 与 CFAPI 插件；从不写入 `-SyncDBuild`。界面以
 `MYGO_LDFLAGS=-X .../internal/version.Version=X.Y.Z` 链接（`Version` 为此是变量），暂存工具收到
 `-test-version`，据此设置清单的版本与 `testVersion: true`。输出为 `build/package/<Arch>-testversion/` 与
-`Nextcloud-MyGo-X.Y.Z-testversion-<arch>-test-setup.exe`；其安装器会说明版本是为测试而标记的。界面可执行
+`Nextcloud-MyGo-X.Y.Z-testversion-<arch>-setup.exe`；其安装器会说明版本是为测试而标记的。界面可执行
 文件的文件属性仍为 `mygo.json` 的版本。这样的安装包绝不是发布版本。
 
 ### 许可证文本
@@ -116,12 +116,34 @@ qtsvg 与 qtwebsockets 的文本、OpenSSL、SQLite、zlib、QtKeychain、KArchi
 | 包内与 Windows 都不提供的导入 | 失败 |
 | 只能由已安装可再发行组件满足的 Visual C++ 运行库导入 | 失败 |
 | 没有图标资源（`RT_GROUP_ICON`）的 `nextcloud-mygo-syncd.exe`，资源管理器用它显示其同步根 | 失败 |
+| 没有图标资源的 `uninstall.exe` 或 `Nextcloud-MyGo-*-setup.exe`（从 0.1.3 起） | 失败 |
 
 Microsoft 只以 ARM64X 形式提供 ARM64 Visual C++ 运行库。ARM64 进程映射其 ARM64 代码，从不映射其 ARM64EC
 代码，因此它原生运行；检查器把每个此类文件作为提示列出。其他所有混合映像都失败。用户已于 2026-11-12 接受此例外。检查器的测试构造合成
 PE 文件，因此 CI 可在任何平台运行。
 
 ## 安装与升级
+
+从 0.1.3 起，setup 和 `uninstall.exe` 是窗口程序（Windows GUI 子系统，`ui_windows.go`）：Nextcloud 图标、“Nextcloud MyGo”和版本、
+一条消息、显示当前步骤的进度条，以及“安装”“移除”“完成”或“关闭”和“取消”。安装界面说明它是全新安装、更新已安装的版本（账号、设置和同步的
+文件都保留）还是重新安装，并用一行低调的文字说明此副本未经发布者签名（`-TestVersion` 安装包还会说明其版本是为测试而标记的）；控制台中的
+“TEST BUILD”一行已去掉，而清单、应用列表条目和快捷方式仍注明测试构建。点“安装”后显示每一步，然后是“打开 Nextcloud MyGo”（默认勾选）和
+“完成”；被拒绝时显示“Setup did not finish.”及下文相同的消息，并提供“关闭”。工作进行中无法关闭窗口。卸载界面询问“Remove Nextcloud MyGo?”，
+说明同步的文件会保留，并提供“同时移除我的账号和设置”（`-remove-user-data` 会预先勾选）。两个可执行文件都带有图标、版本信息（FileDescription
+为“Nextcloud MyGo Setup”或“Nextcloud MyGo Uninstall”、ProductName、FileVersion 与 ProductVersion、LegalCopyright）和清单（Common Controls 6、
+按显示器的 DPI 感知、`asInvoker`，因此 Windows 从不提升其权限）。`pkg resources` 把它们写成 COFF 对象（`rsrc_windows_<goarch>.syso`，只用
+标准库），`tools/package.ps1` 在每次构建前放入、构建后删除；没有它时 `go build` 仍可工作，只是没有图标和清单。
+
+| 参数 | 行为 |
+|---|---|
+| 无 | 显示窗口，等待点“安装” |
+| `-uninstall` [`-remove-user-data`] | 卸载窗口 |
+| `-update` | 立即显示进度窗口，无需点击；成功时显示“已更新”，2 秒后关闭，并启动新版本；在已关闭界面之后失败时，再次启动已安装的界面 |
+| `-quiet` | 不显示窗口；与早期版本相同的控制台输出（`tools/package-smoke.ps1` 使用它） |
+| `-no-launch` | 之后不启动应用 |
+
+各步骤的文字也总会写到标准输出，因此应用内更新会把它们保留在 `update\setup.log` 中。`-update` 或 `-no-launch` 与 `-uninstall` 同用、
+不带 `-uninstall` 的 `-remove-user-data` 以及未知参数都会被拒绝，退出码为 2（“取消”也是）；失败时退出码为 1。
 
 以下情况下，安装器在写入任何内容前拒绝：
 
@@ -183,9 +205,11 @@ PE 文件，因此 CI 可在任何平台运行。
 已安装的界面（`internal/gui`，[更新](gui.md#更新)）读取清单，只有版本更新时才把归档下载到安装文件夹中的
 `update\`（卸载会删除它；下次启动时清空），按内置公钥检查其大小和签名，并且除非签名的 `update.json` 写明
 Nextcloud-MyGo、清单中的版本、本机架构以及比运行版本更新的版本，否则拒绝：清单本身未签名，因此改过的清单
-既不能提供更旧的已签名包，也不能提供另一架构的包。随后它请 SyncD 到达安全点，并在无控制台窗口的情况下启动
-`setup.exe`（`release.StartSetup`，输出在 `update\setup.log`）；setup 关闭界面并执行第 1 到第 6 步，因此
-上面的每种拒绝和失败都保留已安装版本。只获取 HTTPS，测试时也可以是到环回地址的 HTTP；重定向不得离开 HTTPS。
+既不能提供更旧的已签名包，也不能提供另一架构的包。随后它请 SyncD 到达安全点，在那里停止它
+（`daemon.shutdown`，最多等待 30 秒直到连接结束），再启动 `setup.exe -update`（`release.StartSetup`，输出在
+`update\setup.log`）；setup 关闭界面并执行第 1 到第 6 步，此时没有需要准备的 SyncD，因此上面的每种拒绝和失败都保留
+已安装版本。如果 setup 在界面仍运行时就返回（它提前拒绝了），界面会再次启动 SyncD。0.1.2 及之前，界面让 SyncD 停在
+安全点，setup 再次请求；SyncD 在已有请求保持期间会拒绝第二次请求，因此 setup 等满 2 分钟后停止，应用内更新从未成功安装。只获取 HTTPS，测试时也可以是到环回地址的 HTTP；重定向不得离开 HTTPS。
 
 ## 卸载
 
@@ -202,7 +226,8 @@ Nextcloud-MyGo、清单中的版本、本机架构以及比运行版本更新的
    使用 `-remove-user-data` 时，随后删除该 profile 的 SyncD 数据与界面设置。
 4. 删除遗留的、标记恰好为 `ApplicationName=Nextcloud-MyGo` 的 HKCU 导航窗格条目（绝不删除官方客户端的 `Nextcloud`）；
    另一个 profile 的现存同步根以 `NamespaceCLSID` 指向的条目（0.1.2 起的共用条目），或目标就是这种根的条目（0.1.1），会保留。
-5. 删除此安装的开机启动项、快捷方式、应用列表条目与安装目录。账号、设置与同步文件另行保留。
+5. 删除此安装的开机启动项、快捷方式、应用列表条目与安装目录。账号、设置与同步文件另行保留。正在运行的
+   `uninstall.exe` 由一个辅助进程删除，它每秒重试一次、最多 10 分钟，因为窗口会停留在结果界面直到被关闭（`removeLater`）。
 
 若第 2 步或第 3 步失败，则不删除任何内容，界面会重新启动以便在其中移除该目录，setup 以退出码 1 结束并指出该目录的本地路径。
 没有已安装的 SyncD，或 SyncD 无法启动时，只有当 Windows 中没有此用户的 Nextcloud-MyGo 同步根时卸载才会继续；否则它会停止并列出这些同步根。

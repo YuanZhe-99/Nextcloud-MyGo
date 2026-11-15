@@ -114,6 +114,17 @@ public:
   /// quiescent is true when no cycle and no on-demand request of this epoch is
   /// running; a running hydration is a transfer the switch waits for (§2.3).
   bool quiescent() const;
+  /// availability reads an on-demand folder's root pin (protocol 1.12):
+  /// "alwaysLocal", "onlineOnly" or "onDemand" (unspecified or inherited);
+  /// "" for a full-file folder or a root closed for a switch.
+  QString availability() const;
+  /// setAvailability pins an on-demand folder's root, as upstream's folder
+  /// availability does; the next cycle's full local discovery downloads or
+  /// frees the files that follow it.
+  /// Inputs: "alwaysLocal", "onlineOnly" or "onDemand" (Unspecified: what is
+  /// downloaded stays, new files arrive online-only).
+  /// Returns: false when there is no open root or Cloud Files refused.
+  bool setAvailability(const QString &value);
   /// epoch identifies the immutable binding used for this adapter's cycle
   /// results.
   quint64 epoch() const;

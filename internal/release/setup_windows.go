@@ -6,10 +6,11 @@ import (
 	"syscall"
 )
 
-// StartSetup hands a verified update over to its installer: setup runs
-// without a console window, its output going to the file log, and outlives
-// the interface, which it closes before it asks SyncD for the update safe
-// point (doc/en-us/packaging.md, Install and upgrade).
+// StartSetup hands a verified update over to its installer, once the
+// interface has stopped SyncD at the update safe point: setup runs without a
+// console, its output going to the file log, shows its progress window and
+// outlives the interface, which it closes (doc/en-us/packaging.md, Install
+// and upgrade).
 // Returns: the running installer; Wait reports its exit while the caller is
 // still alive (a refusal before setup closed the interface).
 // Side effects: starts a process in the caller's environment, so the same
@@ -20,7 +21,9 @@ func StartSetup(setup, log string) (*exec.Cmd, error) {
 		return nil, err
 	}
 	defer f.Close() // the child keeps its own handle
-	c := exec.Command(setup)
+	// -update: setup shows its progress without asking and, when it cannot
+	// install, starts the installed version again.
+	c := exec.Command(setup, "-update")
 	c.Stdout, c.Stderr = f, f
 	// CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
 	c.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000 | 0x00000200}

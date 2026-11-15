@@ -203,6 +203,93 @@ void removalWaitsForProbe() {
   }
   QSqlDatabase::removeDatabase(connection);
 }
+/// renameKeepsTrust renames the main address and an approved one (protocol
+/// 1.12): the name and kind change and survive a restart, trust and
+/// verification do not move, and an empty name, an unknown kind or an
+/// address not approved is refused (INV-03).
+void renameKeepsTrust() {
+  QTemporaryDir dir;
+  const auto path = dir.filePath("control.sqlite");
+  const auto connection = QUuid::createUuid().toString();
+  // reason is the refusal reasonCode of a reply, or "" for a success.
+  const auto reason = [](const QJsonObject &reply) {
+    return reply.value("error")
+        .toObject()
+        .value("data")
+        .toObject()
+        .value("reasonCode")
+        .toString();
+  };
+  // endpoint is one address of a Control's snapshot by ID.
+  const auto endpoint = [](const Control &c, const QString &id) {
+    for (const auto &value :
+         c.projection().value("snapshot").toObject().value("endpoints").toArray())
+      if (value.toObject().value("id") == id)
+        return value.toObject();
+    throw std::runtime_error("a renamed address disappeared");
+  };
+  {
+    Control control(path);
+    auto db = QSqlDatabase::addDatabase("QSQLITE", connection);
+    db.setDatabaseName(path);
+    require(db.open(), "rename fixture database unavailable");
+    {
+      QSqlQuery q(db);
+      require(
+          q.exec("INSERT INTO accounts(id,session_id,operation_id,endpoint_id,"
+                 "base_url,credential_ref,state) VALUES('account','session',"
+                 "'operation','primary','https://primary.example.invalid/',"
+                 "'unused-test-reference','ready')") &&
+              q.exec("INSERT INTO endpoints(id,account_id,name,base_url,"
+                     "approved,state,expires,operation_id) VALUES('home',"
+                     "'account','Home','https://home.example.invalid/',1,"
+                     "'verified','2000-01-01T00:00:00.000Z','probe'),('staged',"
+                     "'account','Staged','https://staged.example.invalid/',0,"
+                     "'staged','2999-01-01T00:00:00.000Z','stage')"),
+          "rename fixture rows failed");
+    }
+    db.close();
+    require(reason(command(control, "endpoints.rename",
+                           {{"endpointId", "primary"},
+                            {"name", " Tailnet "},
+                            {"kind", "vpn"}})).isEmpty(),
+            "renaming the main address was refused");
+    require(reason(command(control, "endpoints.rename",
+                           {{"endpointId", "home"},
+                            {"name", "Living room"},
+                            {"kind", "home"}})).isEmpty(),
+            "renaming an approved address was refused");
+    for (const auto &[params, expected] :
+         std::initializer_list<std::pair<QJsonObject, const char *>>{
+             {{{"endpointId", "home"}, {"name", "  "}, {"kind", "home"}},
+              "INVALID_PARAMS"},
+             {{{"endpointId", "home"}, {"name", "x"}, {"kind", "moon"}},
+              "INVALID_PARAMS"},
+             {{{"endpointId", "staged"}, {"name", "x"}, {"kind", "home"}},
+              "NOT_FOUND"},
+             {{{"endpointId", "missing"}, {"name", "x"}, {"kind", "home"}},
+              "NOT_FOUND"}})
+      require(reason(command(control, "endpoints.rename", params)) == expected,
+              "an invalid rename was not refused with its reason");
+    const auto home = endpoint(control, "home");
+    require(home.value("verified") == "verified" &&
+                home.value("approved").toBool() &&
+                home.value("url") == "https://home.example.invalid/",
+            "renaming changed an address's trust");
+  }
+  QSqlDatabase::removeDatabase(connection);
+  // A start sets every approved address to be verified again; the names stay.
+  Control restarted(path);
+  const auto main = endpoint(restarted, "primary"),
+             home = endpoint(restarted, "home");
+  require(main.value("name") == "Tailnet" && main.value("kind") == "vpn" &&
+              main.value("main").toBool() &&
+              main.value("url") == "https://primary.example.invalid/",
+          "the main address's name or kind did not stay");
+  require(home.value("name") == "Living room" && home.value("kind") == "home" &&
+              home.value("approved").toBool(),
+          "an approved address's name or kind did not stay");
+}
 } // namespace
 /// main verifies origin consent and crash boundaries without contacting a
 /// server or creating credentials.
@@ -212,7 +299,9 @@ int main(int argc, char **argv) {
     consentRecovery();
     capabilities();
     removalWaitsForProbe();
-    std::puts("PASS endpoint consent and interrupted verification recovery");
+    renameKeepsTrust();
+    std::puts("PASS endpoint consent, interrupted verification recovery and "
+              "renaming");
     return 0;
   } catch (const std::exception &e) {
     std::fprintf(stderr, "%s\n", e.what());

@@ -176,7 +176,7 @@ function Get-Official {
 }
 
 # Get-Arch returns the architecture a tools/package.ps1 installer's name states.
-function Get-Arch([string]$Path) { switch -Regex ([IO.Path]::GetFileName($Path)) { '-arm64-test-setup\.exe$' { 'ARM64' } '-x64-test-setup\.exe$' { 'x64' } default { throw "$Path is not a tools/package.ps1 installer" } } }
+function Get-Arch([string]$Path) { switch -Regex ([IO.Path]::GetFileName($Path)) { '-arm64-setup\.exe$' { 'ARM64' } '-x64-setup\.exe$' { 'x64' } default { throw "$Path is not a tools/package.ps1 installer" } } }
 $arch = Get-Arch $Setup
 if ($UpgradeTo -and (Get-Arch $UpgradeTo) -ne $arch) { throw '-UpgradeTo is for another architecture' }
 $official = Get-Official
@@ -188,14 +188,14 @@ $before = & $dirs
 Write-Host "profile $profileName; package $arch"
 try {
     Write-Host '1. install and launch'
-    Invoke-Bounded 'install' 120 $Setup
+    Invoke-Bounded 'install' 120 $Setup @('-quiet')
     $first = Assert-Installed
     Assert-Running $first
 
     Write-Host '2. reinstall the same version over the running one'
     $oldExe = Join-Path $first 'Nextcloud-MyGo.exe'
     New-ItemProperty $runKey -Name $runName -Value "`"$oldExe`" --mygo-opened-at-login" -Force | Out-Null
-    Invoke-Bounded 'reinstall' 120 $Setup
+    Invoke-Bounded 'reinstall' 120 $Setup @('-quiet')
     if ($script:output -notmatch 'SyncD is ready') { throw 'the reinstall did not bring SyncD to the update safe point (daemon.prepareUpdate)' }
     $second = Assert-Installed
     if ($second -eq $first -or (Test-Path $first)) { throw 'the reinstall did not move to a fresh version directory' }
@@ -223,7 +223,7 @@ try {
             finally { Remove-Item env:NEXTCLOUD_MYGO_UPDATE_DIR, env:NEXTCLOUD_MYGO_UPDATE_KEY, env:NEXTCLOUD_MYGO_UPDATE_CURRENT -ErrorAction SilentlyContinue }
             if ($script:output -notmatch 'verified the signed') { throw 'the in-app update did not verify the signed update' }
         } else {
-            Invoke-Bounded 'upgrade' 300 $UpgradeTo
+            Invoke-Bounded 'upgrade' 300 $UpgradeTo @('-quiet')
         }
         if ($script:output -notmatch 'SyncD is ready') { throw 'the upgrade did not bring SyncD to the update safe point (daemon.prepareUpdate)' }
         if (-not (Get-ChildItem $data -Filter 'control.pre-update.*.sqlite' | Where-Object Name -NotIn $copies)) { throw "the upgrade left no new pre-update Control copy in $data" }
@@ -243,15 +243,15 @@ try {
     }
 
     Write-Host '3. uninstall, keeping user data'
-    Invoke-Bounded 'uninstall' 120 (Join-Path $root 'uninstall.exe') @('-uninstall')
+    Invoke-Bounded 'uninstall' 120 (Join-Path $root 'uninstall.exe') @('-uninstall', '-quiet')
     Assert-Gone
     if (-not (Test-Path $data)) { throw "SyncD data $data was not kept" }
     Write-Host "  kept $data"
 
     Write-Host '4. install again, then uninstall removing user data'
-    Invoke-Bounded 'install' 120 $last
+    Invoke-Bounded 'install' 120 $last @('-quiet')
     Assert-Running (Assert-Installed)
-    Invoke-Bounded 'uninstall -remove-user-data' 180 (Join-Path $root 'uninstall.exe') @('-uninstall', '-remove-user-data')
+    Invoke-Bounded 'uninstall -remove-user-data' 180 (Join-Path $root 'uninstall.exe') @('-uninstall', '-remove-user-data', '-quiet')
     Assert-Gone
     if ((Test-Path $data) -or (Test-Path $settings)) { throw 'user data left after -remove-user-data' }
     Write-Host '  profile data and settings removed'
@@ -261,7 +261,7 @@ try {
 } finally {
     # Leave nothing behind, whatever failed above.
     if (Test-Path (Join-Path $root 'uninstall.exe')) {
-        try { Invoke-Bounded 'cleanup uninstall' 180 (Join-Path $root 'uninstall.exe') @('-uninstall', '-remove-user-data') } catch { Write-Warning $_ }
+        try { Invoke-Bounded 'cleanup uninstall' 180 (Join-Path $root 'uninstall.exe') @('-uninstall', '-remove-user-data', '-quiet') } catch { Write-Warning $_ }
     }
     Get-Ours | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 4

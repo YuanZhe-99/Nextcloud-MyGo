@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -32,8 +33,76 @@ var (
 	errNotPrepared     = errors.New("Nextcloud MyGo could not get ready for the update. Quit Nextcloud MyGo from its tray icon, then run setup again")
 )
 
-// step prints one stage of the install or uninstall.
-func step(format string, args ...any) { fmt.Printf("- "+format+"\n", args...) }
+// onStep, when set, also receives the text of each step; setup's window
+// shows it under the progress bar. It is set before the work starts.
+var onStep func(string)
+
+// step prints one stage of the install or uninstall, in every mode, so the
+// in-app update's log keeps it too.
+func step(format string, args ...any) {
+	s := fmt.Sprintf(format, args...)
+	fmt.Println("- " + s)
+	if onStep != nil {
+		onStep(s)
+	}
+}
+
+// options are setup's command line.
+type options struct {
+	uninstall  bool // run the uninstall (uninstall.exe -uninstall)
+	removeData bool // with uninstall: also remove accounts and settings
+	noLaunch   bool // do not start Nextcloud MyGo after installing
+	quiet      bool // no window: progress on stdout, the error on stderr
+	update     bool // started by the in-app update: no click needed, relaunch on failure
+}
+
+// task is what setup does.
+type task int
+
+const (
+	taskNone      task = iota // a build without a package, run without -uninstall
+	taskInstall               // install or upgrade the payload
+	taskUninstall             // uninstall
+)
+
+// parseArgs reads setup's command line.
+// Returns: the options, or an error naming a flag setup does not know or a
+// combination it refuses (-update or -no-launch with -uninstall,
+// -remove-user-data without it); usage text goes to out.
+func parseArgs(args []string, out io.Writer) (options, error) {
+	var o options
+	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
+	fs.SetOutput(out)
+	fs.BoolVar(&o.uninstall, "uninstall", false, "uninstall Nextcloud MyGo for this user")
+	fs.BoolVar(&o.removeData, "remove-user-data", false, "with -uninstall: also remove the accounts, their saved credentials and the settings; synced files always stay")
+	fs.BoolVar(&o.noLaunch, "no-launch", false, "do not start Nextcloud MyGo after installing")
+	fs.BoolVar(&o.quiet, "quiet", false, "show no window: print the progress to stdout and an error to stderr")
+	fs.BoolVar(&o.update, "update", false, "install as the in-app update: no confirmation, start the new version, reopen the installed one on failure")
+	if err := fs.Parse(args); err != nil {
+		return o, err
+	}
+	switch {
+	case fs.NArg() > 0:
+		return o, fmt.Errorf("unexpected argument %q", fs.Arg(0))
+	case o.uninstall && (o.update || o.noLaunch):
+		return o, errors.New("-update and -no-launch are for installing, not with -uninstall")
+	case o.removeData && !o.uninstall:
+		return o, errors.New("-remove-user-data needs -uninstall")
+	}
+	return o, nil
+}
+
+// task returns what setup does with these options; hasPayload tells whether
+// this build carries a package.
+func (o options) task(hasPayload bool) task {
+	switch {
+	case o.uninstall:
+		return taskUninstall
+	case hasPayload:
+		return taskInstall
+	}
+	return taskNone
+}
 
 // prepare asks a running SyncD for the update safe point (daemon.prepareUpdate,
 // PLAN.md §16.2) until it is ready.

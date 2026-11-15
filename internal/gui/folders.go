@@ -162,7 +162,7 @@ func (a *App) folderGrid(c *ui.Context, f syncd.Folder, word, detail string, col
 		ui.Column(c).Gap(2).MinWidth(0).Children(func() {
 			ui.Text(c, f.Name).FontWeight(600).Ellipsis("…").MaxLines(1)
 			if modeShown(a.snap, f) {
-				muted(c, modeWord(f.Mode), fontSmall).Ellipsis("…").MaxLines(1)
+				muted(c, modeWord(f), fontSmall).Ellipsis("…").MaxLines(1)
 			}
 		})
 		muted(c, f.LocalPath+"  ⇄  "+f.RemotePath, 13).Ellipsis("…").MaxLines(1)
@@ -199,6 +199,7 @@ func (a *App) folderGrid(c *ui.Context, f syncd.Folder, word, detail string, col
 				if m.Item(L.ActionCheckNow()).Disabled(busy || !canCheck).Chosen() {
 					a.do("f-"+f.ID, func() error { return a.client.SyncNow(f.ID) }, nil)
 				}
+				a.availabilityItems(m, f, busy)
 				m.Separator()
 				if m.Item(L.MenuStopFolder(f.Name)).Danger().Disabled(busy).Chosen() {
 					a.ask(L.ConfirmStopFolderTitle(f.Name), L.ConfirmStopFolderBody(), L.ConfirmStopFolder(), func() {
@@ -208,6 +209,46 @@ func (a *App) folderGrid(c *ui.Context, f syncd.Folder, word, detail string, col
 			})
 		})
 	})
+}
+
+// availabilityItems are a folder menu's choices of how its files stay on
+// this PC (protocol 1.12): for an on-demand folder, always here, on demand
+// or freed (asked first); for a full-file folder where on-demand files
+// exist, switching to them in place (asked first). Nothing from an earlier
+// SyncD, which cannot do it.
+func (a *App) availabilityItems(m *ui.Menu, f syncd.Folder, busy bool) {
+	if a.snap.Daemon.ProtocolMinor < 12 {
+		return
+	}
+	set := func(v syncd.Availability) {
+		a.do("f-"+f.ID, func() error { return a.client.SetAvailability(f.ID, v) }, nil)
+	}
+	switch {
+	case f.Mode == syncd.FolderOnDemand:
+		m.Separator()
+		for _, o := range []struct {
+			v          syncd.Availability
+			word, hint string
+		}{
+			{syncd.AvailabilityAlwaysLocal, L.AvailAlwaysLocal(), L.AvailAlwaysLocalHint()},
+			{syncd.AvailabilityOnDemand, L.ModeOnDemand(), L.AvailOnDemandHint()},
+			{syncd.AvailabilityOnlineOnly, L.AvailOnlineOnly(), L.AvailOnlineOnlyHint()},
+		} {
+			if !m.Item(o.word).Subtitle(o.hint).Radio(f.Availability == o.v).Disabled(busy).Chosen() || f.Availability == o.v {
+				continue
+			}
+			if o.v == syncd.AvailabilityOnlineOnly {
+				a.ask(L.ConfirmFreeUpTitle(f.Name), L.ConfirmFreeUpBody(), L.AvailOnlineOnly(), func() { set(o.v) })
+			} else {
+				set(o.v)
+			}
+		}
+	case a.snap.Daemon.Capabilities["virtualFiles"] && f.Conversion != syncd.ConversionPending:
+		m.Separator()
+		if m.Item(L.MenuUseOnDemand()).Subtitle(L.AvailOnDemandHint()).Disabled(busy).Chosen() {
+			a.ask(L.ConfirmUseOnDemandTitle(f.Name), L.ConfirmUseOnDemandBody(), L.MenuUseOnDemand(), func() { set(syncd.AvailabilityOnDemand) })
+		}
+	}
 }
 
 // confirmState is a question waiting for the user's answer.

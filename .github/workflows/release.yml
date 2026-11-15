@@ -65,7 +65,7 @@ jobs:
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
           mkdir -p release licenses
-          cp artifacts/package-*/Nextcloud-MyGo-*-test-setup.exe release/
+          cp artifacts/package-*/Nextcloud-MyGo-*-setup.exe release/
           for arch in ARM64 x64; do cp -r "artifacts/package-$arch/licenses-$arch" "licenses/$arch"; done
           (cd licenses && zip -qr "../release/Nextcloud-MyGo-$version-licenses.zip" .)
           # The signed updates: both architectures or neither.
@@ -81,7 +81,7 @@ jobs:
           esac
           echo "UPDATES=$updates" >> "$GITHUB_ENV"
           (cd release && sha256sum -- * > SHA256SUMS && cat SHA256SUMS)
-          [ "$(ls release/*-test-setup.exe | wc -l)" -eq 2 ] || { echo "::error::expected two installers"; exit 1; }
+          [ "$(ls release/*-setup.exe | wc -l)" -eq 2 ] || { echo "::error::expected two installers"; exit 1; }
 
       - name: Create GitHub release
         env:

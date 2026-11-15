@@ -25,11 +25,14 @@ public:
   /// Notes: schema 12 adds folders.conversion and folders.conversion_reason;
   /// migrating a schema 1–11 database marks its full-file folders 'pending'
   /// for conversion to on-demand, once (a folder added as full later keeps
-  /// '').
-  static constexpr int schemaVersion = 12;
+  /// ''). Schema 13 adds accounts.main_name and accounts.main_kind, the
+  /// name and kind the user gave the main address.
+  static constexpr int schemaVersion = 13;
   /// protocolMinor is the protocol 1.x minor version this build speaks.
-  /// Notes: 1.11 adds each folder's conversion and conversionReason.
-  static constexpr int protocolMinor = 11;
+  /// Notes: 1.11 adds each folder's conversion and conversionReason; 1.12
+  /// adds folders.setAvailability, each folder's availability and
+  /// endpoints.rename.
+  static constexpr int protocolMinor = 12;
   /// protocolVersion is the "1.<minor>" text Diagnostics and the startup
   /// report show; derived from protocolMinor so no copy can drift.
   static QString protocolVersion() {

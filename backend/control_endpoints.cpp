@@ -204,6 +204,53 @@ QJsonObject Control::endpointMutation(const QString &method,
                                       const QByteArray &digest) {
   if (params.value("expectedRevision").toString() != QString::number(revision_))
     throw std::runtime_error("REVISION_CONFLICT");
+  if (method == "endpoints.rename") {
+    // Protocol 1.12: the name and kind people see, for the main address or an
+    // approved one; they never touch trust, scoring or the binding.
+    for (auto it = params.begin(); it != params.end(); ++it)
+      if (it.key() != "operationKey" && it.key() != "expectedRevision" &&
+          it.key() != "endpointId" && it.key() != "name" && it.key() != "kind")
+        throw std::runtime_error("INVALID_PARAMS");
+    const auto id = params.value("endpointId").toString(),
+               name = params.value("name").toString().trimmed(),
+               kind = params.value("kind").toString();
+    if (!params.value("name").isString() || name.isEmpty() ||
+        name.size() > 128 ||
+        (kind != "internet" && kind != "home" && kind != "vpn"))
+      throw std::runtime_error("INVALID_PARAMS");
+    const auto operation = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const QJsonObject receipt{{"operationId", operation},
+                              {"state", "succeeded"},
+                              {"result", QJsonObject{{"endpointId", id}}}};
+    accountChange([&] {
+      QSqlQuery u(db_);
+      u.prepare("UPDATE accounts SET main_name=?,main_kind=? WHERE "
+                "endpoint_id=? AND state='ready'");
+      u.addBindValue(name);
+      u.addBindValue(kind);
+      u.addBindValue(id);
+      execute(u);
+      auto renamed = u.numRowsAffected();
+      u.prepare("UPDATE endpoints SET name=?,kind=? WHERE id=? AND approved=1 "
+                "AND account_id IN (SELECT id FROM accounts WHERE "
+                "state='ready')");
+      u.addBindValue(name);
+      u.addBindValue(kind);
+      u.addBindValue(id);
+      execute(u);
+      renamed += u.numRowsAffected();
+      if (renamed != 1)
+        throw std::runtime_error("NOT_FOUND");
+      u.prepare("INSERT INTO operations(key,id,digest,receipt,method) "
+                "VALUES(?,?,?,?,'endpoints.rename')");
+      u.addBindValue(params.value("operationKey").toString());
+      u.addBindValue(operation);
+      u.addBindValue(digest);
+      u.addBindValue(QJsonDocument(receipt).toJson(QJsonDocument::Compact));
+      execute(u);
+    });
+    return receipt;
+  }
   const bool stage = method == "endpoints.stage",
              approve = method == "endpoints.approveOrigin",
              remove = method == "endpoints.remove";

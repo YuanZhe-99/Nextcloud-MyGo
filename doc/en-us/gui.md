@@ -60,8 +60,13 @@ was dismissed (folders SyncD no longer lists are dropped the next time a note is
 - **Accounts & folders:** Add an account; per account its sign-in state, Add a folder or Sign in
   in browser (then Open the browser again and Cancel while it waits), and in a menu Sign in again
   and Remove this account; its folders with their mode (when `virtualFiles` is on or the folder is
-  on demand), paths, state, the reason in words, and Open, Pause or Resume, Review, and in a menu
-  Check now and Stop syncing. A folder added by 0.1.0 shows one plain line under its row for SyncD's
+  on demand; for an on-demand folder its availability: Always on this PC or Online only, from protocol
+  1.12 `availability`), paths, state, the reason in words, and Open, Pause or Resume, Review, and in a
+  menu Check now, how the files stay on this PC, and Stop syncing. With protocol 1.12 an on-demand
+  folder offers Always keep on this PC, On demand and Free up space (asked first), each with one line
+  saying what it does, the current one marked; a full-file folder offers Use on-demand files where
+  `virtualFiles` is on (asked first: what is on the PC stays, nothing is downloaded again), all
+  through `folders.setAvailability`. A folder added by 0.1.0 shows one plain line under its row for SyncD's
   switch to on-demand files (protocol 1.11 `conversion`): while pending, why it still downloads every
   file (soon, unavailable on this PC, inside a folder another app syncs, or waiting, each from the
   reason code and never showing it); once converted, that it now uses on-demand files and keeps what
@@ -73,7 +78,9 @@ was dismissed (folders SyncD no longer lists are dropped the next time a note is
   leads (its kind, when the name does not say it), its two trust steps (approved, same server
   verified), why it is blocked in words (its certificate, a different server, an address never
   allowed, a sign-in, another network; a verification under way is its trust step), how fast it
-  answers (`latencyMs`), Verify now, Use this one, a pending switch, and Remove this address; why
+  answers (`latencyMs`), Verify now, Use this one, a pending switch, and in a menu Rename (every
+  approved address, the main one too, from protocol 1.12) and Remove this address (not the main
+  address or the one in use); why
   the address in use was chosen (`network.why`: verified, faster with both answer times, stable,
   your choice, the network joined, the others not answering, a postponed switch) and when and why
   the last switch happened; the recent switches, with each requested switch that did not happen
@@ -96,6 +103,8 @@ was dismissed (folders SyncD no longer lists are dropped the next time a note is
   the certificate and the server and asks for the user's explicit permission; step 3, the
   verification, is SyncD's after approval. An invalid certificate cannot be approved; a refused
   address says why.
+- **Rename address:** the name and where the address leads (`endpoints.rename`), saved with Save or
+  Enter; it says that neither changes which server is trusted.
 - **Questions:** removing, stopping and allowing deletions use an alert with Cancel first.
 
 ## First-run setup
@@ -108,7 +117,13 @@ listing that fails keeps the folders listed before and says why; the first listi
 Documents and Photos where the server has them, as `design/SetupFolders.html` shows, and later
 listings keep the user's choices and drop any folder the server no longer has; encrypted folders
 cannot be chosen; with `virtualFiles`, On demand (recommended, the default) or Full files for the
-folders chosen, fixed for each folder's life; SyncD creates a local folder that does not exist yet), Start (Start when I
+folders chosen, which the folder's menu can change later; Continue first looks at the chosen local
+folders, and when any already holds files it stays on the step once, names them and says how syncing
+merges them with the server's (files only here uploaded, files only there added, a different file of
+the same name kept as a conflict copy, nothing deleted), with Merge and continue; changing the choice
+or the base folder asks again. SyncD creates a local folder that does not exist yet and the interface
+creates its parent, the base folder at first, before adding it. Every chosen folder is added even
+when one fails, and one message names those that could not be added), Start (Start when I
 sign in to Windows and notifications, both on; an optional other address). Nothing syncs before
 Start syncing. Add a folder opens the Folders step for an account that exists.
 
@@ -148,10 +163,15 @@ value builds without an update channel saved by default never turns it on); Chec
 way. A check reads the latest release's `update-windows-<goarch>.json`. Installing downloads the
 signed archive and verifies it, then asks SyncD for a safe point (`PrepareUpdate`); a refusal
 postpones it and says which: a deletion waiting for the user (`DECISION_PENDING`, with Review), or
-sync not yet at a safe point (`QUIESCE_STALLED`), told apart by `syncd.ReasonOf`. Then it hands over
-to the update's installer, which closes the interface, upgrades UI and SyncD together and starts the
-new version. A failed download or signature check, or an installer that stops while the interface
-still runs, keeps the installed version and says the update could not be installed. An automatic
+sync not yet at a safe point (`QUIESCE_STALLED`), told apart by `syncd.ReasonOf`. At the safe point it
+stops SyncD (`daemon.shutdown`) and waits up to 30 seconds for the connection to end, then hands over
+to the update's installer (`setup -update`), which closes the interface, upgrades UI and SyncD together
+and starts the new version (`handOver`). Until 0.1.2 the interface left SyncD held at the safe point
+and the installer asked it again; SyncD refuses a second request while one holds, so the installer
+waited out its two minutes and every in-app update failed. A failed download or signature check, or
+an installer that stops while the interface still runs, keeps the installed version and says the
+update could not be installed; when SyncD had been stopped for it, the client starts it again
+(`Remote.StartAgain`). An automatic
 install runs when the computer has been idle for 15 minutes or within 03:00, as chosen; one that
 failed is not tried again in the same run.
 

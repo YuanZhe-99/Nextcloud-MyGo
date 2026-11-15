@@ -2,7 +2,7 @@
 
 ## 契约
 
-协议 1.11 在本地 Named Pipe 上传输 JSON-RPC 2.0：四字节小端长度后跟 UTF-8 JSON，
+协议 1.12 在本地 Named Pipe 上传输 JSON-RPC 2.0：四字节小端长度后跟 UTF-8 JSON，
 最多 1 MiB、64 层嵌套容器。重复对象键无效。`protocol/contract.json` 记录方法及能力门槛。
 `protocol/fixtures.json` 由 Go 和 C++ 契约测试共享。线上状态投影使用小驼峰字段名。
 夹具的 `valid` 表示 JSON 边界接受与否；RPC 消息外形与方法校验单独测试。
@@ -22,6 +22,20 @@
 不支持的能力返回 `UNSUPPORTED_CAPABILITY`，不模拟成功。
 
 ## 实现范围
+
+协议 1.12 搭配 Control schema 13，是增量变更。`folders.setAvailability`（`folderId`、`availability`；引擎构建）设置按需文件目录
+如何保留文件：`alwaysLocal` 下载所有文件并保留，`onlineOnly` 释放所有已下载的文件，`onDemand` 保留已下载的文件、新文件以仅在线
+形式出现。它像官方客户端的目录可用性那样，通过上游的 `Vfs::setPinState` 固定根目录，并唤醒该目录；下一个周期的完整本地发现会应用它
+（[按需文件](on-demand.md#可用性)）。Cloud Files 拒绝或没有已挂接的运行时，为 `LOCAL_ROOT_UNAVAILABLE`。对完整文件目录只接受 `onDemand`
+（其他值为 `INVALID_PARAMS`）：它需要 `OnDemandRoot::available()`（否则为 `UNSUPPORTED_CAPABILITY`），且目录空闲、不在切换或重新认证中
+（否则为 `QUIESCE_STALLED`），把目录标为 `conversion='pending'` 并重新挂接，从而立即执行 1.11 的转换；无法转换的目录保留完整文件，
+并在 `conversionReason` 中说明原因。快照中的每个 `folder` 新增 `availability`：每次投影时 Cloud Files 报告的根目录固定状态（`alwaysLocal`、
+`onlineOnly`，未指定或继承时为 `onDemand`），因此在资源管理器中做的更改也会显示；完整文件目录、没有运行时的目录或因切换而关闭的根目录为
+`""`。`endpoints.rename`（`endpointId`、去掉首尾空白后 1–128 个字符的 `name`、`kind`；所有构建）只更改主地址或已认可地址显示的名称和类型：
+不改变其认可、核验、评分或绑定。主地址的名称和类型是新的 Control 列（`accounts.main_name`、`accounts.main_kind`；名称为空时显示主机名）；
+其他地址的写入它在 `endpoints` 中的行。未认可、未知或已移除的地址为 `NOT_FOUND`。参数是 `protocol/message.schema.json` 中的
+`$defs/setAvailability` 和 `$defs/renameEndpoint`，示例在 `protocol/state.examples.json` 中；Go 客户端有 `SetAvailability`、
+`RenameEndpoint` 和 `syncd.Folder.Availability`。1.12 之前的守护进程不发送 `availability`，界面也不会向它提供这两个命令。
 
 协议 1.11 搭配 Control schema 12，是增量变更并启用按需文件
 （[按需文件](on-demand.md#完整文件目录的自动转换)）。快照中的每个 `folder` 新增 `conversion`（`""`、`pending` 或

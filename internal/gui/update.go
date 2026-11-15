@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -161,13 +160,13 @@ func (a *App) autoInstall() {
 	a.installUpdate()
 }
 
-// installUpdate downloads the update and checks its signature, brings
-// SyncD to a safe point, then hands over to the update's installer, which
-// closes this interface, prepares and stops SyncD, switches to a new
-// version directory and starts the new version (PLAN.md §16.2). SyncD
-// refusing (a deletion waiting for the user, or files moving, a switch
-// going on) postpones it and says which. Any failure keeps the installed
-// version: nothing of it is touched before setup has the new one complete.
+// installUpdate downloads the update and checks its signature, then hands
+// over to the update's installer (handOver), which closes this interface,
+// switches to a new version directory and starts the new version (PLAN.md
+// §16.2). SyncD refusing (a deletion waiting for the user, or files moving,
+// a switch going on) postpones it and says which. Any failure keeps the
+// installed version: nothing of it is touched before setup has the new one
+// complete.
 func (a *App) installUpdate() {
 	u := a.upd.available
 	root := installRoot()
@@ -182,17 +181,18 @@ func (a *App) installUpdate() {
 		setup, err := u.Download(ctx, release.HTTPGet, release.UpdateKey, packageArch(), version.Version, dir)
 		cancel()
 		if err == nil {
-			err = a.client.PrepareUpdate(u.Version)
-		}
-		if err == nil {
-			var c *exec.Cmd
-			if c, err = release.StartSetup(setup, filepath.Join(dir, "setup.log")); err == nil {
+			err = handOver(a.client, u.Version, time.Second, func() error {
+				c, err := release.StartSetup(setup, filepath.Join(dir, "setup.log"))
+				if err != nil {
+					return err
+				}
 				// Setup closes this interface on its way; it returns while
 				// the interface still runs only when it refused early.
 				if err = c.Wait(); err == nil {
 					err = errSetupDone
 				}
-			}
+				return err
+			})
 		}
 		a.later(func() {
 			a.upd.installing = false
@@ -216,3 +216,37 @@ func (a *App) installUpdate() {
 
 // errSetupDone: setup finished while this interface still ran.
 var errSetupDone = errors.New("setup finished")
+
+// errNotStopped: SyncD was asked to stop for the update and still runs.
+var errNotStopped = errors.New("SyncD did not stop for the update")
+
+// handOver brings SyncD to the update safe point, stops it, then runs
+// setup (run).
+// Inputs: tick is how often SyncD's connection is looked at while it stops;
+// it gets 30 s.
+// Returns: PrepareUpdate's refusal (the update is postponed), a stop that
+// failed, or run's result.
+// Side effects: stops SyncD; when setup refused, has the client start it
+// again.
+// Notes: SyncD holds at the safe point until it is shut down and refuses a
+// second prepare meanwhile, so setup, which prepares a SyncD it finds
+// running, must find none: before 0.1.3 it waited out its limit against the
+// hold this interface had taken and every in-app update failed.
+func handOver(c syncd.Client, version string, tick time.Duration, run func() error) error {
+	if err := c.PrepareUpdate(version); err != nil {
+		return err
+	}
+	if err := c.Shutdown(); err != nil {
+		return err
+	}
+	for deadline := time.Now().Add(30 * time.Second); c.Snapshot().Daemon.Connected; time.Sleep(tick) {
+		if time.Now().After(deadline) {
+			return errNotStopped
+		}
+	}
+	err := run()
+	if !errors.Is(err, errSetupDone) {
+		c.StartAgain()
+	}
+	return err
+}

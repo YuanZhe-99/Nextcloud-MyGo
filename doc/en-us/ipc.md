@@ -2,7 +2,7 @@
 
 ## Contract
 
-Protocol 1.11 uses JSON-RPC 2.0 over a local Named Pipe: a four-byte little-endian length followed
+Protocol 1.12 uses JSON-RPC 2.0 over a local Named Pipe: a four-byte little-endian length followed
 by UTF-8 JSON, at most 1 MiB and 64 nested containers. Duplicate object keys are invalid.
 `protocol/contract.json` records methods and capability gates. `protocol/fixtures.json` is shared
 by Go and C++ contract tests. The wire projection uses lower-camel-case field names.
@@ -25,6 +25,29 @@ uncertain; reconnect retries the same key. The client polls `operations.get` for
 Unsupported capabilities return `UNSUPPORTED_CAPABILITY`, never simulated success.
 
 ## Implementation scope
+
+Protocol 1.12, with Control schema 13, is additive. `folders.setAvailability` (`folderId`,
+`availability`; engine builds) sets how an on-demand folder keeps its files: `alwaysLocal` downloads
+every file and keeps it, `onlineOnly` frees every downloaded file, `onDemand` keeps what is downloaded
+and lets new files arrive online-only. It pins the root through upstream's `Vfs::setPinState`, as the
+official client's folder availability does, and wakes the folder; the next cycle's full local discovery
+applies it ([on-demand](on-demand.md#availability)). A Cloud Files refusal, or no attached runtime, is
+`LOCAL_ROOT_UNAVAILABLE`. For a full-file folder only `onDemand` is accepted (anything else is
+`INVALID_PARAMS`): it needs `OnDemandRoot::available()` (else `UNSUPPORTED_CAPABILITY`) and an idle folder
+outside a switch or re-authentication (else `QUIESCE_STALLED`), marks the folder `conversion='pending'`
+and attaches it again, which runs the 1.11 conversion at once; one that cannot convert keeps full files
+and says why in `conversionReason`. Each snapshot `folder` gains `availability`: the root's pin as Cloud
+Files reports it at each projection (`alwaysLocal`, `onlineOnly`, or `onDemand` for unspecified or
+inherited), so a change made in Explorer shows too; `""` for a full-file folder, a folder without a
+runtime or a root closed for a switch. `endpoints.rename` (`endpointId`, `name` 1–128 characters after
+trimming, `kind`; every build) changes the name and kind shown for the main address or an approved one
+and nothing else: not its approval, verification, score or binding. The main address's name and kind
+are new Control columns (`accounts.main_name`, `accounts.main_kind`; an empty name shows the host);
+another address's go to its `endpoints` row. An unapproved, unknown or removed address is `NOT_FOUND`.
+The parameters are `$defs/setAvailability` and `$defs/renameEndpoint` in
+`protocol/message.schema.json`, with examples in `protocol/state.examples.json`; the Go client has
+`SetAvailability`, `RenameEndpoint` and `syncd.Folder.Availability`. A daemon before 1.12 sends no
+`availability`, and the interface offers neither command to it.
 
 Protocol 1.11, with Control schema 12, is additive and enables on-demand files
 ([on-demand](on-demand.md#automatic-conversion-of-full-file-folders)). Each snapshot `folder` gains

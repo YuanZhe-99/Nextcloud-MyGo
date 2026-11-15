@@ -30,6 +30,10 @@ type Client interface {
 	SyncNow(folderID string) error
 	// RemoveFolder stops syncing a folder; its files stay on both sides.
 	RemoveFolder(folderID string) error
+	// SetAvailability sets how an on-demand folder keeps its files, or with
+	// AvailabilityOnDemand converts an idle full-file folder in place
+	// (folders.setAvailability, protocol 1.12).
+	SetAvailability(folderID string, a Availability) error
 
 	// ResolveDecision answers a pending decision once (decisions.resolve).
 	// Inputs: digest is the Decision's, so an answer to a changed
@@ -69,12 +73,18 @@ type Client interface {
 	ApproveEndpoint(stagingID string) (endpointID string, err error)
 	VerifyEndpoint(endpointID string) error
 	RemoveEndpoint(endpointID string) error
+	// RenameEndpoint changes the name and kind shown for the main address or
+	// an approved one; never its trust (endpoints.rename, protocol 1.12).
+	RenameEndpoint(endpointID, name string, kind EndpointKind) error
 
 	// PrepareUpdate brings SyncD to a safe point for installing an update
 	// (daemon.prepareUpdate); ErrBusy names why not now.
 	PrepareUpdate(targetVersion string) error
 	// Shutdown stops background sync (daemon.shutdown).
 	Shutdown() error
+	// StartAgain starts SyncD again on the next connection attempt after a
+	// Shutdown that should not last (an update that did not install).
+	StartAgain()
 
 	// Diagnostics reads SyncD's sanitized runtime counters
 	// (diagnostics.snapshot); it works while application state is unavailable.
@@ -262,7 +272,27 @@ type Folder struct {
 	// conversion has not happened yet, or empty; SyncD retries it at each
 	// start. Meaningful only with ConversionPending.
 	ConversionReason string `json:"conversionReason"`
+	// Availability is how an on-demand folder keeps its files, as Cloud
+	// Files reports its root (protocol 1.12, so a change in Explorer shows
+	// too); empty for a full-file folder, while unknown and from earlier
+	// daemons.
+	Availability Availability `json:"availability"`
 }
+
+// Availability is how an on-demand folder keeps its files: its root's pin
+// (protocol 1.12).
+type Availability string
+
+const (
+	// AvailabilityAlwaysLocal downloads every file and keeps it ("Always
+	// keep on this device").
+	AvailabilityAlwaysLocal Availability = "alwaysLocal"
+	// AvailabilityOnDemand keeps what is downloaded; new files arrive
+	// online-only.
+	AvailabilityOnDemand Availability = "onDemand"
+	// AvailabilityOnlineOnly frees every downloaded file ("Free up space").
+	AvailabilityOnlineOnly Availability = "onlineOnly"
+)
 
 // Conversion is where a folder stands in the automatic switch from full
 // files to on-demand files (protocol 1.11).

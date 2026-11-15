@@ -10,8 +10,10 @@
 # package offers and publishes no updates. -UpdatePublicKey, with -TestVersion only, trusts another key
 # than mygo.json's, for update tests with a throwaway key.
 # Side effects: writes build/package/<Arch> (build/package/<Arch>-testversion),
-# build/package/Nextcloud-MyGo-<version>[-testversion]-<arch>-test-setup.exe and, signed, the archive and
-# update-windows-<goarch>.json in build/package/update-<Arch>[-testversion]; never writes into -SyncDBuild,
+# build/package/Nextcloud-MyGo-<version>[-testversion]-<arch>-setup.exe and, signed, the archive and
+# update-windows-<goarch>.json in build/package/update-<Arch>[-testversion]; stages payload.zip and the
+# resource object (icon, version details, manifest) in packaging/windows/setup only for the build and
+# removes them afterwards; never writes into -SyncDBuild,
 # never installs, registers or Authenticode-signs anything, never prints the key. Every step is bounded;
 # see doc/en-us/packaging.md.
 [CmdletBinding()]
@@ -114,12 +116,20 @@ if ($signing) {
 # without SyncD (PLAN.md §16.2).
 $stamp = @{ MYGO_UPDATER_PRIVATE_KEY = $null }
 if ($ldflags) { $stamp.MYGO_LDFLAGS = $ldflags -join ' ' }
-$setup = Join-Path $out "Nextcloud-MyGo-$name-$($Arch.ToLower())-test-setup.exe"
+$setup = Join-Path $out "Nextcloud-MyGo-$name-$($Arch.ToLower())-setup.exe"
 $target = @{ GOOS = 'windows'; GOARCH = $goarch; CGO_ENABLED = '0' }
+# Setup and the uninstaller are windowed programs (no console) whose icon, version details and manifest
+# (Common Controls v6, per-monitor DPI, asInvoker) come from a .syso that `go build` links from the package
+# directory; each build gets its own.
+$syso = Join-Path $root "packaging/windows/setup/rsrc_windows_$goarch.syso"
+$icon = Join-Path $root 'backend/platform/windows/syncd.ico'
+$gui = @('build', '-trimpath', '-ldflags', '-H=windowsgui')
 try {
     Invoke-Step 'checker' 120 'go' @('build', '-o', $tool, './tools/pkg')
     Invoke-Step 'ui' 300 'go' @('tool', 'mygo', 'build', '-platform', "windows/$goarch", '-skip-installer', '-o', (Join-Path $work 'ui')) $stamp
-    Invoke-Step 'uninstaller' 180 'go' @('build', '-trimpath', '-o', (Join-Path $work 'uninstall.exe'), './packaging/windows/setup') $target
+    Invoke-Step 'uninstaller resources' 30 $tool @('resources', '-arch', $Arch, '-version', $version, '-description', 'Nextcloud MyGo Uninstall',
+        '-file', 'uninstall.exe', '-icon', $icon, '-out', $syso)
+    Invoke-Step 'uninstaller' 180 'go' ($gui + @('-o', (Join-Path $work 'uninstall.exe'), './packaging/windows/setup')) $target
     $ui = Join-Path $work "ui/windows-$goarch"
     # License texts of exactly what this SyncD and its upstream build linked; the stager refuses without them.
     $notices = Join-Path $work 'notices'
@@ -156,7 +166,9 @@ try {
         throw "SyncD reports schema $($self.controlSchema) and protocol $($self.protocol.major).$($self.protocol.minor), the manifest $($manifest.syncd.controlSchema) and $($manifest.syncd.protocol.major).$($manifest.syncd.protocol.minor): rebuild SyncD from these sources"
     }
     Write-Host "version ${version}: manifest, SyncD --version and UI agree$(if ($TestVersion) { ' (test version)' })"
-    Invoke-Step 'installer' 300 'go' @('build', '-trimpath', '-tags', 'payload', '-o', $setup, './packaging/windows/setup') $target
+    Invoke-Step 'installer resources' 30 $tool @('resources', '-arch', $Arch, '-version', $version, '-description', 'Nextcloud MyGo Setup',
+        '-file', (Split-Path $setup -Leaf), '-icon', $icon, '-out', $syso)
+    Invoke-Step 'installer' 300 'go' ($gui + @('-tags', 'payload', '-o', $setup, './packaging/windows/setup')) $target
     Invoke-Step 'check installer' 60 $tool @('check', '-arch', $Arch, $setup)
     Remove-Item -Recurse -Force $updates -ErrorAction SilentlyContinue
     if ($signing) {
@@ -165,7 +177,7 @@ try {
         Write-Host 'MYGO_UPDATER_PRIVATE_KEY is not set: this package offers and publishes no updates'
     }
 } finally {
-    Remove-Item -Force $payload -ErrorAction SilentlyContinue
+    Remove-Item -Force $payload, $syso -ErrorAction SilentlyContinue
 }
 $hash = (Get-FileHash -Algorithm SHA256 $setup).Hash.ToLower()
 Write-Host ("{0} ({1:n1} MB, sha256 {2}) in {3:n0}s" -f $setup, ((Get-Item $setup).Length / 1MB), $hash, $total.Elapsed.TotalSeconds)

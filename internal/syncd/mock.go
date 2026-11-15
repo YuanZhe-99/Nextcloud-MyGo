@@ -90,7 +90,7 @@ func sampleState(now time.Time) Snapshot {
 		Folders: []Folder{
 			// Documents finished its cycle, but the server refused its uploads.
 			{ID: "f-docs", AccountID: "a-home", Name: "Documents", LocalPath: `C:\Users\Alex\Documents`, RemotePath: "/Documents", State: FolderUpToDate, ReasonCode: "REMOTE_QUOTA_EXCEEDED", Mode: FolderFull},
-			{ID: "f-projects", AccountID: "a-home", Name: "Projects", LocalPath: `D:\Projects`, RemotePath: "/Work/Projects", State: FolderSyncing, Phase: PhaseUploading, FilesDone: 3, Mode: FolderOnDemand, Conversion: ConversionConverted},
+			{ID: "f-projects", AccountID: "a-home", Name: "Projects", LocalPath: `D:\Projects`, RemotePath: "/Work/Projects", State: FolderSyncing, Phase: PhaseUploading, FilesDone: 3, Mode: FolderOnDemand, Conversion: ConversionConverted, Availability: AvailabilityOnDemand},
 			{ID: "f-photos", AccountID: "a-home", Name: "Photos", LocalPath: `C:\Users\Alex\Pictures`, RemotePath: "/Photos", State: FolderNeedsReview, Mode: FolderFull},
 			{ID: "f-team", AccountID: "a-work", Name: "Team share", LocalPath: `C:\Users\Alex\Team`, RemotePath: "/Shared/Team", State: FolderWaitingSignIn, ReasonCode: "AUTH_REQUIRED", Mode: FolderFull},
 			// Protocol 1.11: Projects, added by 0.1.0, was switched to
@@ -341,6 +341,27 @@ func (m *Mock) RemoveFolder(id string) error {
 		}
 		m.s.Folders = slices.Delete(m.s.Folders, i, i+1)
 		m.s.Decisions = slices.DeleteFunc(m.s.Decisions, func(d Decision) bool { return d.FolderID == id })
+	})
+	return err
+}
+
+// SetAvailability sets an on-demand folder's availability, and with
+// AvailabilityOnDemand converts a full-file folder, as SyncD does (protocol
+// 1.12); any other value for a full-file folder is refused.
+func (m *Mock) SetAvailability(id string, a Availability) error {
+	var err error
+	m.change(func() {
+		f := m.folder(id)
+		switch {
+		case f == nil:
+			err = ErrNotFound
+		case f.Mode == FolderOnDemand:
+			f.Availability = a
+		case a == AvailabilityOnDemand:
+			f.Mode, f.Conversion, f.ConversionReason, f.Availability = FolderOnDemand, ConversionConverted, "", AvailabilityOnDemand
+		default:
+			err = ErrRefused
+		}
 	})
 	return err
 }
@@ -633,6 +654,24 @@ func (m *Mock) RemoveEndpoint(id string) error {
 	return err
 }
 
+// RenameEndpoint changes an address's name and kind, its trust untouched.
+func (m *Mock) RenameEndpoint(id, name string, kind EndpointKind) error {
+	var err error
+	m.change(func() {
+		i := slices.IndexFunc(m.s.Endpoints, func(e Endpoint) bool { return e.ID == id })
+		name = strings.TrimSpace(name)
+		switch {
+		case i < 0:
+			err = ErrNotFound
+		case name == "" || len([]rune(name)) > 128:
+			err = ErrRefused
+		default:
+			m.s.Endpoints[i].Name, m.s.Endpoints[i].Kind = name, kind
+		}
+	})
+	return err
+}
+
 // PrepareUpdate refuses, with SyncD's reasons, while a deletion waits for
 // the user (DECISION_PENDING) or files move (QUIESCE_STALLED); both are
 // ErrBusy.
@@ -648,6 +687,9 @@ func (m *Mock) PrepareUpdate(string) error {
 }
 
 func (m *Mock) Shutdown() error { return nil }
+
+// StartAgain: the Mock never stops.
+func (m *Mock) StartAgain() {}
 
 // Diagnostics reports the sample folders with no transfers.
 func (m *Mock) Diagnostics(context.Context) (RuntimeDiagnostics, error) {

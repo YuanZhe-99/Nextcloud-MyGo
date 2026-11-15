@@ -48,6 +48,52 @@ type setupState struct {
 	// offered and sent only with the virtualFiles capability, and fixed
 	// for each folder's life.
 	mode int
+	// merge names the chosen folders that already hold files on this PC,
+	// found when the step was last confirmed for the choice mergeFor; the
+	// step then asks once more before going on.
+	merge    []string
+	mergeFor string
+}
+
+// targets are the chosen folders with the local folder each one syncs
+// into, in the server's order.
+func (st *setupState) targets() [][2]string {
+	var add [][2]string
+	for _, r := range st.remote {
+		if st.chosen[r.Path] && !r.Encrypted {
+			add = append(add, [2]string{r.Path, filepath.Join(st.base, strings.TrimPrefix(r.Path, "/"))})
+		}
+	}
+	return add
+}
+
+// choiceKey identifies the chosen local folders, so that a warning about
+// their content is shown again after the choice changes.
+func choiceKey(add [][2]string) string {
+	var b strings.Builder
+	for _, f := range add {
+		b.WriteString(f[1])
+		b.WriteByte(0)
+	}
+	return b.String()
+}
+
+// holdingFiles returns the names of the local folders in add that already
+// exist and are not empty: syncing merges their files with the server's.
+func holdingFiles(add [][2]string) []string {
+	var names []string
+	for _, f := range add {
+		d, err := os.Open(f[1])
+		if err != nil {
+			continue
+		}
+		entries, _ := d.Readdirnames(1)
+		d.Close()
+		if len(entries) > 0 {
+			names = append(names, filepath.Base(f[1]))
+		}
+	}
+	return names
 }
 
 // folderModes are the modes setup offers, in its order.
@@ -410,11 +456,17 @@ func (a *App) setupFolders(c *ui.Context) {
 			ui.Segmented(c.Key("setup-mode"), &st.mode, L.ModeOnDemand(), L.ModeFull()).Label(L.ModeLabel())
 		})
 	}
-	n := 0
-	for _, on := range st.chosen {
-		if on {
-			n++
-		}
+	add := st.targets()
+	key := choiceKey(add)
+	warned := len(st.merge) > 0 && st.mergeFor == key
+	if warned {
+		ui.Row(c).Gap(10).MaxWidth(620).Padding(12, 14).Radius(radiusCard).Background(p.warnBg).Border(1, p.warnBorder).Role(ui.RoleStatus).Children(func() {
+			ui.Icon(c, icWarn).FontSize(18).TextColor(p.warn)
+			ui.Column(c).Grow(1).MinWidth(0).Gap(4).Children(func() {
+				ui.Text(c, L.MergeExistingTitle(strings.Join(st.merge, ", "))).FontSize(13).FontWeight(600).Wrap()
+				ui.Text(c, L.MergeExistingBody()).FontSize(13).Wrap()
+			})
+		})
 	}
 	// No way back to signing in: that is a new login from step 1. Adding
 	// folders to an account that exists can be left.
@@ -426,7 +478,18 @@ func (a *App) setupFolders(c *ui.Context) {
 	if st.addOnly {
 		next = L.ActionStartSyncing()
 	}
-	a.setupFoot(c, back, next, n == 0, func() {
+	if warned {
+		next = L.ActionMergeContinue()
+	}
+	a.setupFoot(c, back, next, len(add) == 0, func() {
+		// Folders that already hold files on this PC are merged with the
+		// server's: say so once for this choice before going on.
+		if st.mergeFor != key {
+			st.merge, st.mergeFor = holdingFiles(add), key
+			if len(st.merge) > 0 {
+				return
+			}
+		}
 		if st.addOnly {
 			a.finishSetup()
 			return
@@ -490,12 +553,7 @@ func switchRow(c *ui.Context, key string, icon *ui.SVG, title, hint string, on *
 // starts only now.
 func (a *App) finishSetup() {
 	st := a.setup
-	var add [][2]string
-	for _, r := range st.remote {
-		if st.chosen[r.Path] && !r.Encrypted {
-			add = append(add, [2]string{r.Path, filepath.Join(st.base, strings.TrimPrefix(r.Path, "/"))})
-		}
-	}
+	add := st.targets()
 	if !st.addOnly {
 		pr := a.prefs
 		pr.NotifyDecisions, pr.NotifySignIn, pr.NotifyConflicts = st.notify, st.notify, st.notify
@@ -515,31 +573,53 @@ func (a *App) finishSetup() {
 	a.setup = setupState{}
 	a.page = pageOverview
 	a.do("add-folders", func() error {
-		for _, f := range add {
-			// SyncD creates a local folder that does not exist yet (1.9).
-			if err := a.client.AddFolder(st.accountID, f[0], f[1], mode...); err != nil {
-				return folderError{name: filepath.Base(f[1]), err: err}
-			}
-		}
-		return nil
+		return addFolders(a.client, st.accountID, add, mode...)
 	}, func(err error) {
 		var fe folderError
 		switch {
 		case errors.As(err, &fe):
-			a.setToast(L.AddFolderFailed(fe.name) + " " + errText(fe.err))
+			a.setToast(L.AddFolderFailed(strings.Join(fe.names, ", ")) + " " + errText(fe.err))
 		case err != nil:
 			a.setToast(errText(err))
 		}
 	})
 }
 
-// folderError is a folder that could not be added, by name.
-type folderError struct {
-	name string
-	err  error
+// addFolders adds every folder in add, each a remote path and its local
+// folder, and goes on past one that fails.
+// Returns: a folderError naming those that could not be added, with the
+// first one's reason, or nil.
+// Side effects: creates the local folder's parent (the base folder, at
+// first) where it is missing; SyncD creates the folder itself (1.9) and
+// needs its parent to exist.
+func addFolders(client syncd.Client, account string, add [][2]string, mode ...syncd.FolderMode) error {
+	var failed folderError
+	for _, f := range add {
+		err := os.MkdirAll(filepath.Dir(f[1]), 0o755)
+		if err == nil {
+			err = client.AddFolder(account, f[0], f[1], mode...)
+		}
+		if err != nil {
+			if failed.err == nil {
+				failed.err = err
+			}
+			failed.names = append(failed.names, filepath.Base(f[1]))
+		}
+	}
+	if failed.err != nil {
+		return failed
+	}
+	return nil
 }
 
-func (e folderError) Error() string { return e.name + ": " + e.err.Error() }
+// folderError names the folders that could not be added, with the first
+// one's reason.
+type folderError struct {
+	names []string
+	err   error
+}
+
+func (e folderError) Error() string { return strings.Join(e.names, ", ") + ": " + e.err.Error() }
 func (e folderError) Unwrap() error { return e.err }
 
 // languageSelect chooses the interface's language; empty follows Windows.

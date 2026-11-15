@@ -457,8 +457,11 @@ func startupEntries(root string, fn func(command string) string) error {
 // removeLater deletes this uninstaller and the then empty install root once
 // this process has exited, through a hidden cmd.exe; a running executable
 // cannot delete itself.
+// Notes: the uninstaller's window stays open on its result until it is
+// closed, so the script retries the delete once a second for up to ten
+// minutes before removing the root.
 func removeLater(exe, root string) error {
-	script := fmt.Sprintf(`ping -n 3 127.0.0.1 >nul & del /f /q "%s" & rmdir /s /q "%s"`, exe, root)
+	script := fmt.Sprintf(`ping -n 3 127.0.0.1 >nul & (for /l %%i in (1,1,600) do @if exist "%[1]s" (del /f /q "%[1]s" 2>nul & if exist "%[1]s" ping -n 2 127.0.0.1 >nul)) & rmdir /s /q "%[2]s"`, exe, root)
 	c := exec.Command(filepath.Join(os.Getenv("SystemRoot"), "System32", "cmd.exe"))
 	c.SysProcAttr = &syscall.SysProcAttr{CmdLine: `cmd.exe /d /c "` + script + `"`, HideWindow: true,
 		CreationFlags: windows.CREATE_NO_WINDOW}

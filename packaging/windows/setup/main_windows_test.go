@@ -61,3 +61,19 @@ func TestRemoveAllUnderAppData(t *testing.T) {
 		t.Fatalf("removing a missing folder: %v", err)
 	}
 }
+
+// TestSentence checks how the window shows steps and refusals: capitalized,
+// ending in a full stop, already complete sentences kept.
+func TestSentence(t *testing.T) {
+	for in, want := range map[string]string{
+		`extracting to C:\x`:         `Extracting to C:\x.`,
+		errDeletionPending.Error():   errDeletionPending.Error() + ".",
+		"Nextcloud MyGo is updated.": "Nextcloud MyGo is updated.",
+		"Installing Nextcloud MyGo…": "Installing Nextcloud MyGo…",
+		"":                           "",
+	} {
+		if got := sentence(in); got != want {
+			t.Errorf("sentence(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

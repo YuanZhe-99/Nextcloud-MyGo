@@ -1024,6 +1024,34 @@ fixture 41.0 s, 173.9 s with the server. Packages:
 the interface. Not run: the entry as Explorer shows it (the packaged host's registry view is private), the
 installers, the upgrade from 0.1.1 and the uninstaller's keep rule against a second profile.
 
+### Fixes after 0.1.2 (0.1.3)
+
+Measured 2026-11-15 on the ARM64 machine (build 26300), outside a packaged host, on the 23-patch trees
+(`CF0C68C10DD7`) with MyGo v0.9.1, while an installed 0.1.2 ran with three on-demand roots.
+
+- SyncD contracts (`build-syncd.ps1`): 25 of 25 passed on ARM64 and on x64 (emulated, 50.4 s) with the
+  test's temporary folders on drive D:. With them on C:, `SyncDRootContracts`, `SyncDFolderErrorContracts` and `SyncDOnDemandContracts`
+  fail with `FOLDER_OWNED`: every fresh folder below `C:\Users\<user>` is refused, while D: passes;
+  `root_windows.cpp` and its test are unchanged since 0.1.2. No ancestor holds an upstream journal
+  or a lease mutex of this product; the cause is not found yet.
+  `SyncDFolderErrorContracts` includes the new `availability` case on real Cloud Files (a full-file folder
+  refusing `alwaysLocal` and `onlineOnly`, converting on `onDemand` under its own registration, then the
+  root's pin following all three values in the snapshot), and `SyncDEndpointContracts` the rename case.
+- Real Go-to-C++ pipe (`SYNCD_TEST_EXE`, ARM64 SyncD 0.1.3, protocol 1.12, schema 13): every `Real` test
+  in `internal/syncd` and `internal/gui` passed. Each left its profile behind until `testprofile.Remove`
+  stopped using `os.RemoveAll` (ELOOP below `AppData\Local`); after the change a rerun left none.
+- Go: the full list in [development](development.md), with the new tests for the add-folder retry, setup's
+  base folder and merge warning, the update handover, the 1.12 envelopes, the availability line and the
+  rename dialog (screenshots inspected).
+- Packages: `tools/package.ps1` built `Nextcloud-MyGo-0.1.3-arm64-setup.exe` (36.1 MB) and
+  `Nextcloud-MyGo-0.1.3-x64-setup.exe` (39.3 MB) with the installer resources; `tools/pkg check` passed (29
+  native ARM64 and 30 native x64 PE files, each installer native with its icon), the manifest, SyncD and the
+  interface agreeing on 0.1.3, protocol 1.12, schema 13.
+
+Not run: the windowed installer and uninstaller beyond their error and confirmation screens (installing
+here would replace the user's install), the in-app update end to end, a real-server run of folder
+availability (hydration under Always keep on this PC, freeing under Free up space) and of adding several
+folders, and a screenshot of the folder menu (a native popover).
 ## Known limitations
 
 Upstream CTest on native Windows ARM64 passed SyncJournalDBTest, ConcatUrlTest,

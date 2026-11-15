@@ -429,3 +429,52 @@ func TestRetarget(t *testing.T) {
 		}
 	}
 }
+
+// TestParseArgs covers setup's command line: the in-app update's -update,
+// scripts' -quiet, the uninstaller's flags, and the combinations refused
+// before anything runs; and which task each runs with and without a payload.
+func TestParseArgs(t *testing.T) {
+	for _, c := range []struct {
+		args    []string
+		want    options
+		bad     bool
+		payload task // the task of a build with a payload
+		none    task // the task of a build without one (uninstall.exe)
+	}{
+		{args: nil, payload: taskInstall, none: taskNone},
+		{args: []string{"-update"}, want: options{update: true}, payload: taskInstall, none: taskNone},
+		{args: []string{"-quiet", "-no-launch"}, want: options{quiet: true, noLaunch: true}, payload: taskInstall, none: taskNone},
+		{args: []string{"-uninstall"}, want: options{uninstall: true}, payload: taskUninstall, none: taskUninstall},
+		{args: []string{"-uninstall", "-remove-user-data", "-quiet"}, want: options{uninstall: true, removeData: true, quiet: true}, payload: taskUninstall, none: taskUninstall},
+		{args: []string{"-uninstall", "-update"}, bad: true},
+		{args: []string{"-uninstall", "-no-launch"}, bad: true},
+		{args: []string{"-remove-user-data"}, bad: true},
+		{args: []string{"-silent"}, bad: true},
+		{args: []string{"extra"}, bad: true},
+	} {
+		var usage bytes.Buffer
+		o, err := parseArgs(c.args, &usage)
+		if (err != nil) != c.bad {
+			t.Errorf("%q: err = %v", c.args, err)
+			continue
+		}
+		if c.bad {
+			continue
+		}
+		if o != c.want || o.task(true) != c.payload || o.task(false) != c.none {
+			t.Errorf("%q: %+v, tasks %v/%v", c.args, o, o.task(true), o.task(false))
+		}
+	}
+}
+
+// TestStepHook checks that each step reaches the window's hook as well as
+// stdout.
+func TestStepHook(t *testing.T) {
+	var got []string
+	onStep = func(s string) { got = append(got, s) }
+	defer func() { onStep = nil }()
+	step("removed %s", "x")
+	if len(got) != 1 || got[0] != "removed x" {
+		t.Errorf("hook got %q", got)
+	}
+}

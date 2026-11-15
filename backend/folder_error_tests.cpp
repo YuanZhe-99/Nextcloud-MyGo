@@ -381,6 +381,99 @@ void removalWhileStuck() {
   require(QFile::exists(local.filePath("present/kept.txt")) && journal.exists(),
           "removal touched local files or an engine journal");
 }
+/// availabilityChanges drives folders.setAvailability (protocol 1.12) on real
+/// Cloud Files through a running Control: a full-file folder refuses any
+/// value but onDemand, then converts in place on request (its own
+/// registration, conversion 'converted'); its root's pin then follows
+/// alwaysLocal, onlineOnly and onDemand as the snapshot shows, and an unknown
+/// value is refused.
+/// Side effects: one fixture secret in the current user's vault and a sync
+/// root of its own, both removed again, also on failure.
+void availabilityChanges() {
+  if (!OnDemandRoot::available()) {
+    std::printf("SKIP availability: Cloud Files unavailable here\n");
+    return;
+  }
+  QTemporaryDir profile, local;
+  require(profile.isValid() && local.isValid(),
+          "availability fixture missing");
+  const auto root = QDir::cleanPath(local.path());
+  QString folder, account, reference;
+  {
+    Control first(profile.filePath("control.sqlite"));
+    folder = NetworkTestAccess::seed(first, root, RootLease(root).identity(),
+                                     false);
+    QSqlQuery q(NetworkTestAccess::db(first));
+    require(q.exec("SELECT account_id FROM folders") && q.next(),
+            "availability account missing");
+    account = q.value(0).toString();
+    reference = NetworkTestAccess::credential(first, account);
+  }
+  const OnDemandRoot::Identity identity{account, folder, {}};
+  writeCredential(reference, "fixture-login", "fixture-only-secret");
+  const auto cleanup = qScopeGuard([&] {
+    OnDemandRoot::unregister(root, identity);
+    removeCredential(reference);
+  });
+  Control control(profile.filePath("control.sqlite"));
+  NetworkTestAccess::quiet(control);
+  NetworkTestAccess::pump(control);
+  bool negotiated = true, subscribed = false;
+  // call answers one mutation with the reason it was refused, or "".
+  const auto call = [&](const QString &availability) {
+    const auto reply =
+        control
+            .dispatch(
+                QJsonObject{
+                    {"jsonrpc", "2.0"},
+                    {"id", 1},
+                    {"method", "folders.setAvailability"},
+                    {"params",
+                     QJsonObject{{"operationKey", QUuid::createUuid().toString(
+                                                      QUuid::WithoutBraces)},
+                                 {"expectedRevision",
+                                  control.projection().value("revision")},
+                                 {"folderId", folder},
+                                 {"availability", availability}}}},
+                negotiated, subscribed)
+            .toObject();
+    NetworkTestAccess::pump(control);
+    return reply.value("error")
+        .toObject()
+        .value("data")
+        .toObject()
+        .value("reasonCode")
+        .toString();
+  };
+  const auto shown = [&] {
+    return control.projection()
+        .value("snapshot")
+        .toObject()
+        .value("folders")
+        .toArray()
+        .first()
+        .toObject();
+  };
+  require(shown().value("mode") == "full" &&
+              shown().value("availability") == "",
+          "the fixture folder does not start with full files");
+  for (const auto *refused : {"alwaysLocal", "onlineOnly"})
+    require(call(refused) == "INVALID_PARAMS",
+            "a full-file folder took an on-demand availability");
+  require(call("onDemand").isEmpty(), "converting on request was refused");
+  require(shown().value("mode") == "onDemand" &&
+              shown().value("conversion") == "converted" &&
+              OnDemandRoot::ownershipError(root, identity).isEmpty(),
+          "the folder did not convert under its own registration");
+  for (const auto *availability : {"alwaysLocal", "onlineOnly", "onDemand"}) {
+    require(call(availability).isEmpty(), "an availability was refused");
+    require(shown().value("availability") == availability,
+            "the snapshot does not show the root's new pin");
+  }
+  require(call("sideways") == "INVALID_PARAMS",
+          "an unknown availability was accepted");
+  require(!NetworkTestAccess::stopped(control), "availability stopped SyncD");
+}
 /// conversionStates runs the v0.1.0 full -> on-demand conversion through real
 /// Control starts on real Cloud Files (schema 12, protocol 1.11): a folder
 /// added as full (conversion '') is never converted; a pending one inside
@@ -586,6 +679,7 @@ int main(int argc, char **argv) {
         "interrupted pass", "pass fails", "converted"})
     run(qPrintable(QStringLiteral("conversion: %1").arg(name)),
         [name] { conversionStates(name); });
+  run("availability", [] { availabilityChanges(); });
   return failures ? 1 : 0;
 #endif
 }

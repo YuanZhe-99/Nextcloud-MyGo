@@ -96,6 +96,13 @@ QJsonArray Control::folderProjection() const {
     auto conversion = q.value(8).toString();
     if (conversion == "converting")
       conversion = QStringLiteral("pending");
+    // Protocol 1.12: the on-demand root's pin, read from Cloud Files, so a
+    // change made in Explorer shows too; "" while unknown or for full files.
+    QString availability;
+#ifdef SYNCD_WITH_ENGINE
+    if (runtime_ && q.value(7).toString() == "onDemand")
+      availability = runtime_->availability(id);
+#endif
     result.append(QJsonObject{
         {"id", id},
         {"accountId", q.value(1).toString()},
@@ -110,7 +117,8 @@ QJsonArray Control::folderProjection() const {
         {"filesDone", qint64(filesDone)},
         {"conversion", conversion},
         {"conversionReason",
-         conversion == "pending" ? q.value(9).toString() : QString{}}});
+         conversion == "pending" ? q.value(9).toString() : QString{}},
+        {"availability", availability}});
   }
   return result;
 }
@@ -700,10 +708,19 @@ QJsonObject Control::folderMutation(const QString &method,
   if (params.value("expectedRevision").toString() != QString::number(revision_))
     throw std::runtime_error("REVISION_CONFLICT");
   const auto field = method == "folders.add" ? "inspectToken" : "folderId";
+  const bool availability = method == "folders.setAvailability";
   for (auto it = params.begin(); it != params.end(); ++it)
     if (it.key() != "operationKey" && it.key() != "expectedRevision" &&
-        it.key() != field && !(method == "folders.add" && it.key() == "mode"))
+        it.key() != field && !(method == "folders.add" && it.key() == "mode") &&
+        !(availability && it.key() == "availability"))
       throw std::runtime_error("INVALID_PARAMS");
+  // Protocol 1.12: how an on-demand folder keeps its files, or "onDemand" to
+  // convert a full-file folder in place.
+  const auto wanted = params.value("availability").toString();
+  if (availability && wanted != "alwaysLocal" && wanted != "onDemand" &&
+      wanted != "onlineOnly")
+    throw std::runtime_error("INVALID_PARAMS");
+  bool convert = false;
   // The file mode is chosen once, at add; on-demand needs the CFAPI plugin.
   const auto mode = params.value("mode").toString("full");
   if ((params.contains("mode") && !params.value("mode").isString()) ||
@@ -763,7 +780,29 @@ QJsonObject Control::folderMutation(const QString &method,
         (runtime_->running(id) ||
          (runtime_->contains(id) && !runtime_->quiescent(id))))
       throw std::runtime_error("QUIESCE_STALLED");
+    const auto account = q.value(1).toString();
     q.finish();
+    if (availability) {
+      q.prepare("SELECT mode FROM folders WHERE id=?");
+      q.addBindValue(id);
+      execute(q);
+      q.next();
+      convert = q.value(0).toString() == "full";
+      q.finish();
+      if (convert) {
+        // The schema 12 conversion at a fresh attach, asked for now: the
+        // folder must be idle, as for a removal, and Cloud Files present.
+        if (wanted != "onDemand")
+          throw std::runtime_error("INVALID_PARAMS");
+        if (!OnDemandRoot::available())
+          throw std::runtime_error("UNSUPPORTED_CAPABILITY");
+        if (SwitchState(db_).gated(account) || reauthenticating(account) ||
+            runtime_->running(id) ||
+            (runtime_->contains(id) && !runtime_->quiescent(id)))
+          throw std::runtime_error("QUIESCE_STALLED");
+      } else if (!runtime_->setAvailability(id, wanted))
+        throw std::runtime_error("LOCAL_ROOT_UNAVAILABLE");
+    }
     if (method == "folders.remove") {
       // An on-demand root is released before its row goes: online-only
       // placeholders cannot outlive their provider (on-demand.md).
@@ -818,6 +857,11 @@ QJsonObject Control::folderMutation(const QString &method,
       q.addBindValue(method == "folders.pause");
       q.addBindValue(id);
       execute(q);
+    } else if (convert) {
+      q.prepare("UPDATE folders SET conversion='pending',conversion_reason='' "
+                "WHERE id=?");
+      q.addBindValue(id);
+      execute(q);
     }
     q.prepare("INSERT INTO operations(key,id,digest,receipt,method) "
               "VALUES(?,?,?,?,?)");
@@ -851,6 +895,31 @@ QJsonObject Control::folderMutation(const QString &method,
     }
   } else if (method == "folders.remove") {
     runtime_->remove(id);
+  } else if (availability) {
+    // A conversion runs as at a start: the idle runtime goes and the folder
+    // attaches again, converting or saying why not (conversionReason). One
+    // that cannot be released now converts at the next start.
+    if (convert && (!runtime_->contains(id) || runtime_->remove(id))) {
+      try {
+        attachFolder(id);
+      } catch (const std::exception &error) {
+        const auto reason = attachmentReason(error);
+        if (reason.isEmpty()) {
+          stopForStorageFailure();
+          throw;
+        }
+        accountChange([&] {
+          QSqlQuery q(db_);
+          q.prepare("UPDATE folders SET status='error',reason=? WHERE id=?");
+          q.addBindValue(reason);
+          q.addBindValue(id);
+          execute(q);
+        });
+      }
+    }
+    // The next cycle's full local discovery applies the new pin.
+    if (runtime_->contains(id))
+      runtime_->wake(id, Scheduler::Reason::User);
   } else {
     if (!runtime_->contains(id))
       attachFolder(id);

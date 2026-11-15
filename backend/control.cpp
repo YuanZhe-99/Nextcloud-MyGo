@@ -245,7 +245,13 @@ Control::Control(const QString &path, StartupMode mode, Startup *startup)
         (schema > 0 && schema < 12 &&
          !q.exec(
              "UPDATE folders SET conversion='pending' WHERE mode='full'")) ||
-        !SwitchState::createSchema(db_) || !q.exec("PRAGMA user_version=12")) {
+        // Schema 13: the user's name and kind for an account's main address
+        // ('' shows its host); display only, never trust (protocol 1.12).
+        !addColumn(q, "accounts", "main_name", "TEXT NOT NULL DEFAULT ''") ||
+        !addColumn(q, "accounts", "main_kind",
+                   "TEXT NOT NULL DEFAULT 'internet' CHECK(main_kind IN "
+                   "('internet','home','vpn'))") ||
+        !SwitchState::createSchema(db_) || !q.exec("PRAGMA user_version=13")) {
       db_.rollback();
       throw std::runtime_error("Schema version update failed");
     }
@@ -417,8 +423,8 @@ QJsonObject Control::projection() const {
     snapshot.insert(key, QJsonArray{});
   QJsonArray accounts, endpoints, networks;
   QSqlQuery q(db_);
-  q.prepare("SELECT id,base_url,login_name,display_name,endpoint_id FROM "
-            "accounts WHERE state='ready' ORDER BY id");
+  q.prepare("SELECT id,base_url,login_name,display_name,endpoint_id,main_name,"
+            "main_kind FROM accounts WHERE state='ready' ORDER BY id");
   execute(q);
   while (q.next()) {
     const auto account = q.value(0).toString(),
@@ -462,10 +468,12 @@ QJsonObject Control::projection() const {
                                 {"server", url.host()},
                                 {"auth", auth},
                                 {"signedIn", auth == "signedIn"}});
+    // Protocol 1.12: the name and kind the user gave the main address.
+    const auto mainName = q.value(5).toString();
     endpoints.append(QJsonObject{{"id", endpoint},
                                  {"accountId", account},
-                                 {"name", url.host()},
-                                 {"kind", "internet"},
+                                 {"name", mainName.isEmpty() ? url.host() : mainName},
+                                 {"kind", q.value(6).toString()},
                                  {"url", url.toString()},
                                  {"main", true},
                                  {"approved", true},
@@ -691,9 +699,11 @@ QJsonValue Control::dispatch(const QJsonValue &request, bool &negotiated,
                method == "accounts.remove" || method == "folders.add" ||
                method == "folders.pause" || method == "folders.resume" ||
                method == "folders.syncNow" || method == "folders.remove" ||
+               method == "folders.setAvailability" ||
                method == "decisions.resolve" || method == "endpoints.stage" ||
                method == "endpoints.approveOrigin" ||
                method == "endpoints.verify" || method == "endpoints.remove" ||
+               method == "endpoints.rename" ||
                method == "endpoints.requestSwitch" ||
                method == "endpoints.setPolicy" ||
                method == "diagnostics.export" ||

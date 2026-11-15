@@ -512,7 +512,7 @@ void migrateSeven() {
   q.finish();
   require(f.count() == 0 &&
               QDir(f.root.path())
-                      .entryList({"*.pre-schema-12.*"}, QDir::Files)
+                      .entryList({"*.pre-schema-13.*"}, QDir::Files)
                       .size() == 1,
           "schema-7 migration omitted its validated backup or invented "
           "constraints");

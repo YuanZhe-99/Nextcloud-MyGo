@@ -314,7 +314,8 @@ void testFolderMode() {
 /// exactly when the engine is linked and on-demand folders work here
 /// (OnDemandRoot::available), the same answer in session.hello and the
 /// snapshot, and false while the state is unavailable; folders.add with
-/// onDemand is admitted exactly when it is advertised (protocol 1.11).
+/// onDemand is admitted exactly when it is advertised (protocol 1.11, still
+/// in 1.12).
 void testVirtualFilesCapability() {
 #ifdef SYNCD_WITH_ENGINE
   const bool expected = OnDemandRoot::available();
@@ -332,9 +333,9 @@ void testVirtualFilesCapability() {
           .toObject()
           .value("result")
           .toObject();
-  require(hello.value("protocol").toObject().value("minor") == 11 &&
-              Control::protocolMinor == 11,
-          "this build does not speak protocol 1.11");
+  require(hello.value("protocol").toObject().value("minor") == 12 &&
+              Control::protocolMinor == 12,
+          "this build does not speak protocol 1.12");
   require(hello.value("capabilities").toObject().value("virtualFiles") ==
                   expected &&
               control.projection()
@@ -556,12 +557,14 @@ void testSchema12Conversion() {
             "account fixture not written");
   };
 
-  // A fresh database is at schema 12 with both columns and no backup.
+  // A fresh database is at the current schema with both columns and no
+  // backup.
   QTemporaryDir fresh;
   const auto freshPath = fresh.filePath("control.sqlite");
   { Control control(freshPath, Control::StartupMode::Deferred); }
-  require(schemaOf(freshPath) == 12 && Control::schemaVersion == 12,
-          "a fresh database is not at schema 12");
+  require(schemaOf(freshPath) == Control::schemaVersion &&
+              Control::schemaVersion == 13,
+          "a fresh database is not at schema 13");
   sqlOn(freshPath, [](QSqlQuery &q) {
     require(q.exec("SELECT COUNT(*) FROM pragma_table_info('folders') WHERE "
                    "(name='conversion' OR name='conversion_reason') AND "
@@ -597,13 +600,14 @@ void testSchema12Conversion() {
     require(q.exec("PRAGMA user_version=11"), "schema-11 fixture not marked");
   });
   { Control control(oldPath, Control::StartupMode::Deferred); }
-  require(schemaOf(oldPath) == 12, "a schema-11 database did not reach 12");
+  require(schemaOf(oldPath) == Control::schemaVersion,
+          "a schema-11 database did not reach the current schema");
   require(conversions(oldPath) ==
               std::map<QString, QString>{{"full", "pending"},
                                          {"onDemand", ""}},
           "schema-11 folders were not marked full -> pending only");
   require(QDir(old.path())
-                  .entryList({"*.pre-schema-12.*"}, QDir::Files)
+                  .entryList({"*.pre-schema-13.*"}, QDir::Files)
                   .size() == 1,
           "the schema-11 database was not backed up before migration");
 

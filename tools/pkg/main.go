@@ -7,9 +7,11 @@
 //	go run ./tools/pkg check -arch ARM64 <dir or file>...
 //	go run ./tools/pkg report -profile <profile> -syncd <running SyncD> [-pause-all]
 //	go run ./tools/pkg sign-update -arch ARM64 -version <X.Y.Z> -setup <installer> -key <public key> -out <dir>
+//	go run ./tools/pkg resources -arch ARM64 -version <X.Y.Z> -description <text> -file <name.exe> -icon <.ico> -out <.syso>
 //
-// stage, check and sign-update need no server and no Windows APIs, so CI runs
-// them anywhere; report reads a running SyncD for tools/package-smoke.ps1.
+// stage, check, sign-update and resources need no server and no Windows APIs,
+// so CI runs them anywhere; report reads a running SyncD for
+// tools/package-smoke.ps1.
 package main
 
 import (
@@ -42,7 +44,7 @@ const syncdExe = "nextcloud-mygo-syncd.exe"
 // main dispatches the stage, check and report commands; a failed command exits 1.
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: pkg stage|check -arch ARM64|x64 ... | pkg report -profile <profile> -syncd <exe>")
+		fmt.Fprintln(os.Stderr, "usage: pkg stage|check|sign-update|resources -arch ARM64|x64 ... | pkg report -profile <profile> -syncd <exe>")
 		os.Exit(2)
 	}
 	var err error
@@ -55,6 +57,8 @@ func main() {
 		err = reportCommand(os.Args[2:])
 	case "sign-update":
 		err = signUpdateCommand(os.Args[2:])
+	case "resources":
+		err = resourcesCommand(os.Args[2:])
 	default:
 		err = fmt.Errorf("unknown command %q", os.Args[1])
 	}
@@ -160,6 +164,13 @@ type list []string
 func (l *list) String() string     { return strings.Join(*l, ",") }
 func (l *list) Set(v string) error { *l = append(*l, v); return nil }
 
+// needsIcon reports whether a package file must carry an icon group:
+// SyncD's executable, the uninstaller and the installer.
+func needsIcon(name string) bool {
+	n := strings.ToLower(name)
+	return n == syncdExe || n == "uninstall.exe" || strings.HasPrefix(n, "nextcloud-mygo-") && strings.HasSuffix(n, "-setup.exe")
+}
+
 // archFlag validates the -arch value.
 func archFlag(arch string) error {
 	if arch != "ARM64" && arch != "x64" {
@@ -202,7 +213,7 @@ func checkCommand(args []string) error {
 // check inspects every file under root (or root itself, when it is a file).
 // Returns: the number of PE files and one line per problem: code that is not
 // native for arch, an import that neither the package nor Windows provides,
-// or a SyncD executable without an icon resource.
+// or a SyncD, setup or uninstall executable without an icon resource.
 // Notes: a DLL a PE file imports resolves from the package root or the
 // importing file's own directory, as the loader finds it there first.
 func check(root, arch string) (int, []string, error) {
@@ -252,8 +263,9 @@ func check(root, arch string) (int, []string, error) {
 			fmt.Printf("note: %s is %s (the Visual C++ runtime; ARM64 processes map its ARM64 code)\n", e.rel, got)
 		}
 		// Cloud Files and Explorer show the sync root provider's icon from
-		// SyncD's executable (on-demand.md).
-		if strings.EqualFold(path.Base(e.rel), syncdExe) && !e.img.Icon {
+		// SyncD's executable (on-demand.md); setup and the uninstaller show
+		// theirs in Explorer and in their own window.
+		if needsIcon(path.Base(e.rel)) && !e.img.Icon {
 			problems = append(problems, fmt.Sprintf("%s has no icon resource (RT_GROUP_ICON)", e.rel))
 		}
 		dir := strings.ToLower(filepath.ToSlash(filepath.Dir(e.rel)))

@@ -2,8 +2,10 @@ package testprofile
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -21,7 +23,7 @@ func Remove(t testing.TB, dir, exe string) {
 	t.Helper()
 	var err error
 	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(250 * time.Millisecond) {
-		if err = os.RemoveAll(dir); err == nil {
+		if err = removeTree(dir); err == nil {
 			return
 		}
 		if time.Now().After(deadline) {
@@ -45,6 +47,35 @@ func Remove(t testing.TB, dir, exe string) {
 		}
 	}
 	t.Logf("profile left behind: %v (held by %q)", err, held)
+}
+
+// removeTree deletes a directory tree bottom-up by path, without following
+// links.
+// Notes: not os.RemoveAll, which opens each directory relative to its parent
+// with OBJ_DONT_REPARSE; on a Windows 11 build that open fails with ELOOP
+// ("too many levels of symbolic links") for a folder below AppData\Local, where
+// the profiles are (as setup's removeTree, packaging.md).
+func removeTree(dir string) error {
+	var paths []string
+	err := filepath.WalkDir(dir, func(path string, _ fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		paths = append(paths, path)
+		return nil
+	})
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, path := range slices.Backward(paths) {
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
 }
 
 var (

@@ -3390,6 +3390,36 @@ func (msgs Messages) AddFolderFailed(folder string) string {
 	return Catalog.Format(msgs.locale, "AddFolderFailed", map[string]any{"folder": folder})
 }
 
+// MergeExistingTitle says "Already has files on this PC: {folders}"
+// in the language the app shows.
+func MergeExistingTitle(folders string) string { return In(i18n.Locale()).MergeExistingTitle(folders) }
+
+// MergeExistingTitle says "Already has files on this PC: {folders}"
+// in the language of msgs.
+func (msgs Messages) MergeExistingTitle(folders string) string {
+	return Catalog.Format(msgs.locale, "MergeExistingTitle", map[string]any{"folders": folders})
+}
+
+// MergeExistingBody says "Syncing merges them with the server's: files only on this PC are uploaded, files only on the server are added here, a…"
+// in the language the app shows.
+func MergeExistingBody() string { return In(i18n.Locale()).MergeExistingBody() }
+
+// MergeExistingBody says "Syncing merges them with the server's: files only on this PC are uploaded, files only on the server are added here, a…"
+// in the language of msgs.
+func (msgs Messages) MergeExistingBody() string {
+	return Catalog.Format(msgs.locale, "MergeExistingBody", nil)
+}
+
+// ActionMergeContinue says "Merge and continue"
+// in the language the app shows.
+func ActionMergeContinue() string { return In(i18n.Locale()).ActionMergeContinue() }
+
+// ActionMergeContinue says "Merge and continue"
+// in the language of msgs.
+func (msgs Messages) ActionMergeContinue() string {
+	return Catalog.Format(msgs.locale, "ActionMergeContinue", nil)
+}
+
 // AutoUnavailable says "Automatic choice of the address is not available in this build yet: each account uses the one address you choose."
 // in the language the app shows.
 func AutoUnavailable() string { return In(i18n.Locale()).AutoUnavailable() }
@@ -3634,6 +3664,46 @@ func MenuRemoveAddress() string { return In(i18n.Locale()).MenuRemoveAddress() }
 // in the language of msgs.
 func (msgs Messages) MenuRemoveAddress() string {
 	return Catalog.Format(msgs.locale, "MenuRemoveAddress", nil)
+}
+
+// MenuRenameAddress says "Rename"
+// in the language the app shows.
+func MenuRenameAddress() string { return In(i18n.Locale()).MenuRenameAddress() }
+
+// MenuRenameAddress says "Rename"
+// in the language of msgs.
+func (msgs Messages) MenuRenameAddress() string {
+	return Catalog.Format(msgs.locale, "MenuRenameAddress", nil)
+}
+
+// RenameAddressTitle says "Rename address"
+// in the language the app shows.
+func RenameAddressTitle() string { return In(i18n.Locale()).RenameAddressTitle() }
+
+// RenameAddressTitle says "Rename address"
+// in the language of msgs.
+func (msgs Messages) RenameAddressTitle() string {
+	return Catalog.Format(msgs.locale, "RenameAddressTitle", nil)
+}
+
+// RenameAddressNote says "The name and how it is reached are only for you; they never change which server is trusted."
+// in the language the app shows.
+func RenameAddressNote() string { return In(i18n.Locale()).RenameAddressNote() }
+
+// RenameAddressNote says "The name and how it is reached are only for you; they never change which server is trusted."
+// in the language of msgs.
+func (msgs Messages) RenameAddressNote() string {
+	return Catalog.Format(msgs.locale, "RenameAddressNote", nil)
+}
+
+// ActionSave says "Save"
+// in the language the app shows.
+func ActionSave() string { return In(i18n.Locale()).ActionSave() }
+
+// ActionSave says "Save"
+// in the language of msgs.
+func (msgs Messages) ActionSave() string {
+	return Catalog.Format(msgs.locale, "ActionSave", nil)
 }
 
 // MenuSignInAgain says "Sign in again"
@@ -4278,14 +4348,136 @@ func (msgs Messages) ModeFullHint() string {
 	return Catalog.Format(msgs.locale, "ModeFullHint", nil)
 }
 
-// ModeOnDemandHint says "Recommended. Files show in Explorer as placeholders and download when you open them. Chosen once for each folder."
+// ModeOnDemandHint says "Recommended. Files show in Explorer as placeholders and download when you open them."
 // in the language the app shows.
 func ModeOnDemandHint() string { return In(i18n.Locale()).ModeOnDemandHint() }
 
-// ModeOnDemandHint says "Recommended. Files show in Explorer as placeholders and download when you open them. Chosen once for each folder."
+// ModeOnDemandHint says "Recommended. Files show in Explorer as placeholders and download when you open them."
 // in the language of msgs.
 func (msgs Messages) ModeOnDemandHint() string {
 	return Catalog.Format(msgs.locale, "ModeOnDemandHint", nil)
+}
+
+// AvailAlwaysLocal says "Always keep on this PC"
+// in the language the app shows.
+func AvailAlwaysLocal() string { return In(i18n.Locale()).AvailAlwaysLocal() }
+
+// AvailAlwaysLocal says "Always keep on this PC"
+// in the language of msgs.
+func (msgs Messages) AvailAlwaysLocal() string {
+	return Catalog.Format(msgs.locale, "AvailAlwaysLocal", nil)
+}
+
+// AvailAlwaysLocalHint says "Downloads every file and keeps it here."
+// in the language the app shows.
+func AvailAlwaysLocalHint() string { return In(i18n.Locale()).AvailAlwaysLocalHint() }
+
+// AvailAlwaysLocalHint says "Downloads every file and keeps it here."
+// in the language of msgs.
+func (msgs Messages) AvailAlwaysLocalHint() string {
+	return Catalog.Format(msgs.locale, "AvailAlwaysLocalHint", nil)
+}
+
+// AvailOnDemandHint says "Files download when you open them; what is downloaded stays."
+// in the language the app shows.
+func AvailOnDemandHint() string { return In(i18n.Locale()).AvailOnDemandHint() }
+
+// AvailOnDemandHint says "Files download when you open them; what is downloaded stays."
+// in the language of msgs.
+func (msgs Messages) AvailOnDemandHint() string {
+	return Catalog.Format(msgs.locale, "AvailOnDemandHint", nil)
+}
+
+// AvailOnlineOnly says "Free up space"
+// in the language the app shows.
+func AvailOnlineOnly() string { return In(i18n.Locale()).AvailOnlineOnly() }
+
+// AvailOnlineOnly says "Free up space"
+// in the language of msgs.
+func (msgs Messages) AvailOnlineOnly() string {
+	return Catalog.Format(msgs.locale, "AvailOnlineOnly", nil)
+}
+
+// AvailOnlineOnlyHint says "Keeps the files on the server only; each one downloads again when you open it."
+// in the language the app shows.
+func AvailOnlineOnlyHint() string { return In(i18n.Locale()).AvailOnlineOnlyHint() }
+
+// AvailOnlineOnlyHint says "Keeps the files on the server only; each one downloads again when you open it."
+// in the language of msgs.
+func (msgs Messages) AvailOnlineOnlyHint() string {
+	return Catalog.Format(msgs.locale, "AvailOnlineOnlyHint", nil)
+}
+
+// AvailWordAlwaysLocal says "Always on this PC"
+// in the language the app shows.
+func AvailWordAlwaysLocal() string { return In(i18n.Locale()).AvailWordAlwaysLocal() }
+
+// AvailWordAlwaysLocal says "Always on this PC"
+// in the language of msgs.
+func (msgs Messages) AvailWordAlwaysLocal() string {
+	return Catalog.Format(msgs.locale, "AvailWordAlwaysLocal", nil)
+}
+
+// AvailWordOnlineOnly says "Online only"
+// in the language the app shows.
+func AvailWordOnlineOnly() string { return In(i18n.Locale()).AvailWordOnlineOnly() }
+
+// AvailWordOnlineOnly says "Online only"
+// in the language of msgs.
+func (msgs Messages) AvailWordOnlineOnly() string {
+	return Catalog.Format(msgs.locale, "AvailWordOnlineOnly", nil)
+}
+
+// ConfirmFreeUpTitle says "Free up space used by {folder}?"
+// in the language the app shows.
+func ConfirmFreeUpTitle(folder string) string { return In(i18n.Locale()).ConfirmFreeUpTitle(folder) }
+
+// ConfirmFreeUpTitle says "Free up space used by {folder}?"
+// in the language of msgs.
+func (msgs Messages) ConfirmFreeUpTitle(folder string) string {
+	return Catalog.Format(msgs.locale, "ConfirmFreeUpTitle", map[string]any{"folder": folder})
+}
+
+// ConfirmFreeUpBody says "Downloaded files that are up to date are removed from this PC. They stay on the server and download again when you op…"
+// in the language the app shows.
+func ConfirmFreeUpBody() string { return In(i18n.Locale()).ConfirmFreeUpBody() }
+
+// ConfirmFreeUpBody says "Downloaded files that are up to date are removed from this PC. They stay on the server and download again when you op…"
+// in the language of msgs.
+func (msgs Messages) ConfirmFreeUpBody() string {
+	return Catalog.Format(msgs.locale, "ConfirmFreeUpBody", nil)
+}
+
+// MenuUseOnDemand says "Use on-demand files"
+// in the language the app shows.
+func MenuUseOnDemand() string { return In(i18n.Locale()).MenuUseOnDemand() }
+
+// MenuUseOnDemand says "Use on-demand files"
+// in the language of msgs.
+func (msgs Messages) MenuUseOnDemand() string {
+	return Catalog.Format(msgs.locale, "MenuUseOnDemand", nil)
+}
+
+// ConfirmUseOnDemandTitle says "Use on-demand files for {folder}?"
+// in the language the app shows.
+func ConfirmUseOnDemandTitle(folder string) string {
+	return In(i18n.Locale()).ConfirmUseOnDemandTitle(folder)
+}
+
+// ConfirmUseOnDemandTitle says "Use on-demand files for {folder}?"
+// in the language of msgs.
+func (msgs Messages) ConfirmUseOnDemandTitle(folder string) string {
+	return Catalog.Format(msgs.locale, "ConfirmUseOnDemandTitle", map[string]any{"folder": folder})
+}
+
+// ConfirmUseOnDemandBody says "The files already on this PC stay here and nothing is downloaded again. Files new on the server appear as placeholder…"
+// in the language the app shows.
+func ConfirmUseOnDemandBody() string { return In(i18n.Locale()).ConfirmUseOnDemandBody() }
+
+// ConfirmUseOnDemandBody says "The files already on this PC stay here and nothing is downloaded again. Files new on the server appear as placeholder…"
+// in the language of msgs.
+func (msgs Messages) ConfirmUseOnDemandBody() string {
+	return Catalog.Format(msgs.locale, "ConfirmUseOnDemandBody", nil)
 }
 
 // FieldKind says "Reached through"

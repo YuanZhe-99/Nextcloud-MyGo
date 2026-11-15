@@ -72,6 +72,12 @@ and Latin words only where it helps readability.
 | Apps entry | 应用列表条目 |
 | on-demand files | 按需文件 |
 | full files (folder mode) | 完整文件 |
+| availability (how an on-demand folder keeps its files) | 可用性 |
+| Always keep on this PC | 始终保留在此电脑上 |
+| Free up space | 释放空间 |
+| online only | 仅在线 |
+| Merge and continue | 合并并继续 |
+| rename (an address) | 重命名 |
 | server storage full (quota) | 服务器存储空间已满 |
 | start report | 启动报告 |
 | placeholder | 占位文件 |

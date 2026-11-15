@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -235,10 +236,23 @@ func (a *App) endpointCard(c *ui.Context, e syncd.Endpoint, n syncd.Network) {
 			default:
 				answers()
 			}
-			if e.Main || e.InUse {
-				return // SyncD keeps the main address and the one in use
+			// Renaming needs protocol 1.12; SyncD keeps the main address and
+			// the one in use.
+			canRename := a.snap.Daemon.ProtocolMinor >= 12 && e.Approved
+			canRemove := !e.Main && !e.InUse
+			if !canRename && !canRemove {
+				return
 			}
 			button(c, "ep-more-"+e.ID, "", icMore).Label(L.ActionMore()).Tooltip(L.ActionMore()).PopoverMenuButton(func(m *ui.Menu) {
+				if canRename && m.Item(L.MenuRenameAddress()).Disabled(a.busy["ep-"+e.ID] || !live).Chosen() {
+					a.rename = renameForm{open: true, id: e.ID, name: e.Name, kind: max(slices.Index(addrKinds, e.Kind), 0)}
+				}
+				if !canRemove {
+					return
+				}
+				if canRename {
+					m.Separator()
+				}
 				if m.Item(L.MenuRemoveAddress()).Danger().Disabled(a.busy["ep-"+e.ID] || !live || pending).Chosen() {
 					a.ask(L.ConfirmRemoveAddressTitle(e.Name), L.ConfirmRemoveAddressBody(), L.ActionRemove(), func() {
 						a.do("ep-"+e.ID, func() error { return a.client.RemoveEndpoint(e.ID) }, nil)
@@ -508,6 +522,65 @@ func (a *App) addrDialog(c *ui.Context) {
 				}
 			})
 		})
+	})
+}
+
+// renameForm is the Rename dialog while open: the address's new name and
+// kind (an index of addrKinds); neither affects trust.
+type renameForm struct {
+	open     bool
+	id, name string
+	kind     int
+}
+
+// renameDialog renames an address and says how it is reached
+// (endpoints.rename, protocol 1.12), the main address too.
+func (a *App) renameDialog(c *ui.Context) {
+	if !a.rename.open {
+		return
+	}
+	f := &a.rename
+	ui.Modal(c.Key("rename"), &f.open, func() {
+		ui.Column(c).Width(440).Gap(16).Children(func() {
+			ui.Text(c, L.RenameAddressTitle()).FontSize(20).FontWeight(600).Level(1)
+			ui.Column(c).Gap(6).Children(func() {
+				ui.Text(c, L.FieldName()).FontSize(13).FontWeight(600)
+				in := ui.TextInput(c.Key("rename-name"), &f.name).Placeholder(L.FieldNamePlaceholder()).Label(L.FieldName()).AutoFocus()
+				if in.Submitted() {
+					a.saveRename()
+				}
+			})
+			ui.Column(c).Gap(6).Children(func() {
+				ui.Text(c, L.FieldKind()).FontSize(13).FontWeight(600)
+				ui.Segmented(c.Key("rename-kind"), &f.kind, kindWord(addrKinds[0]), kindWord(addrKinds[1]), kindWord(addrKinds[2])).Label(L.FieldKind()).AlignSelf(ui.Start)
+			})
+			muted(c, L.RenameAddressNote(), fontSmall).Wrap()
+			ui.Row(c).Gap(10).Justify(ui.End).FillWidth().Children(func() {
+				if button(c, "rename-cancel", L.ActionCancel(), nil).Clicked() {
+					a.rename = renameForm{}
+				}
+				if primary(c, "rename-save", L.ActionSave(), nil).Disabled(strings.TrimSpace(f.name) == "" || a.busy["ep-"+f.id]).Clicked() {
+					a.saveRename()
+				}
+			})
+		})
+	})
+}
+
+// saveRename sends the Rename dialog's name and kind and closes it once
+// SyncD took them.
+func (a *App) saveRename() {
+	f := a.rename
+	name := strings.TrimSpace(f.name)
+	if name == "" {
+		return
+	}
+	a.do("ep-"+f.id, func() error { return a.client.RenameEndpoint(f.id, name, addrKinds[f.kind]) }, func(err error) {
+		if err != nil {
+			a.setToast(errText(err))
+			return
+		}
+		a.rename = renameForm{}
 	})
 }
 

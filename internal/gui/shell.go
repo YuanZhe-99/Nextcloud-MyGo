@@ -32,6 +32,7 @@ func (a *App) view(c *ui.Context) {
 	})
 	a.settingsSheet(c)
 	a.addrDialog(c)
+	a.renameDialog(c)
 	a.confirmDialog(c)
 }
 

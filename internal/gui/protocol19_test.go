@@ -265,7 +265,7 @@ func TestFolderModeOffered(t *testing.T) {
 					}
 					a.page = pageFolders
 					tt.Frame()
-					if c.virtual && !tt.HasText(modeWord(c.want)) {
+					if c.virtual && !tt.HasText(modeWord(f)) {
 						t.Fatal("the folder's mode is not shown")
 					}
 					return

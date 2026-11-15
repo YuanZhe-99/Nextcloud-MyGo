@@ -384,6 +384,33 @@ bool EngineAdapter::quiescent() const {
   return !state_->active && !(state_->onDemand && state_->onDemand->busy());
 }
 
+QString EngineAdapter::availability() const {
+  if (!state_->onDemand)
+    return {};
+  const auto pin = state_->onDemand->vfs()->pinState(QString());
+  if (!pin)
+    return {};
+  switch (*pin) {
+  case OCC::PinState::AlwaysLocal:
+    return QStringLiteral("alwaysLocal");
+  case OCC::PinState::OnlineOnly:
+    return QStringLiteral("onlineOnly");
+  default:
+    return QStringLiteral("onDemand");
+  }
+}
+
+bool EngineAdapter::setAvailability(const QString &value) {
+  if (!state_->onDemand)
+    return false;
+  // Upstream's own folder availability (Folder::setRootPinState): the root's
+  // pin, which files inherit; Unspecified keeps what is downloaded.
+  const auto pin = value == "alwaysLocal"  ? OCC::PinState::AlwaysLocal
+                   : value == "onlineOnly" ? OCC::PinState::OnlineOnly
+                                           : OCC::PinState::Unspecified;
+  return state_->onDemand->vfs()->setPinState(QString(), pin);
+}
+
 void EngineAdapter::createAccount() {
   state_->capabilitiesInstalled = false;
   const auto &binding = state_->binding;

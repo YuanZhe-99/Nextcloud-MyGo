@@ -18,9 +18,13 @@ import (
 )
 
 // testApp is the interface over a Mock, with work run inline so a test
-// sees each command's result at once.
+// sees each command's result at once. Its home folder is a temporary one:
+// setup creates the base folder for the folders it adds.
 func testApp(t *testing.T, sample bool) (*App, *syncd.Mock) {
 	t.Helper()
+	home := t.TempDir()
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("HOME", home)
 	m := syncd.NewMock(sample, nil)
 	a := New(m, "")
 	a.later = func(fn func()) { fn() }

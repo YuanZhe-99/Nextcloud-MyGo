@@ -31,22 +31,22 @@ program needs nothing beyond the Go toolchain, runs natively on ARM64 and x64, t
 ./tools/build-syncd.ps1 -Architecture ARM64 -QtPrefix <target Qt> -QtHostPrefix <host Qt>
 ./tools/package.ps1 -Arch ARM64        # or x64; SyncD from build/syncd-<Arch>
 go run ./tools/pkg check -arch ARM64 build/package/ARM64/Nextcloud-MyGo-0.1.0-ARM64
-./tools/package-smoke.ps1 -Setup build/package/Nextcloud-MyGo-0.1.0-arm64-test-setup.exe
+./tools/package-smoke.ps1 -Setup build/package/Nextcloud-MyGo-0.1.0-arm64-setup.exe
 ```
 
 For an upgrade test between two versions:
 
 ```powershell
 ./tools/package.ps1 -Arch ARM64 -TestVersion 0.1.1
-./tools/package-smoke.ps1 -Setup build/package/Nextcloud-MyGo-0.1.0-arm64-test-setup.exe `
-    -UpgradeTo build/package/Nextcloud-MyGo-0.1.1-testversion-arm64-test-setup.exe
+./tools/package-smoke.ps1 -Setup build/package/Nextcloud-MyGo-0.1.0-arm64-setup.exe `
+    -UpgradeTo build/package/Nextcloud-MyGo-0.1.1-testversion-arm64-setup.exe
 ```
 
 `tools/package.ps1` reads the SyncD build's `CMakeCache.txt` for its upstream build and that build's
 prefixes (Qt, native dependencies, vcpkg), so DLLs come only from the trees SyncD was linked against,
 plus the newest Visual C++ runtime of the installed Visual Studio. Every step has a deadline. It writes
 `build/package/<Arch>/Nextcloud-MyGo-<version>-<Arch>/` and
-`build/package/Nextcloud-MyGo-<version>-<arch>-test-setup.exe`, and installs nothing. After staging it
+`build/package/Nextcloud-MyGo-<version>-<arch>-setup.exe` (`-test-setup.exe` before 0.1.3), and installs nothing. After staging it
 runs the staged SyncD's `--version` and fails unless its version, Control schema and protocol match the
 manifest, so a package never pairs a UI with a SyncD built from other sources.
 
@@ -59,7 +59,7 @@ with the Qt prefix, host Qt and upstream build of `-SyncDBuild`'s CMake cache, `
 the CFAPI plugin there; `-SyncDBuild` is never written. The UI is linked with
 `MYGO_LDFLAGS=-X .../internal/version.Version=X.Y.Z` (`Version` is a variable for this), and the stager
 gets `-test-version`, which sets the manifest's version and `testVersion: true`. The output is
-`build/package/<Arch>-testversion/` and `Nextcloud-MyGo-X.Y.Z-testversion-<arch>-test-setup.exe`; its
+`build/package/<Arch>-testversion/` and `Nextcloud-MyGo-X.Y.Z-testversion-<arch>-setup.exe`; its
 installer says the version was stamped for a test. The UI executable's file properties keep
 `mygo.json`'s version. Such a package is never a release.
 
@@ -130,12 +130,41 @@ reads every file that starts with `MZ`, whatever its name, and fails on:
 | import that neither the package nor Windows provides | fail |
 | Visual C++ runtime import satisfied only by an installed redistributable | fail |
 | `nextcloud-mygo-syncd.exe` without an icon resource (`RT_GROUP_ICON`), which Explorer shows for its sync roots | fail |
+| `uninstall.exe` or `Nextcloud-MyGo-*-setup.exe` without an icon resource (from 0.1.3) | fail |
 
 Microsoft ships the ARM64 Visual C++ runtime only as ARM64X. An ARM64 process maps its ARM64 code and
 never its ARM64EC code, so it runs natively; the checker prints each such file as a note. Every
 other hybrid image fails. The user accepted this exception on 2026-11-12. Its tests build synthetic PE files, so CI runs them anywhere.
 
 ## Install and upgrade
+
+From 0.1.3 setup and `uninstall.exe` are windowed programs (Windows GUI subsystem, `ui_windows.go`): the
+Nextcloud icon, "Nextcloud MyGo" and the version, one message, a progress bar with the current step,
+and Install, Remove, Finish or Close with Cancel. The install screen says whether it installs, updates
+the installed version (accounts, settings and synced files stay) or reinstalls, with one quiet line that
+the copy is not signed by a publisher (and, for a `-TestVersion` package, that its version was stamped
+for a test); the console's "TEST BUILD" line is gone, while the manifest, the Apps entry and the
+shortcut still say test build. After Install it shows each step, then Open Nextcloud MyGo (ticked) with
+Finish; a refusal shows "Setup did not finish." with the same message as below and Close. Nothing can be
+closed while the work runs. The uninstall screen asks "Remove Nextcloud MyGo?", says that synced files
+stay, and offers Also remove my accounts and settings (`-remove-user-data` ticks it). Both executables
+carry the icon, version details (FileDescription "Nextcloud MyGo Setup" or "Nextcloud MyGo Uninstall",
+ProductName, FileVersion and ProductVersion, LegalCopyright) and a manifest (Common Controls 6, per-monitor
+DPI awareness, `asInvoker`, so Windows never elevates it). `pkg resources` writes them as a COFF object
+(`rsrc_windows_<goarch>.syso`, standard library only) that `tools/package.ps1` places before each build
+and removes afterwards; `go build` without it still works, without icon or manifest.
+
+| Flag | Behavior |
+|---|---|
+| none | the window, waiting for Install |
+| `-uninstall` [`-remove-user-data`] | the uninstall window |
+| `-update` | the progress window at once, no click; on success "updated", then it closes after 2 s and the new version starts; on a failure after it closed the interface it starts the installed interface again |
+| `-quiet` | no window; the console output of earlier versions (`tools/package-smoke.ps1` uses it) |
+| `-no-launch` | do not start the app afterwards |
+
+The step lines always go to standard output too, so the in-app update keeps them in `update\setup.log`.
+`-update` or `-no-launch` with `-uninstall`, `-remove-user-data` without it, and unknown arguments are
+refused with exit code 2 (as is Cancel); a failure exits with 1.
 
 The installer refuses before writing anything when:
 
@@ -210,9 +239,13 @@ newer version downloads the archive into `update\` in the install folder (the un
 next start clears it), checks its size and signature against its built-in key, and refuses it unless the
 signed `update.json` names Nextcloud-MyGo, the manifest's version, this architecture and a version newer
 than the running one: the manifest is not signed, so a changed one can neither offer an older signed
-package nor another architecture's. It then asks SyncD for the safe point and starts `setup.exe` without
-a console window (`release.StartSetup`, output in `update\setup.log`); setup closes the interface and
-runs steps 1 to 6, so every refusal and failure above keeps the installed version. Only HTTPS is fetched,
+package nor another architecture's. It then asks SyncD for the safe point, stops it there
+(`daemon.shutdown`, waiting up to 30 seconds for the connection to end) and starts `setup.exe -update`
+(`release.StartSetup`, output in `update\setup.log`); setup closes the interface and runs steps 1 to 6,
+finding no SyncD to prepare, so every refusal and failure above keeps the installed version. If setup
+returns while the interface still runs (it refused early), the interface has SyncD started again. Until
+0.1.2 the interface left SyncD held at the safe point and setup asked again; SyncD refuses a second request
+while one holds, so setup waited out its 2 minutes and stopped, and no in-app update ever installed. Only HTTPS is fetched,
 or HTTP to a loopback address for tests; a redirect may not leave HTTPS.
 
 ## Uninstall
@@ -237,7 +270,9 @@ while an on-demand folder may still be registered (its online-only files could n
    official client's `Nextcloud`); an entry that a live root of another profile names as its `NamespaceCLSID`
    (the shared entry from 0.1.2), or whose target is such a root (0.1.1), is kept.
 5. Remove this install's startup entries, the shortcut, the Apps entry and the install folder.
-   Accounts, settings and synced files are otherwise kept.
+   Accounts, settings and synced files are otherwise kept. The running `uninstall.exe` is removed by a
+   helper that retries once a second for up to 10 minutes, since the window stays on its result until
+   closed (`removeLater`).
 
 If step 2 or 3 fails, nothing is removed, the interface is started again so the folder can be removed
 there, and setup exits 1 naming the folder's local path. With no installed SyncD, or one that does not

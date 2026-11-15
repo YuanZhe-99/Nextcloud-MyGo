@@ -143,6 +143,26 @@ next start retries.
 
 A converted folder is never converted again, and a folder whose conversion is `''` is never touched.
 
+## Availability
+
+From 0.1.3 (protocol 1.12) the folder menu sets how an on-demand folder keeps its files
+(`folders.setAvailability`, [IPC](ipc.md#implementation-scope)). SyncD pins the folder's root with
+upstream's `Vfs::setPinState(QString(), …)`, as the official client's `Folder::setRootPinState` does:
+`AlwaysLocal` (Always keep on this PC), `OnlineOnly` (Free up space) or `Unspecified` (On demand: what
+is downloaded stays, new files arrive online-only). Files and folders without a pin of their own
+inherit it. The pin is applied by the next cycle, whose local discovery always reads the file system
+(`FilesystemOnly`); the call wakes the folder for it. Upstream's discovery then downloads placeholders
+under `AlwaysLocal` and dehydrates in-sync files under `OnlineOnly`. `EngineAdapter::availability` reads the root's pin back for every projection, so
+"Always keep on this device" or "Free up space" chosen on the root in Explorer shows in the interface
+too; a root that is closed for a switch reads as unknown (`""`).
+
+For a full-file folder the menu offers Use on-demand files. SyncD marks the folder `pending` and attaches
+it again at once, which runs the [automatic conversion](#automatic-conversion-of-full-file-folders) in
+the same way as at a start: the files on the PC become in-sync placeholders and nothing is downloaded
+again. It needs an idle folder; one that cannot convert keeps full files with the reason, and is tried
+again at each start. There is no way back from on-demand to full files: Always keep on this PC keeps
+every file on the PC instead, without unregistering the root.
+
 ## Local deletions and sparse files
 
 ### Local deletions
@@ -218,6 +238,12 @@ registration removes the entry only when no other sync root of this user still n
 folder's 0.1.1 entry in any case; a removal that finds no registration checks the entries of both
 location rules the same way. A registration that fails the first time leaves the entry only if another
 root names it. A failed write of the entry only costs the sidebar item: registration goes on.
+
+Explorer offers "Always keep on this device" and "Free up space" only for items inside a sync root.
+The entry opens the base folder, which holds the roots but is not one, so its right-click menu does not
+have them, while every synced folder in it and everything below does (checked on the installed 0.1.2
+with three roots, 2026-11-15). The folder menu's availability choices cover a whole folder from the
+interface.
 
 New Explorer windows pick up an added or removed entry without a restart and without `SHChangeNotify`
 (observed with a hand-written entry of the same layout on build 26300, ARM64); already-open windows were

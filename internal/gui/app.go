@@ -63,6 +63,7 @@ type App struct {
 
 	settings settingsState
 	addr     addrForm
+	rename   renameForm
 	confirm  confirmState
 	setup    setupState
 	upd      updateState

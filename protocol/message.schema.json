@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/YuanZhe-99/Nextcloud-MyGo/protocol/message.schema.json",
-  "title": "SyncD protocol 1.11 message or bounded batch",
+  "title": "SyncD protocol 1.12 message or bounded batch",
   "oneOf": [
     {"$ref": "#/$defs/message"},
     {"type": "array", "minItems": 1, "maxItems": 32, "items": {"$ref": "#/$defs/message"}}
@@ -27,6 +27,14 @@
           "then": {"required": ["params"], "properties": {"params": {"$ref": "#/$defs/settingsUpdate"}}}
         },
         {
+          "if": {"required": ["method"], "properties": {"method": {"const": "folders.setAvailability"}}},
+          "then": {"required": ["params"], "properties": {"params": {"$ref": "#/$defs/setAvailability"}}}
+        },
+        {
+          "if": {"required": ["method"], "properties": {"method": {"const": "endpoints.rename"}}},
+          "then": {"required": ["params"], "properties": {"params": {"$ref": "#/$defs/renameEndpoint"}}}
+        },
+        {
           "if": {"required": ["method"], "properties": {"method": {"const": "event"}}},
           "then": {"required": ["params"], "not": {"required": ["id"]}, "properties": {"params": {"$ref": "#/$defs/projection"}}}
         }
@@ -38,6 +46,29 @@
       ]
     },
     "reasonCode": {"type": "string", "maxLength": 80, "pattern": "^[A-Z_]*$"},
+    "setAvailability": {
+      "description": "1.12: how an on-demand folder keeps its files, the root's Cloud Files pin, applied by the next cycle: alwaysLocal downloads every file and keeps it, onlineOnly frees every downloaded file, onDemand keeps what is downloaded and lets new files arrive online-only. For a full-file folder only onDemand is accepted: it converts the idle folder in place as the 1.11 conversion does (QUIESCE_STALLED while it syncs; conversionReason says why one cannot happen).",
+      "type": "object", "required": ["operationKey", "expectedRevision", "folderId", "availability"],
+      "properties": {
+        "operationKey": {"type": "string", "format": "uuid"},
+        "expectedRevision": {"type": "string", "pattern": "^[0-9]+$"},
+        "folderId": {"type": "string", "format": "uuid"},
+        "availability": {"enum": ["alwaysLocal", "onDemand", "onlineOnly"]}
+      },
+      "additionalProperties": false
+    },
+    "renameEndpoint": {
+      "description": "1.12: the name and kind shown for the main address or an approved one; never trust, scoring or the binding. Anything else answers NOT_FOUND.",
+      "type": "object", "required": ["operationKey", "expectedRevision", "endpointId", "name", "kind"],
+      "properties": {
+        "operationKey": {"type": "string", "format": "uuid"},
+        "expectedRevision": {"type": "string", "pattern": "^[0-9]+$"},
+        "endpointId": {"type": "string", "minLength": 1},
+        "name": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Trimmed; empty after trimming is INVALID_PARAMS."},
+        "kind": {"enum": ["internet", "home", "vpn"]}
+      },
+      "additionalProperties": false
+    },
     "startupReport": {
       "description": "1.9: what this start migrated from and its self-check, for the installer after an update.",
       "type": "object", "required": ["previousVersion", "previousSchema", "schema", "selfCheck", "reasonCodes"],
@@ -61,7 +92,8 @@
         "phase": {"description": "1.9: what a syncing folder does now; empty while it does not sync.", "enum": ["", "checking", "uploading", "downloading"]},
         "filesDone": {"type": "integer", "minimum": 0, "description": "1.9: files the running cycle completed so far; no total exists while discovery runs."},
         "conversion": {"description": "1.11: where a folder added by 0.1.0 with full files stands in the automatic switch to on-demand files at SyncD start: empty when it was never eligible (every folder added since), pending while it still downloads every file, converted once it was switched. Files already on this computer stay; nothing is downloaded again.", "enum": ["", "pending", "converted"]},
-        "conversionReason": {"description": "1.11: why a pending conversion has not happened yet (UNSUPPORTED_FOLDER_MODE: Windows Cloud Files is unavailable for it; FOLDER_OWNED: it lies inside another sync root), retried at each start; empty otherwise.", "$ref": "#/$defs/reasonCode"}
+        "conversionReason": {"description": "1.11: why a pending conversion has not happened yet (UNSUPPORTED_FOLDER_MODE: Windows Cloud Files is unavailable for it; FOLDER_OWNED: it lies inside another sync root), retried at each start; empty otherwise.", "$ref": "#/$defs/reasonCode"},
+        "availability": {"description": "1.12: an on-demand folder's root pin as Cloud Files reports it, so a change made in Explorer shows too: alwaysLocal, onlineOnly, or onDemand (unspecified). Empty for a full-file folder and while it is unknown (no runtime, a root closed for a switch).", "enum": ["", "alwaysLocal", "onDemand", "onlineOnly"]}
       }
     },
     "endpoint": {

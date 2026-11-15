@@ -16,7 +16,7 @@ import (
 
 // protocolMinor is the protocol 1.x minor version this client speaks
 // (protocol/contract.json).
-const protocolMinor = 11
+const protocolMinor = 12
 
 // Remote projects a real SyncD connection into the existing UI Client contract.
 // Side effects: reconnects and bootstraps; Close never shuts down the daemon.
@@ -43,6 +43,10 @@ type Remote struct {
 	minor int
 	// cause is why the last connection ended or could not start (Disconnect).
 	cause string
+	// canLaunch: this Remote may start SyncD (NewRemote); launch: the next
+	// attempt that finds no pipe starts it (once, until StartAgain).
+	canLaunch bool
+	launch    atomic.Bool
 }
 
 // rpcReply holds a response or a transport failure, neither of which implies rollback.
@@ -116,17 +120,26 @@ func ConnectRemote(ctx context.Context, profile, executable string) *Remote {
 // starts SyncD.
 func newRemote(ctx context.Context, profile, executable string, launch bool) *Remote {
 	ctx, cancel := context.WithCancel(ctx)
-	r := &Remote{ctx: ctx, cancel: cancel, pending: map[string]chan rpcReply{}, listeners: map[uint64]func(){}}
-	var once sync.Once
+	r := &Remote{ctx: ctx, cancel: cancel, pending: map[string]chan rpcReply{}, listeners: map[uint64]func(){}, canLaunch: launch}
+	r.launch.Store(launch)
 	r.dial = func(ctx context.Context) (io.ReadWriteCloser, error) {
 		conn, err := dialPipe(ctx, profile, executable)
-		if launch && errors.Is(err, os.ErrNotExist) {
-			once.Do(func() { _ = startDaemon(profile, executable) })
+		if errors.Is(err, os.ErrNotExist) && r.launch.Swap(false) {
+			_ = startDaemon(profile, executable)
 		}
 		return conn, err
 	}
 	go r.run()
 	return r
+}
+
+// StartAgain has the next connection attempt start SyncD once more if its
+// pipe is gone, as at start; after a stop for an update that did not happen.
+// A Remote from ConnectRemote never starts SyncD.
+func (r *Remote) StartAgain() {
+	if r.canLaunch {
+		r.launch.Store(true)
+	}
 }
 
 // Close ends UI transport activity while leaving background sync running.
@@ -576,6 +589,11 @@ func (r *Remote) RemoveFolder(id string) error {
 	return r.mutate("folders.remove", map[string]any{"folderId": id}, nil)
 }
 
+// SetAvailability sends folders.setAvailability; the next cycle applies it.
+func (r *Remote) SetAvailability(id string, a Availability) error {
+	return r.mutate("folders.setAvailability", map[string]any{"folderId": id, "availability": a}, nil)
+}
+
 // ResolveDecision binds the answer to the reviewed proposal.
 func (r *Remote) ResolveDecision(id, digest string, a Action) error {
 	return r.mutate("decisions.resolve", map[string]any{"decisionId": id, "proposalDigest": digest, "action": a}, nil)
@@ -659,17 +677,57 @@ func (r *Remote) RemoteFolders(id string) ([]RemoteFolder, error) {
 // Notes: without a mode SyncD adds a full-file folder; FolderOnDemand needs
 // protocol 1.8 and answers UNSUPPORTED_CAPABILITY where Cloud Files is missing.
 func (r *Remote) AddFolder(account, remote, local string, mode ...FolderMode) error {
-	var inspection struct {
-		Token string `json:"inspectToken"`
+	for attempt := 1; ; attempt++ {
+		var inspection struct {
+			Token string `json:"inspectToken"`
+		}
+		if err := r.call(r.ctx, "folders.inspect", map[string]any{"accountId": account, "remotePath": remote, "localPath": local}, &inspection); err != nil {
+			return err
+		}
+		params := map[string]any{"inspectToken": inspection.Token}
+		if len(mode) > 0 && mode[0] != "" {
+			params["mode"] = mode[0]
+		}
+		err := r.mutate("folders.add", params, nil)
+		// The revision SyncD expects reaches this client in a state event
+		// after the previous change's reply, so a folder added right after
+		// another can be refused for a revision SyncD has already moved on
+		// from. Each attempt inspects the folder again, so trying once the
+		// new state has arrived decides nothing on stale information.
+		if ReasonOf(err) != "REVISION_CONFLICT" || attempt == 3 {
+			return err
+		}
+		sent, _ := params["expectedRevision"].(string)
+		r.awaitRevision(sent, 5*time.Second)
 	}
-	if err := r.call(r.ctx, "folders.inspect", map[string]any{"accountId": account, "remotePath": remote, "localPath": local}, &inspection); err != nil {
-		return err
+}
+
+// awaitRevision waits until this client holds a revision other than sent, the
+// connection drops, or timeout passes.
+func (r *Remote) awaitRevision(sent string, timeout time.Duration) {
+	changed := make(chan struct{}, 1)
+	stop := r.Subscribe(func() {
+		select {
+		case changed <- struct{}{}:
+		default:
+		}
+	})
+	defer stop()
+	ctx, cancel := context.WithTimeout(r.ctx, timeout)
+	defer cancel()
+	for {
+		r.mu.Lock()
+		done := !r.ready || r.revision != sent
+		r.mu.Unlock()
+		if done {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-changed:
+		}
 	}
-	params := map[string]any{"inspectToken": inspection.Token}
-	if len(mode) > 0 && mode[0] != "" {
-		params["mode"] = mode[0]
-	}
-	return r.mutate("folders.add", params, nil)
 }
 
 // RequestPolicy returns durable policy acceptance separately from potentially user-paused reconciliation.
@@ -722,6 +780,11 @@ func (r *Remote) VerifyEndpoint(id string) error {
 // RemoveEndpoint removes only the nominated endpoint configuration.
 func (r *Remote) RemoveEndpoint(id string) error {
 	return r.mutate("endpoints.remove", map[string]any{"endpointId": id}, nil)
+}
+
+// RenameEndpoint sends endpoints.rename; display only, never trust.
+func (r *Remote) RenameEndpoint(id, name string, kind EndpointKind) error {
+	return r.mutate("endpoints.rename", map[string]any{"endpointId": id, "name": name, "kind": kind}, nil)
 }
 
 // RuntimeDiagnostics contains nonsecret aggregate counters intended only for diagnostics and acceptance.

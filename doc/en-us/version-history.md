@@ -1,5 +1,41 @@
 # Version history
 
+## 0.1.3
+
+Fixes and small features the user reported on 2026-11-15 after using 0.1.2.
+
+- **Setup creates the base folder.** Adding folders failed when the base folder (`Nextcloud` in your
+  user folder by default) did not exist yet: SyncD creates only the synced folder itself and needs its
+  parent. The interface now creates the parent first.
+- **Warning before merging.** When a chosen local folder already holds files, setup now stops once,
+  names it and says how syncing merges it with the server's (nothing is deleted; a different file of the
+  same name is kept as a conflict copy), with Merge and continue.
+- **Several folders at once.** Only the first of several chosen folders was added: SyncD announces the
+  new configuration revision in an event after it answers, so the next `folders.add` went out with the
+  old revision and was refused (`REVISION_CONFLICT`), and setup stopped there. `Remote.AddFolder` now
+  waits for the new revision and tries again with a fresh inspection, and setup adds every folder and
+  names any that failed.
+- **In-app updates.** No in-app update could install: the interface held SyncD at the update safe point
+  and the installer asked again, which SyncD refuses while one holds, so the installer gave up after two
+  minutes. The interface now stops SyncD at the safe point before it starts the installer, and starts it
+  again if the installer refuses.
+- **Installer.** Setup and the uninstaller are windows instead of consoles: icon, version, Install or
+  Remove, progress and the result, with version details and a manifest on both executables
+  ([packaging](packaging.md#install-and-upgrade)). The installer is now
+  `Nextcloud-MyGo-<version>-<arch>-setup.exe`; `-quiet` keeps the console behavior for scripts.
+- **How a folder keeps its files.** An on-demand folder's menu offers Always keep on this PC, On demand
+  and Free up space, and a full-file folder's offers Use on-demand files (converted in place, nothing
+  downloaded again) ([on-demand](on-demand.md#availability)). Explorer offers "Always keep on this device"
+  and "Free up space" only inside a synced folder, not on the sidebar entry's base folder.
+- **Renaming an address.** Every approved address, the main one too, can be renamed and given its kind.
+- **Tests.** Real-daemon tests remove their profile bottom-up, as setup does: `os.RemoveAll` fails with
+  "too many levels of symbolic links" below `AppData\Local` on the ARM64 test machine (build 26300),
+  where every profile had been left behind; CI had not shown it.
+
+Protocol 1.12 (`folders.setAvailability`, the folder's `availability`, `endpoints.rename`) and Control
+schema 13 (`accounts.main_name`, `accounts.main_kind`). Versions, checked 2026-11-15, unchanged: Go 1.27.4,
+MyGo v0.9.1, Nextcloud Desktop v35.0.3 (engine; the 23 upstream patches, fingerprint `CF0C68C10DD7`),
+Nextcloud servers 35.0.3 and 34.0.6 for tests.
 ## 0.1.2
 
 One Explorer entry instead of one per folder, by the user's request of 2026-11-15.

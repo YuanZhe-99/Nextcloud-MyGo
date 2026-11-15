@@ -105,7 +105,7 @@
 
 | 平台 | 框架 | 必须提供 |
 |---|---|---|
-| Windows | Cloud Files API（CFAPI，即 OneDrive 式“按需文件”） | 已实现，见 `doc/en-us/on-demand.md`；自 0.1.1 起启用，用户 2026-11-14 决定：此前以完整文件添加的目录在升级后自动、一次性地转换为按需文件 |
+| Windows | Cloud Files API（CFAPI，即 OneDrive 式“按需文件”） | 已实现，见 `doc/en-us/on-demand.md`；自 0.1.1 起启用，用户 2026-11-14 决定：此前以完整文件添加的目录在升级后自动、一次性地转换为按需文件；用户 2026-11-15 决定（0.1.3）：目录菜单提供“始终保留在此电脑上 / 按需 / 释放空间”（根目录固定状态），完整文件目录可按请求原地转换为按需文件，资源管理器侧栏仍为一个条目 |
 | macOS | File Provider（`NSFileProviderReplicatedExtension`） | 由系统管理的域、Finder 集成、按需下载与驱逐、状态与进度、与 SyncD 之间的 XPC 通道 |
 
 约束：

@@ -196,7 +196,7 @@ jobs:
           # The release's license bundle is the one package.ps1 staged into this installer.
           New-Item -ItemType Directory -Force build/release | Out-Null
           Copy-Item -Recurse build/package/${{ matrix.arch }}/notices build/release/licenses-${{ matrix.arch }}
-          Copy-Item "build/package/Nextcloud-MyGo-$version-$('${{ matrix.arch }}'.ToLower())-test-setup.exe" build/release/
+          Copy-Item "build/package/Nextcloud-MyGo-$version-$('${{ matrix.arch }}'.ToLower())-setup.exe" build/release/
           if (Test-Path build/package/update-${{ matrix.arch }}) { Copy-Item -Recurse build/package/update-${{ matrix.arch }} build/release/update }
 
       - name: Upload package

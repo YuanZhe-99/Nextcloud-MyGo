@@ -5,10 +5,12 @@
 // package (tools/package.ps1) and installs it; built without, it is the
 // uninstall.exe that package ships.
 //
-//	Nextcloud-MyGo-<version>-<arch>-test-setup.exe [-no-launch]
-//	uninstall.exe -uninstall [-remove-user-data]
+//	Nextcloud-MyGo-<version>-<arch>-setup.exe [-no-launch] [-update] [-quiet]
+//	uninstall.exe -uninstall [-remove-user-data] [-quiet]
 //
-// See doc/en-us/packaging.md for the layout and the upgrade sequence.
+// It shows a small window (ui_windows.go) unless -quiet; -update is how the
+// in-app update runs it. See doc/en-us/packaging.md for the layout and the
+// upgrade sequence.
 package main
 
 import (
@@ -18,7 +20,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"flag"
 	"fmt"
 	"io/fs"
 	"os"
@@ -41,36 +42,103 @@ const (
 	syncdExe = "nextcloud-mygo-syncd.exe"
 )
 
-// main parses the flags and runs the install or the uninstall.
+// uiClosed records that stopApp closed a running interface and did not
+// start it again; a failed -update then reopens the installed version.
+var uiClosed bool
+
+// main parses the flags and runs the install or the uninstall, in the window
+// or, with -quiet, on the console.
+// Notes: exit codes are 0 done, 1 failed, 2 a bad command line or, in the
+// window, cancelled before anything changed.
 func main() {
-	uninstall := flag.Bool("uninstall", false, "uninstall Nextcloud MyGo for this user")
-	removeData := flag.Bool("remove-user-data", false, "with -uninstall: also remove the accounts, their saved credentials and the settings; synced files always stay")
-	noLaunch := flag.Bool("no-launch", false, "do not start Nextcloud MyGo after installing")
-	flag.Parse()
+	var usage strings.Builder
+	o, err := parseArgs(os.Args[1:], &usage)
+	if err != nil {
+		o.quiet = slices.ContainsFunc(os.Args[1:], func(a string) bool { return strings.TrimLeft(a, "-") == "quiet" })
+		text := strings.TrimSpace(usage.String())
+		if text == "" {
+			text = err.Error()
+		}
+		fail(o, text, 2)
+	}
+	if o.quiet {
+		attachConsole()
+	}
 	programs, err := programsDir()
 	if err == nil {
 		// Work from the programs folder, outside the install root, so that
 		// the working directory never holds a folder setup removes.
 		err = os.Chdir(programs)
 	}
-	if err == nil {
-		root := filepath.Join(programs, "Nextcloud-MyGo")
-		// NEXTCLOUD_MYGO_PROFILE is the interface's development profile; the
-		// installed app runs the default one.
-		profile := os.Getenv("NEXTCLOUD_MYGO_PROFILE")
-		switch {
-		case *uninstall:
-			err = uninstallApp(root, profile, *removeData)
-		case payload != nil:
-			err = install(root, profile, !*noLaunch)
-		default:
-			err = errors.New("this build carries no package; run it with -uninstall")
-		}
+	t := o.task(payload != nil)
+	if err == nil && t == taskNone {
+		err = errors.New("this build carries no package; run it with -uninstall")
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Nextcloud MyGo setup:", err)
-		os.Exit(1)
+		fail(o, "Nextcloud MyGo setup: "+err.Error(), 1)
 	}
+	root := filepath.Join(programs, "Nextcloud-MyGo")
+	// NEXTCLOUD_MYGO_PROFILE is the interface's development profile; the
+	// installed app runs the default one.
+	profile := os.Getenv("NEXTCLOUD_MYGO_PROFILE")
+	if !o.quiet {
+		os.Exit(runWindow(o, t, root, profile))
+	}
+	if err := run(o, t, root, profile, o.removeData, !o.noLaunch); err != nil {
+		fail(o, "Nextcloud MyGo setup: "+err.Error(), 1)
+	}
+}
+
+// fail reports an error on stderr and, without -quiet, in an error dialog,
+// then exits with code.
+func fail(o options, text string, code int) {
+	fmt.Fprintln(os.Stderr, text)
+	if !o.quiet {
+		errorBox(text)
+	}
+	os.Exit(code)
+}
+
+// run does the task: the uninstall (with removeData), or the install, which
+// starts the new version when start is set.
+// Notes: with -update, an install that fails after setup closed the
+// interface starts the installed version again (the one install.json names:
+// the previous one, or the new one once it is current), because the
+// interface that started the update is gone. An interface setup did not
+// close still runs and handles the failure itself.
+func run(o options, t task, root, profile string, removeData, start bool) error {
+	if t == taskUninstall {
+		return uninstallApp(root, profile, removeData)
+	}
+	err := install(root, profile, start)
+	if err != nil && o.update && uiClosed {
+		if dir, _, ok, _ := readState(root); ok {
+			if err := launch(filepath.Join(dir, uiExe)); err != nil {
+				step("could not reopen the interface: %v", err)
+			}
+		}
+	}
+	return err
+}
+
+// payloadManifest opens the payload and reads its manifest.
+func payloadManifest() (*zip.Reader, release.Manifest, error) {
+	z, err := zip.NewReader(bytes.NewReader(payload), int64(len(payload)))
+	if err != nil {
+		return nil, release.Manifest{}, fmt.Errorf("payload: %w", err)
+	}
+	mf, err := z.Open(release.ManifestName)
+	if err != nil {
+		return nil, release.Manifest{}, fmt.Errorf("payload: %w", err)
+	}
+	var buf bytes.Buffer
+	_, err = buf.ReadFrom(mf)
+	mf.Close()
+	if err != nil {
+		return nil, release.Manifest{}, err
+	}
+	m, err := release.Parse(buf.Bytes())
+	return z, m, err
 }
 
 // install puts the payload in a fresh version directory, stops the running
@@ -81,25 +149,11 @@ func main() {
 // complete, verified and current (PLAN.md §16.2): a failure at any earlier
 // point leaves the last bootable version as it was.
 func install(root, profile string, start bool) error {
-	z, err := zip.NewReader(bytes.NewReader(payload), int64(len(payload)))
-	if err != nil {
-		return fmt.Errorf("payload: %w", err)
-	}
-	mf, err := z.Open(release.ManifestName)
-	if err != nil {
-		return fmt.Errorf("payload: %w", err)
-	}
-	var buf bytes.Buffer
-	_, err = buf.ReadFrom(mf)
-	mf.Close()
+	z, m, err := payloadManifest()
 	if err != nil {
 		return err
 	}
-	m, err := release.Parse(buf.Bytes())
-	if err != nil {
-		return err
-	}
-	fmt.Printf("Nextcloud MyGo %s for %s: TEST BUILD, unsigned, automatic updates off\n", m.Version, m.Arch)
+	fmt.Printf("Nextcloud MyGo %s for %s; this copy is not signed by a publisher\n", m.Version, m.Arch)
 	if m.TestVersion {
 		fmt.Println("This package's version was stamped for an upgrade test; it is not a release.")
 	}
@@ -196,7 +250,8 @@ func copyUninstaller(dir, root string) error {
 // because SyncD's pipe serves one client at a time. With a target, the
 // profile's SyncD running from current then gets daemon.prepareUpdate
 // (PLAN.md §16.2); on a refusal the closed interface is started again, where
-// a deletion waiting for review can be reviewed. SyncD is asked to stop
+// a deletion waiting for review can be reviewed (uiClosed tracks which of
+// the two happened). SyncD is asked to stop
 // through daemon.shutdown and gets 30 seconds; one that does not stop is
 // terminated, which SyncD recovers from like any crash.
 func stopApp(root, profile, current, target string) error {
@@ -221,12 +276,15 @@ func stopApp(root, profile, current, target string) error {
 		if left := terminate(ui); len(left) > 0 {
 			return fmt.Errorf("the interface did not close")
 		}
+		uiClosed = true
 	}
 	if len(toPrepare) > 0 {
 		if err := prepareUpdate(profile, current, target, toPrepare); err != nil {
 			if len(ui) > 0 {
 				if err := launch(ui[0].path); err != nil {
 					step("could not reopen the interface: %v", err)
+				} else {
+					uiClosed = false
 				}
 			}
 			return err

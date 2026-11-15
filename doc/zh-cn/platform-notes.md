@@ -854,6 +854,28 @@ x64 3/3 通过。`SyncCfApiTest`：ARM64（90.9 秒）与 x64（94.2 秒）均�
 清单、SyncD 与界面的版本一致，均为 0.1.2。未运行：资源管理器中显示的条目（打包宿主的注册表视图是私有的）、安装器、
 从 0.1.1 的升级，以及卸载程序针对第二个 profile 的保留规则。
 
+### 0.1.2 之后的修复（0.1.3）
+
+2026-11-15 在 ARM64 机器（build 26300）上、打包宿主之外测得，使用 23 个补丁的构建树（`CF0C68C10DD7`）和 MyGo v0.9.1，
+期间已安装的 0.1.2 正在运行，带有三个按需同步根。
+
+- SyncD 契约测试（`build-syncd.ps1`）：测试的临时目录放在 D: 盘时，ARM64 和 x64（仿真，50.4 s）都 25 项全部通过。放在 C: 盘时，`SyncDRootContracts`、
+  `SyncDFolderErrorContracts` 和 `SyncDOnDemandContracts` 以 `FOLDER_OWNED` 失败：`C:\Users\<user>` 下每个新建目录都被拒绝，
+  而 D: 盘通过；`root_windows.cpp` 及其测试自 0.1.2 起未改动。没有任何上级目录带有上游 journal 或本产品的租约互斥量；
+  原因尚未找到。`SyncDFolderErrorContracts` 包含新的 `availability` 用例，在真实 Cloud Files 上运行（完整文件目录拒绝 `alwaysLocal`
+  和 `onlineOnly`，在 `onDemand` 时以自己的注册完成转换，随后快照中根目录的固定状态依次跟随三个值），`SyncDEndpointContracts` 包含
+  重命名用例。
+- 真实 Go 与 C++ 管道（`SYNCD_TEST_EXE`，ARM64 SyncD 0.1.3，协议 1.12，schema 13）：`internal/syncd` 和 `internal/gui` 中所有 `Real`
+  测试通过。在 `testprofile.Remove` 不再使用 `os.RemoveAll`（在 `AppData\Local` 下出现 ELOOP）之前，每项测试都留下了配置文件；改动后
+  重新运行没有留下任何配置文件。
+- Go：[开发](development.md)中的完整列表，包括新增的测试：添加目录的重试、首次设置的基础目录与合并提醒、更新交接、1.12 的消息外形、
+  可用性一行和重命名对话框（已查看截图）。
+- 安装包：`tools/package.ps1` 构建出带安装器资源的 `Nextcloud-MyGo-0.1.3-arm64-setup.exe`（36.1 MB）和
+  `Nextcloud-MyGo-0.1.3-x64-setup.exe`（39.3 MB）；`tools/pkg check` 通过（29 个原生 ARM64 与 30 个原生 x64 PE 文件，每个安装器都是原生的并带图标），
+  清单、SyncD 和界面都为 0.1.3、协议 1.12、schema 13。
+
+未运行：窗口化安装器和卸载程序除错误和确认界面之外的部分（在这里安装会替换用户的安装）、端到端的应用内更新、在真实服务器上运行目录
+可用性（“始终保留在此电脑上”下的下载、“释放空间”下的释放）和添加多个目录，以及目录菜单的截图（原生弹出菜单）。
 ## 已知限制
 
 原生 Windows ARM64 上的上游 CTest 已通过 SyncJournalDBTest、ConcatUrlTest、

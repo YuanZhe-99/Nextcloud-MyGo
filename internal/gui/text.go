@@ -211,13 +211,19 @@ func modeShown(s syncd.Snapshot, f syncd.Folder) bool {
 	return s.Daemon.Capabilities["virtualFiles"] || f.Mode == syncd.FolderOnDemand
 }
 
-// modeWord is how a folder keeps its files on this PC; empty is a daemon
-// before 1.8, which knew only full files.
-func modeWord(m syncd.FolderMode) string {
-	if m == syncd.FolderOnDemand {
-		return L.ModeOnDemand()
+// modeWord is how a folder keeps its files on this PC: full files (also a
+// daemon before 1.8, which knew only those), or an on-demand folder's
+// availability (protocol 1.12; on demand while unknown).
+func modeWord(f syncd.Folder) string {
+	switch {
+	case f.Mode != syncd.FolderOnDemand:
+		return L.ModeFull()
+	case f.Availability == syncd.AvailabilityAlwaysLocal:
+		return L.AvailWordAlwaysLocal()
+	case f.Availability == syncd.AvailabilityOnlineOnly:
+		return L.AvailWordOnlineOnly()
 	}
-	return L.ModeFull()
+	return L.ModeOnDemand()
 }
 
 // conversionLine is what a folder's row says about SyncD's switch of a

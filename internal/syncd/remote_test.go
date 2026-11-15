@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -142,6 +143,59 @@ func TestFolderAddModeEnvelope(t *testing.T) {
 		server.Close()
 		<-done
 		cancel()
+	}
+}
+
+// TestAddFolderAfterStaleRevision: SyncD announces a change's revision in an
+// event after that change's reply, so a second folder added at once was
+// refused with REVISION_CONFLICT and setup lost every folder after the first.
+// AddFolder now waits for the new revision, inspects again and sends that.
+func TestAddFolderAfterStaleRevision(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, server := net.Pipe()
+	defer server.Close()
+	r := &Remote{ctx: ctx, cancel: cancel, conn: client, ready: true, boot: "boot", seq: 1, revision: "1", pending: map[string]chan rpcReply{}, listeners: map[uint64]func(){}}
+	done := make(chan struct{})
+	go func() { r.read(client); close(done) }()
+	t.Cleanup(func() { client.Close(); <-done })
+	var sent []string
+	go func() {
+		inspections := 0
+		for {
+			b, err := readFrame(server)
+			if err != nil {
+				return
+			}
+			var req struct {
+				ID     string         `json:"id"`
+				Method string         `json:"method"`
+				Params map[string]any `json:"params"`
+			}
+			if json.Unmarshal(b, &req) != nil {
+				return
+			}
+			if req.Method == "folders.inspect" {
+				inspections++
+				_ = writeFrame(server, map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": map[string]any{"inspectToken": fmt.Sprint("token-", inspections), "localExists": false, "mergeExisting": false, "expiresInSeconds": 300}})
+				continue
+			}
+			rev, _ := req.Params["expectedRevision"].(string)
+			sent = append(sent, rev+"/"+req.Params["inspectToken"].(string))
+			if rev != "2" {
+				_ = writeFrame(server, map[string]any{"jsonrpc": "2.0", "id": req.ID, "error": map[string]any{"code": -32000, "message": "stale", "data": map[string]any{"reasonCode": "REVISION_CONFLICT"}}})
+				// The earlier change's state arrives only now.
+				_ = writeFrame(server, map[string]any{"jsonrpc": "2.0", "method": "event", "params": map[string]any{"bootId": "boot", "seq": "2", "revision": "2", "snapshot": map[string]any{"daemon": map[string]any{"stateAvailable": true, "startupState": "normal"}}}})
+				continue
+			}
+			_ = writeFrame(server, map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": map[string]any{"operationId": "op", "state": "succeeded", "result": map[string]any{}}})
+		}
+	}()
+	if err := r.AddFolder("account", "/Photos", `C:\Sync\Photos`); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"1/token-1", "2/token-2"}; !reflect.DeepEqual(sent, want) {
+		t.Fatalf("folders.add sent %v, want %v", sent, want)
 	}
 }
 
@@ -1341,6 +1395,72 @@ func TestNonNormalStartupCannotBeHealthy(t *testing.T) {
 	}
 }
 
+// TestProtocol112Envelopes keeps folders.setAvailability and endpoints.rename
+// aligned with their protocol 1.12 examples, field for field.
+func TestProtocol112Envelopes(t *testing.T) {
+	b, err := os.ReadFile("../../protocol/state.examples.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var examples map[string]struct {
+		Method string
+		Params map[string]any
+	}
+	if err := json.Unmarshal(b, &examples); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	client, server := net.Pipe()
+	defer server.Close()
+	r := &Remote{ctx: ctx, cancel: cancel, conn: client, ready: true, pending: map[string]chan rpcReply{}, listeners: map[uint64]func(){}}
+	done := make(chan struct{})
+	go func() { r.read(client); close(done) }()
+	t.Cleanup(func() { client.Close(); <-done })
+	requests := make(chan map[string]any, 2)
+	go func() {
+		for range 2 {
+			b, err := readFrame(server)
+			if err != nil {
+				return
+			}
+			var req map[string]any
+			if json.Unmarshal(b, &req) != nil {
+				return
+			}
+			requests <- req
+			if writeFrame(server, map[string]any{"jsonrpc": "2.0", "id": req["id"], "result": map[string]any{"operationId": "test", "state": "succeeded", "result": map[string]any{}}}) != nil {
+				return
+			}
+		}
+	}()
+	for _, name := range []string{"setAvailability", "renameMain"} {
+		example := examples[name]
+		p := example.Params
+		r.mu.Lock()
+		r.revision = p["expectedRevision"].(string)
+		r.mu.Unlock()
+		if name == "setAvailability" {
+			err = r.SetAvailability(p["folderId"].(string), Availability(p["availability"].(string)))
+		} else {
+			err = r.RenameEndpoint(p["endpointId"].(string), p["name"].(string), EndpointKind(p["kind"].(string)))
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := <-requests
+		params := req["params"].(map[string]any)
+		if req["method"] != example.Method || len(params) != len(p) {
+			t.Fatalf("%s: %v differs from its example", name, req)
+		}
+		for key, expected := range p {
+			if key != "operationKey" && params[key] != expected {
+				t.Fatalf("%s field %s differs from protocol", name, key)
+			}
+		}
+	}
+}
+
 // TestProtocol19StateExample decodes the 1.9–1.11 snapshot example: per-account
 // sign-in state, folder phase and progress, address latency, kind and block
 // reason, why an address was chosen, deletion groups, conflicts, the start
@@ -1384,6 +1504,10 @@ func TestProtocol19StateExample(t *testing.T) {
 	}
 	if f := s.Folders[2]; f.Conversion != ConversionConverted || f.Mode != FolderOnDemand || s.Folders[0].Conversion != ConversionNone {
 		t.Fatalf("converted folder: %+v", s.Folders)
+	}
+	// Protocol 1.12: an on-demand folder's availability; none for full files.
+	if s.Folders[2].Availability != AvailabilityAlwaysLocal || s.Folders[0].Availability != "" {
+		t.Fatalf("folder availability: %+v", s.Folders)
 	}
 	if e := s.Endpoints[1]; e.Kind != KindHome || e.LatencyMs != 6 || e.Blocked || e.BlockedReason != "" {
 		t.Fatalf("address latency and kind: %+v", e)

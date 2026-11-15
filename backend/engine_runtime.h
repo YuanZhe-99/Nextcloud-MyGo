@@ -112,6 +112,18 @@ public:
   bool quiescent(const QString &folder) const {
     return folders_.at(folder).adapter->quiescent();
   }
+  /// availability reports an attached folder's EngineAdapter::availability,
+  /// "" when none is attached.
+  QString availability(const QString &folder) const {
+    const auto it = folders_.find(folder);
+    return it == folders_.end() ? QString{} : it->second.adapter->availability();
+  }
+  /// setAvailability applies EngineAdapter::setAvailability to an attached
+  /// folder; false when none is attached or it refused.
+  bool setAvailability(const QString &folder, const QString &value) {
+    const auto it = folders_.find(folder);
+    return it != folders_.end() && it->second.adapter->setAvailability(value);
+  }
   /// blockers exposes scheduler admission evidence without paths, credentials
   /// or journal access.
   QSet<QString> blockers(const QString &folder) const {

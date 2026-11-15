@@ -1,0 +1,2 @@
+# Resources tools/package.ps1 generates for one build (tools/pkg resources)
+/rsrc_windows_*.syso
