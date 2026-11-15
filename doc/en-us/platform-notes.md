@@ -1051,10 +1051,24 @@ Measured 2026-11-15 on the ARM64 machine (build 26300), outside a packaged host,
   native ARM64 and 30 native x64 PE files, each installer native with its icon), the manifest, SyncD and the
   interface agreeing on 0.1.3, protocol 1.12, schema 13.
 
-Not run: the windowed installer and uninstaller beyond their error and confirmation screens (installing
-here would replace the user's install), the in-app update end to end, a real-server run of folder
-availability (hydration under Always keep on this PC, freeing under Free up space) and of adding several
-folders, and a screenshot of the folder menu (a native popover).
+After the elevation fix, on the same machine with the user's consent:
+
+- Upgrade of the real install (`setup -quiet`, ARM64 package): with 0.1.2 running elevated, setup refused
+  with the "running as administrator" message, kept 0.1.2 current and removed the version it had extracted.
+  After the user quit 0.1.2 from the tray, it upgraded to 0.1.3, removed 0.1.2 and started the new
+  interface and SyncD, both with `TokenElevation=0`; the three on-demand roots stayed registered.
+- With the app no longer elevated, all 25 SyncD contracts passed with their temporary folders on C:.
+- Real-server on-demand acceptance (`tools/test-ondemand.ps1`, disposable servers through `wslc`), with the
+  new steps: the root pinned Always keep on this PC downloads every file, Free up space frees every file,
+  On demand changes nothing: passed on 35.0.3 (42.9 s) and 34.0.6 (42.8 s).
+- Real Go-to-C++ pipe tests against x64 SyncD (emulated): all passed, no profile left behind.
+- CI on `05cd4c0`: x64 passed; ARM64 failed once in `TestRealPipeImpostorR09` (a SyncD of the test still
+  held `daemon.lock` 30 s after the test killed it, as in run 43730987563 before the cleanup check existed)
+  and passed on the rerun.
+
+Not run: the windowed installer's screens (the upgrade ran with `-quiet`), the uninstall, the in-app
+update end to end, adding several folders against a real server, and a screenshot of the folder menu (a
+native popover).
 ## Known limitations
 
 Upstream CTest on native Windows ARM64 passed SyncJournalDBTest, ConcatUrlTest,

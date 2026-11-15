@@ -22,6 +22,7 @@
 #include "namespace.h"
 #include "platform/windows/ondemand.h"
 #include "vfs/cfapi/cfapiwrapper.h"
+#include <algorithm>
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDeadlineTimer>
@@ -660,6 +661,12 @@ int serve(const QString &statePath) {
                             : "CYCLE " + done.reason.toUtf8());
       };
       runtime.authorize(folder, proposal, 600000);
+    } else if (words.value(0) == "availability" && words.size() == 2) {
+      // The folder menu's availability (folders.setAvailability): the root's
+      // pin, answered as Cloud Files reads it back; applied by the next cycle.
+      answer(runtime.setAvailability(folder, QString::fromUtf8(words[1]))
+                 ? "AVAILABILITY " + runtime.availability(folder).toUtf8()
+                 : QByteArray("AVAILABILITY refused"));
     } else if (words.value(0) == "stats") {
       answer("STATS " + QByteArray::number(restarts) + ' ' +
              QByteArray::number(failedRestarts) + ' ' +
@@ -959,6 +966,44 @@ int main(int argc, char **argv) {
                 QCryptographicHash::hash(content.value("pin.txt"),
                                          QCryptographicHash::Sha256),
             "pinned content differs from the server");
+
+    // The folder menu's availability (protocol 1.12) pins the whole root,
+    // which every file without a pin of its own follows.
+    const QStringList pinned{"small.txt", "pin.txt", "sub/inner.txt"};
+    const auto allOnline = [&](bool wanted) {
+      return std::all_of(pinned.begin(), pinned.end(), [&](const QString &f) {
+        return online(root + '/' + f) == wanted;
+      });
+    };
+    step("folder availability: always keep on this PC downloads every file");
+    require(child.command("availability alwaysLocal", 10000) ==
+                "AVAILABILITY alwaysLocal",
+            "the root did not take the always-local pin");
+    require(cycleUntil([&] { return allOnline(false); }),
+            "always keep on this PC left a file online-only");
+    require(sha(root + "/small.txt") ==
+                QCryptographicHash::hash(content.value("small.txt"),
+                                         QCryptographicHash::Sha256),
+            "downloaded content differs from the server");
+    step("folder availability: free up space frees every file");
+    require(child.command("availability onlineOnly", 10000) ==
+                "AVAILABILITY onlineOnly",
+            "the root did not take the online-only pin");
+    require(cycleUntil([&] { return allOnline(true); }),
+            "free up space kept a file's content");
+    step("folder availability: on demand keeps what is there");
+    require(child.command("availability onDemand", 10000) ==
+                "AVAILABILITY onDemand",
+            "the root did not go back to on demand");
+    require(child.command("cycle", 60000) == "CYCLE ok" && allOnline(true),
+            "on demand changed the files");
+    // Back to the per-file pins the next steps start from.
+    require(bool(OCC::CfApiWrapper::setPinState(
+                QDir::toNativeSeparators(root + "/pin.txt"),
+                OCC::PinState::AlwaysLocal, OCC::CfApiWrapper::NoRecurse)),
+            "always-local pin not restored");
+    require(cycleUntil([&] { return !online(root + "/pin.txt"); }),
+            "the restored pin did not download its file");
 
     // stats reads what cycles did since the last call: restarted cycles,
     // restarted cycles reported as failures, files uploaded, downloaded,
