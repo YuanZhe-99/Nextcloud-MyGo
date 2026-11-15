@@ -1,7 +1,7 @@
 {
   "name": "Nextcloud-MyGo",
   "identifier": "com.yuanzhe.nextcloud-mygo",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "copyright": "Copyright (C) 2026 YuanZhe",
   "main": "./cmd/nextcloud-mygo",
   "out": "build",

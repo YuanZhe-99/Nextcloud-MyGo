@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -30,6 +31,9 @@ var (
 	errNoAnswer        = errors.New("Nextcloud MyGo's background sync is running but did not answer within 2 minutes. Quit Nextcloud MyGo from its tray icon, then run setup again")
 	errNotPrepared     = errors.New("Nextcloud MyGo could not get ready for the update. Quit Nextcloud MyGo from its tray icon, then run setup again")
 )
+
+// step prints one stage of the install or uninstall.
+func step(format string, args ...any) { fmt.Printf("- "+format+"\n", args...) }
 
 // prepare asks a running SyncD for the update safe point (daemon.prepareUpdate,
 // PLAN.md §16.2) until it is ready.
@@ -218,6 +222,152 @@ func retarget(command, root, exe string) (string, bool) {
 		return command, false
 	}
 	return `"` + exe + `"` + rest, true
+}
+
+// releaseLimit bounds how long the uninstall waits for SyncD to release the
+// on-demand folders; a folder in the middle of a sync cycle is released once
+// the cycle ends.
+const releaseLimit = 5 * time.Minute
+
+// appTag is the ApplicationName SyncD writes on its Explorer navigation
+// entries (on-demand.md); the official client writes "Nextcloud".
+const appTag = "Nextcloud-MyGo"
+
+// ourTag reports whether an ApplicationName value marks an entry of
+// Nextcloud-MyGo: an exact match, never the official client's "Nextcloud".
+func ourTag(v string) bool { return v == appTag }
+
+// rootAccount parses a Cloud Files sync root ID of SyncD for the user sid
+// ("Nextcloud-MyGo!<sid>!<account>!<folder>", on-demand.md).
+// Returns: the account ID, and ok=false for another provider's root (the
+// official client's are "Nextcloud!…") or another user's.
+func rootAccount(id, sid string) (account string, ok bool) {
+	rest, ok := strings.CutPrefix(id, appTag+"!"+sid+"!")
+	if !ok || sid == "" {
+		return "", false
+	}
+	account, _, ok = strings.Cut(rest, "!")
+	if !ok || account == "" {
+		return "", false
+	}
+	return account, true
+}
+
+// rootPath normalizes a sync root path for comparison: cleaned, without a
+// trailing separator, lower case (NTFS names compare case-insensitively).
+func rootPath(p string) string {
+	return strings.ToLower(strings.TrimRight(filepath.Clean(p), `\/`))
+}
+
+// releaseOnDemand makes SyncD remove every on-demand folder (folders.remove),
+// which turns downloaded files into ordinary files, deletes the online-only
+// placeholders (the server keeps them) and ends the folder's Windows sync
+// root registration; full-file folders are left alone.
+// Inputs: folders reads SyncD's current folder list; remove sends
+// folders.remove and waits for its answer; now and sleep are the clock.
+// Returns: nil once no on-demand folder is left; otherwise an error naming
+// the local path of each folder SyncD refused or did not release within
+// releaseLimit, worded for the person running the uninstall.
+// Notes: a folder in a sync cycle, an address switch or a sign-in renewal
+// answers QUIESCE_STALLED (ErrBusy) and is asked again each second; a lost
+// connection, a moved configuration revision or a request deadline is asked
+// again too. A folder already gone (NOT_FOUND) counts as released. Folders
+// released before a failure stay released.
+func releaseOnDemand(folders func() []syncd.Folder, remove func(id string) error, now func() time.Time, sleep func(time.Duration)) error {
+	deadline := now().Add(releaseLimit)
+	settled := now().Add(settleLimit)
+	failed := map[string]string{} // folder ID -> local path
+	released := map[string]bool{}
+	waiting := false
+	for {
+		var pending []syncd.Folder
+		for _, f := range folders() {
+			if f.Mode == syncd.FolderOnDemand && failed[f.ID] == "" {
+				pending = append(pending, f)
+			}
+		}
+		if len(pending) == 0 {
+			// A folder of an earlier version becomes on-demand at SyncD's
+			// start; give that start a moment to decide before trusting an
+			// empty list.
+			if settling(folders()) && now().Before(settled) {
+				sleep(time.Second)
+				continue
+			}
+			break
+		}
+		late := !now().Before(deadline)
+		for _, f := range pending {
+			err := remove(f.ID)
+			switch {
+			case err == nil, errors.Is(err, syncd.ErrNotFound):
+				// SyncD's folder list follows its answer shortly; one that
+				// still lists the folder at the deadline did not let go.
+				if late && released[f.ID] {
+					failed[f.ID] = f.LocalPath
+				} else if !released[f.ID] {
+					released[f.ID] = true
+					step("released the on-demand folder %s", f.LocalPath)
+				}
+			case errors.Is(err, syncd.ErrBusy), errors.Is(err, syncd.ErrStale), errors.Is(err, context.DeadlineExceeded):
+				if late {
+					failed[f.ID] = f.LocalPath
+					step("SyncD did not release %s within %v", f.LocalPath, releaseLimit)
+				} else if !waiting {
+					waiting = true
+					step("SyncD is still busy with a folder; waiting up to %v for it to finish", releaseLimit)
+				}
+			default:
+				failed[f.ID] = f.LocalPath
+				step("SyncD could not release %s: %v", f.LocalPath, err)
+			}
+		}
+		sleep(time.Second)
+	}
+	if len(failed) == 0 {
+		return nil
+	}
+	paths := make([]string, 0, len(failed))
+	for _, p := range failed {
+		paths = append(paths, p)
+	}
+	slices.Sort(paths)
+	return fmt.Errorf("these on-demand folders could not be released from Windows, so the program was not removed:\n  %s\n"+
+		"Open Nextcloud MyGo, remove each of them there (their files stay on the server), then run the uninstall again", strings.Join(paths, "\n  "))
+}
+
+// settleLimit is how long releaseOnDemand waits for SyncD to decide the
+// automatic conversion of folders an earlier version added.
+const settleLimit = 20 * time.Second
+
+// settling reports a full-file folder SyncD may still turn on-demand: one
+// awaiting conversion with no reason recorded yet.
+func settling(folders []syncd.Folder) bool {
+	return slices.ContainsFunc(folders, func(f syncd.Folder) bool {
+		return f.Mode != syncd.FolderOnDemand && f.Conversion == syncd.ConversionPending && f.ConversionReason == ""
+	})
+}
+
+// uninstallSequence runs the uninstall in its fixed order: release (SyncD
+// gives up every on-demand folder, and with -remove-user-data the accounts),
+// then the registry backstop, then removal of the program.
+// Inputs: release returns kept, a failure to report once the program is
+// gone (user data kept), and abort, which stops the uninstall before
+// anything else is deleted.
+// Returns: abort as it is; otherwise the program removal's error, or kept and
+// the backstop's error joined.
+// Notes: no program file goes while an on-demand folder may still be
+// registered, since its online-only files could no longer be opened.
+func uninstallSequence(release func() (kept, abort error), backstop, removeProgram func() error) error {
+	kept, err := release()
+	if err != nil {
+		return err
+	}
+	backErr := backstop()
+	if err := removeProgram(); err != nil {
+		return err
+	}
+	return errors.Join(kept, backErr)
 }
 
 // otherVersions lists version directories under root other than keep,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -219,19 +220,21 @@ func TestFolderStates(t *testing.T) {
 	}
 }
 
-// TestFolderModeOffered: Full files or On demand is offered only with the
-// virtualFiles capability; the choice reaches AddFolder, and without it no
-// mode is sent and SyncD keeps full files.
+// TestFolderModeOffered: On demand or Full files is offered only with the
+// virtualFiles capability, on demand first and chosen unless the user picks
+// full files (protocol 1.11); the choice reaches AddFolder, and without the
+// capability no mode is sent and SyncD keeps full files.
 func TestFolderModeOffered(t *testing.T) {
 	cases := []struct {
 		name    string
 		virtual bool
-		choose  int
+		choose  syncd.FolderMode // "": the default is kept
 		want    syncd.FolderMode
 	}{
-		{"without virtualFiles", false, 1, syncd.FolderFull},
-		{"full files", true, 0, syncd.FolderFull},
-		{"on demand", true, 1, syncd.FolderOnDemand},
+		{"without virtualFiles", false, "", syncd.FolderFull},
+		{"without virtualFiles, on demand never sent", false, syncd.FolderOnDemand, syncd.FolderFull},
+		{"default is on demand", true, "", syncd.FolderOnDemand},
+		{"full files chosen", true, syncd.FolderFull, syncd.FolderFull},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -247,7 +250,9 @@ func TestFolderModeOffered(t *testing.T) {
 				shoot(t, tt, "setup-folders-mode")
 			}
 			a.setup.chosen = map[string]bool{"/Work": true}
-			a.setup.mode = c.choose
+			if c.choose != "" {
+				a.setup.mode = slices.Index(folderModes, c.choose)
+			}
 			tt.Frame()
 			if err := tt.Click(L.ActionStartSyncing()); err != nil {
 				t.Fatal(err)
@@ -430,5 +435,99 @@ func TestDiagnosticsStartupAndDisconnect(t *testing.T) {
 	shoot(t, tt, "settings-diagnostics-startup")
 	if rows := connectionRows(syncd.StartupReport{}, syncd.NewMock(false, nil)); len(rows) != 0 {
 		t.Errorf("rows for nothing known: %v", rows)
+	}
+}
+
+// TestNewFolderDefaultsOnDemand: first-run setup and adding a folder later
+// both start with on-demand files chosen (protocol 1.11); whether a mode is
+// offered and sent at all is the virtualFiles capability's
+// (TestFolderModeOffered).
+func TestNewFolderDefaultsOnDemand(t *testing.T) {
+	a, _ := testApp(t, true)
+	a.startSetup()
+	if folderModes[a.setup.mode] != syncd.FolderOnDemand {
+		t.Fatalf("first-run setup starts with %q", folderModes[a.setup.mode])
+	}
+	a.setup.mode = slices.Index(folderModes, syncd.FolderFull)
+	a.startAddFolders("a-home")
+	if folderModes[a.setup.mode] != syncd.FolderOnDemand {
+		t.Fatalf("adding a folder starts with %q", folderModes[a.setup.mode])
+	}
+}
+
+// TestConversionLine: a 0.1.0 folder still waiting to become on-demand says
+// why, one SyncD switched says so until closed, and every other folder says
+// nothing (protocol 1.11); no reason code is ever shown.
+func TestConversionLine(t *testing.T) {
+	cases := []struct {
+		name        string
+		conversion  syncd.Conversion
+		reason      string
+		dismissed   []string
+		want        func() string // nil: no line
+		dismissible bool
+	}{
+		{"never eligible", syncd.ConversionNone, "", nil, nil, false},
+		{"pending, about to switch", syncd.ConversionPending, "", nil, L.ConversionSoon, false},
+		{"pending, Cloud Files unavailable", syncd.ConversionPending, "UNSUPPORTED_FOLDER_MODE", nil, L.ConversionUnavailable, false},
+		{"pending, inside another sync root", syncd.ConversionPending, "FOLDER_OWNED", nil, L.ConversionOwned, false},
+		{"pending, another reason", syncd.ConversionPending, "LOCAL_ROOT_UNAVAILABLE", nil, L.ConversionWaiting, false},
+		{"pending cannot be closed", syncd.ConversionPending, "FOLDER_OWNED", []string{"f"}, L.ConversionOwned, false},
+		{"converted", syncd.ConversionConverted, "", nil, L.ConversionDone, true},
+		{"converted, another folder's note closed", syncd.ConversionConverted, "", []string{"other"}, L.ConversionDone, true},
+		{"converted, note closed", syncd.ConversionConverted, "", []string{"f"}, nil, false},
+		{"a reason without pending says nothing", syncd.ConversionNone, "FOLDER_OWNED", nil, nil, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			text, dismissible := conversionLine(syncd.Folder{ID: "f", Conversion: c.conversion, ConversionReason: c.reason}, c.dismissed)
+			want := ""
+			if c.want != nil {
+				want = c.want()
+			}
+			if text != want || dismissible != c.dismissible {
+				t.Fatalf("line %q (closable %v), want %q (closable %v)", text, dismissible, want, c.dismissible)
+			}
+			if c.reason != "" && strings.Contains(text, c.reason) {
+				t.Fatal("the reason code is shown")
+			}
+		})
+	}
+}
+
+// TestConversionNoteStaysClosed: closing a converted folder's note keeps
+// it closed after the interface starts again (gui.json), while the
+// pending folder's line stays.
+func TestConversionNoteStaysClosed(t *testing.T) {
+	dir := t.TempDir()
+	open := func() (*App, *ui.Tester) {
+		a := New(syncd.NewMock(true, nil), dir)
+		a.later = func(fn func()) { fn() }
+		a.async = func(fn func()) { fn() }
+		a.openURL = func(string) {}
+		a.Start()
+		a.page = pageFolders
+		tt := ui.NewTester(a.view, 1200, 900)
+		tt.Frame()
+		return a, tt
+	}
+	_, tt := open()
+	if !tt.HasText(L.ConversionDone()) || !tt.HasText(L.ConversionOwned()) {
+		t.Fatal("the sample's converted and pending folders are not explained")
+	}
+	shoot(t, tt, "folders-conversion")
+	if err := tt.Click(L.ActionDismiss()); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if tt.HasText(L.ConversionDone()) {
+		t.Fatal("the note did not close")
+	}
+	a, tt := open()
+	if tt.HasText(L.ConversionDone()) || !tt.HasText(L.ConversionOwned()) {
+		t.Fatal("after a restart the closed note is back or the pending line is gone")
+	}
+	if !slices.Equal(a.Prefs().ConversionNotesClosed, []string{"f-projects"}) {
+		t.Fatalf("closed notes = %v", a.Prefs().ConversionNotesClosed)
 	}
 }

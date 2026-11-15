@@ -881,6 +881,137 @@ the user's own password), real sleep, interface and DNS changes, leaks or growth
 measured bounds (4.8 MB/h of private bytes over 40 min is within the band's noise and not proven
 zero), behaviour after days of history, and x64.
 
+### On-demand files and the automatic conversion (0.1.1)
+
+Native ARM64, Windows 11 build 26300, Qt 6.12.0, a disposable local Nextcloud server 35.0.3,
+2026-11-14, on the first 0.1.1 build, before patches 0020 to 0023 ([on-demand](on-demand.md#automatic-conversion-of-full-file-folders)):
+
+| Run | Result |
+|---|---|
+| SyncD CTest, the full set | 24/24 passed, three runs |
+| `tools/test-ondemand.ps1` | passed twice, about 85 s each, including the conversion steps: a full-file sync; a conversion pass of 26 entries in 80 ms with one file held delete-pending (left plain); the journal digest unchanged; in-sync hydrated placeholders carrying the journal's file IDs; the first on-demand cycle repaired the file left, with zero downloads; free up space, then re-opening the file returned the original content |
+| `go test ./internal/syncd` against the real SyncD | passed at protocol 1.11 |
+| `SyncDOnDemandContracts` on real Cloud Files | passed without `SKIP` |
+| Conversion timing (local fixture: 10,000 files of 200 B in 100 directories, a hand-written journal, not a real sync) | about 13.4 s for a complete pass, about 1.3 ms per entry |
+
+Not verified in this first run (later runs and what is still unverified: [further evidence](#further-011-evidence)): x64;
+the upgrade from an installed 0.1.0; Explorer showing the navigation entry and the icon; the uninstall
+with a real on-demand folder; behavior where Cloud Files is unavailable; the timing at 100,000 files.
+
+#### Further 0.1.1 evidence
+
+Runs of 2026-11-14 on one Windows 11 ARM64 host (build 26300, Qt 6.12.0); x64 means emulated on the same
+host; disposable local servers 35.0.3 and 34.0.6. The runs found two bugs, fixed by patches 0020 and 0021
+([on-demand](on-demand.md#local-deletions-and-sparse-files)); the 21-patch build below includes both. Patches 0022 and 0023 and the final run on the 23-patch build follow at the end of this section.
+
+Build with 21 patches (patches 0001–0021, upstream tree `1D235B1119EB`), SyncD 0.1.1, protocol 1.11,
+Control schema 12. Every figure in this table was measured on this build, not on the 23-patch build:
+
+| Run | Result |
+|---|---|
+| SyncD CTest | 24/24: ARM64 40.05 s, x64 56.78 s |
+| Upstream tests through CTest (`UtilityTest` and `SyncCfApiTest` run separately) | 96/96: ARM64 441.0 s, x64 504.0 s |
+| `SyncCfApiTest` through `tools/test-cfapi-upstream.ps1` | 53 passed, 2 skipped, 0 failed: ARM64 92.0 s, x64 93.6 s |
+| `tools/test-ondemand.ps1`, server 35.0.3 | ARM64 39.7 s, x64 44.2 s |
+| `tools/test-ondemand.ps1`, server 34.0.6 | ARM64 40.0 s, x64 41.9 s |
+| `tools/test-all.ps1`, fast tier | ARM64 58.9 s of 120 s. x64 failed once in "go unit and real-pipe tests" with no failing test named, then passed four reruns (54.3–56.9 s); the cause was not diagnosed |
+| `tools/test-all.ps1`, server tier, ARM64, server 35.0.3 | passed, every scenario, 517.0 s of 600 s. This is the `PLAN.md` §16.5 re-check for the new patch set (the URL and credential, quiescent boundary, deletion protection and journal compatibility scenarios). The x64 server tier was not re-run on the final build |
+
+`tools/test-ondemand.ps1` covers: the single deletion of an online-only file reaching the server in the
+automatic follow-up (one restart, not reported as a failure); a directory move as one rename (0 uploads,
+0 deletions); deleting 13 entries held as `DELETION_CONFIRMATION_REQUIRED` with every file still on the
+server, then deleted after the approval (INV-13); the sparse cases (a new file uploads intact, an edit
+uploads, a change on the server downloads, a change on both sides makes a conflict that keeps both, the
+journal type stays a file); and the conversion of a 0.1.0 full-file folder including a sparse file.
+
+Without the fixes: with the flag carry forced off, the acceptance stopped at the first deletion with
+`SYNC_FAILED`; upstream's sparse tests failed without patch 0021.
+
+Earlier the same day, on the previous build (19 patches, tree `9AD005FA79FF`; the packages were not
+rebuilt on the 21-patch build):
+
+| Run | Result |
+|---|---|
+| Packages built and checked with `tools/pkg` | ARM64: 29 PE files, all native ARM64; x64: 30 PE files, all native x64; version 0.1.1, schema 12, unsigned test packages. The SyncD executable carries an icon resource on both architectures; `pkg check` fails a SyncD without one (checked against the 0.1.0 SyncD) |
+| Real pipe, `go test ./internal/syncd` against SyncD | 52/52 on ARM64 and on x64 |
+| Upgrade 0.1.0 to 0.1.1 | A test host built from the SyncD core of the `v0.1.0` tag, then one from the working tree, on the same profile (not the shipped executables; the test host adds in-process trust of the fixture's root certificate). ARM64 on 35.0.3 and 34.0.6, x64 on 35.0.3. The tree had 302 server files in 11 directories (an empty directory, a 24 MiB file, non-ASCII names) plus 20 files uploaded by 0.1.0. Result: the pre-schema-12 backup present with `user_version` 11; the folder `onDemand` and `converted`; 0 content GETs in the server log; 0 of 323 file hashes changed; the journal digest unchanged. A new server file arrived online-only and hydrated on open; free up space on three converted files then re-opening returned identical content; a local edit uploaded; an offline start kept all hydrated files readable and removed nothing |
+| A folder of 5,000 files | The first start of 0.1.1 answered on the pipe after about 3.3 s (the conversion pass holds the control thread for its 3 s budget; the first cycle finished the rest about 6.4 s later); 5,050 of 5,050 entries in sync, 0 hashes changed. SyncD killed right after the `converting` row was written, then restarted: converted, 5,050 of 5,050, journal digest and hashes unchanged, 0 content GETs |
+| Folder removal over the pipe (what uninstall calls) | Hydrated files stay with identical content; online-only placeholders are removed locally and remain on the server; no placeholders or reparse points left; 228 ms for 336 entries, 2,281 ms for 5,050 |
+| Explorer | The Status column shows the cloud and green-check icons in a converted folder (screenshot inspected) |
+
+Still unverified for 0.1.1: the shipped installers and executables against a server (installing over a
+real 0.1.0, the real uninstaller's on-demand release); `tools/package-smoke.ps1` was not run; the icon of SyncD's own
+navigation entry has not been seen in Explorer (the entry itself was seen for the acceptance's root, below); already-open Explorer windows; a kill in the
+middle of file conversion; an online-only file opened while offline; switching address with placeholders;
+folders that cannot convert (Cloud Files unavailable, a nested root) on a real profile; conversion timing
+at 10,000 and 100,000 files in the real daemon; the x64 upgrade on 34.0.6; the interface for the
+restarted-cycle state; a journal record
+already rewritten to a virtual-file type by a pre-fix development build is not migrated (no released
+version could produce it).
+
+Later runs of the same day, on the 21-patch code (patches 0001–0021, server 35.0.3), on the same ARM64 host.
+They looked into intermittent failures of the on-demand acceptance in the user's real environment, outside
+the packaged host that the development tools run in (real user registry, Explorer seeing the root). Three
+causes: a first-cycle listing race (a product defect, fixed in SyncD, [on-demand](on-demand.md#local-deletions)),
+the server keeping an ETag within the same second (a fixture assumption and, until patch 0022, a risk,
+[on-demand](on-demand.md#known-risks)) and a re-entrant `hold` command (a fixture defect; INV-05 held).
+
+| Run | Result |
+|---|---|
+| Before any fix, `tools/test-ondemand.ps1` fixture, outside the packaged host | passes 4/5, 6/8, 7/8, 5/6 |
+| Before any fix, inside the packaged host | 4/5 |
+| After the fixes, ARM64 native, outside, Explorer window open | 8/8 consecutive passes, 37.9–41.9 s each; one race hit, handled (the fixture printed `STEP first cycle restarted, its follow-up answers`). Before the identity-form fix: 5/5, 8/8, 6/6 |
+| After the fixes, ARM64 native, outside, with the 30 s hold (`SYNCD_TEST_HOLD`) | 1/1, 68.7 s |
+| After the fixes, ARM64 native, outside, `tools/test-ondemand.ps1` | 1/1, fixture 38.3 s |
+| After the fixes, ARM64 native, inside the packaged host, `tools/test-ondemand.ps1` | 2/2, fixture 38.9 s and 38.8 s |
+| After the fixes, x64 emulated, outside | 2/2, 43.7 s and 43.0 s; the race was never hit |
+| SyncD CTest | 24/24 on ARM64 and x64; fast tier ARM64 54.6 s, x64 57.5 s |
+| Contract step "a placeholder is recognized by its file ID in both identity forms" | passes on ARM64 and x64 |
+| Navigation pane, outside, a new Explorer window while the root was registered | the entry "Nextcloud MyGo - root" showed between Gallery and OneDrive (screenshot inspected, not kept). It was the fixture's executable, which has no icon resource, so the icon was a generic folder. After the runs the real registry had 0 sync roots, 0 namespace entries and 0 CLSID keys of the product |
+
+Not tested: whether the requesting process of the first-cycle race is Explorer (inferred, not identified);
+whether content replaced by the same-second ETag case survives in the server's versions app; Nextcloud 34; SyncD's
+own icon in the navigation pane and already-open Explorer windows.
+
+The once-in-a-row bound of the restart excuse was added after the runs above; they do not cover it.
+Re-run with the bound, inside the packaged host only, on the 21-patch build: SyncD CTest 24/24 on ARM64 (40.33 s) and on x64 emulated (49.92 s); `tools/test-ondemand.ps1` 1/1 on each (fixture 38.3 s and 43.0 s); fast tier 53.9 s on ARM64 and 55.3 s on x64. No run outside the packaged host includes the bound, and no run of these exercised it; the deterministic tests of `SyncDEngineContracts` below do.
+
+#### Patches 0022 and 0023, the restart tests and the re-entrancy audit
+
+Work of 2026-11-14 and 2026-11-15 on the same ARM64 host. Twenty-three patches, upstream fingerprint
+`CF0C68C10DD7`. New tests only; the results of the full run are in the paragraph after this table.
+
+| Run | Result |
+|---|---|
+| Patch 0022: `testServerSizeChangeUnderSameEtag` (unchanged locally: downloaded, a second sync does nothing; edited locally: conflict, the server's content kept, the conflict copy holds the local edit), `testEncryptedFileSizeIsNotComparedWithTheServer`, `testServerSizeChangeUnderSameEtagUpdatesPlaceholder` | pass on ARM64, run singly. Before the patch the same tests showed no change, an upload and no change |
+| Patch 0023: `testOnDemandListingStoresTheFileIdentity` (another process lists a virtual folder; the stored identity equals the file ID) | passes on ARM64. Before the patch the identity was the ID followed by bytes read past the buffer |
+| `tools/test-ondemand.ps1` fixture | keeps its 1.1 s waits; no real-server same-second step was added |
+| `SyncDEngineContracts` (`failureFilter`, `excusedCycles`, `restartFollowUp`, `pausedFollowUp`) | added; deterministic, no server; SyncD CTest is now 25 targets. Its result is part of the final run below, not recorded separately |
+| Re-entrancy of pipe commands | a code-reading audit, no run: no product defect, no code change; no test exercises re-entrant delivery in the product ([on-demand](on-demand.md#known-risks)) |
+
+Still undetectable by patch 0022: a same-size rewrite within one second, and a rewrite on a server whose
+parent folder also keeps its ETag. Not tested: whether content replaced before the patch survives in the
+server's versions app, and Nextcloud 34.
+
+Final run on the 23-patch build (2026-11-15):
+
+All runs inside the packaged host, on the same ARM64 host, server 35.0.3; x64 is emulated. Upstream suite
+(`UtilityTest` and `SyncCfApiTest` left out, as the build script does): 95/96 on ARM64 (463.4 s) and 95/96
+on x64 (499.6 s) when both architectures ran at the same time; the failed target on both was
+`PushNotificationsTest`, which listens on a fixed local port; run alone afterwards it passed 2/2 on ARM64
+and 3/3 on x64. `SyncCfApiTest`: 55 passed, 2 skipped, 0 failed on ARM64 (90.9 s) and on x64 (94.2 s).
+Fast tier (Go checks, Go unit and real-pipe tests, SyncD CTest with all 25 targets,
+`SyncDEngineContracts` among them): ARM64 73.0 s, x64 64.3 s. `tools/test-ondemand.ps1`: ARM64 fixture
+43.9 s, x64 45.7 s. Server tier: ARM64 496.5 s of 600 s, all 24 scenarios passed, which is also the
+re-check required after an upstream change; x64 198.5 s, its one smoke scenario (switch-kill committed).
+Packages rebuilt from these trees: `tools/pkg check` reports 29 PE files, all native ARM64, and 30 PE
+files, all native x64, every import resolved; version 0.1.1 agrees in the manifest, SyncD and the
+interface. Not run on this build: anything outside the packaged host; `tools/package-smoke.ps1` (refused
+by the tool permission check, twice); the installers themselves; the upgrade from 0.1.0; server 34.0.6.
+
+Every figure in the tables above this paragraph (24/24, 96/96, 53 passed and 2 skipped, the tier timings,
+the packages) was measured on the 21-patch build or an earlier one and is not evidence for the 23-patch build.
+
 ## Known limitations
 
 Upstream CTest on native Windows ARM64 passed SyncJournalDBTest, ConcatUrlTest,

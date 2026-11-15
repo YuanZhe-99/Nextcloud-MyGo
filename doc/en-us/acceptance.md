@@ -124,7 +124,7 @@ The property run prints its seed and the minimal failing sequence on a failure;
 
 | Item | Status | Evidence | Missing |
 |---|---|---|---|
-| 23.1-1 latest upstream, dependencies, patches | `passed` | [platform notes](platform-notes.md), [backend progress](backend-progress.md): Desktop v35.0.3, the latest release (checked 2026-11-12), seventeen recorded patches in `build-lock.json`; the upstream suite with them 95/96 on ARM64 (the failing target passed 3/3 alone) and 96/96 on x64e, `SyncCfApiTest` 50 passed, 2 skipped | none |
+| 23.1-1 latest upstream, dependencies, patches | `passed` | [platform notes](platform-notes.md), [backend progress](backend-progress.md): Desktop v35.0.3, the latest release (checked 2026-11-12), seventeen recorded patches in `build-lock.json`; the upstream suite with them 95/96 on ARM64 (the failing target passed 3/3 alone) and 96/96 on x64e, `SyncCfApiTest` 50 passed, 2 skipped; for 0.1.1 twenty-three patches; the 96/96 on both and `SyncCfApiTest` 53 passed, 2 skipped were measured on the 21-patch build (0001–0021), and the final run on the 23-patch build is recorded under [further evidence](#further-evidence) | none |
 | 23.1-2 native ARM64 engine and dependencies | `passed` | [platform notes](platform-notes.md): ARM64 real runs, PE scans; B14: full sync through the checked installed package | none on ARM64 |
 | 23.1-3 sync after the UI exits | `passed` | [platform notes](platform-notes.md): daemon survives disconnect; B14: sync with the window closed and after a forced kill of the installed window | none |
 | 23.1-4 identity, credential reference, journal stable | `passed` | [platform notes](platform-notes.md): account, credential reference, folder rows and native journal file checked unchanged across every `switch-kill` stage, failover, simulated sleep and renewal, ARM64 and x64e (N21, R03) | none |
@@ -147,7 +147,7 @@ The property run prints its seed and the minimal failing sequence on a failure;
 | 23.3-5 auto-update only with a trusted chain | `partial` | [packaging](packaging.md#signed-updates): updates exist only in packages built with the `mygo keygen` key, kept in a GitHub secret; the app installs only archives signed with the key in `mygo.json`, off until the user turns it on; package smoke: a signed 0.1.1 test update from loopback HTTP installed over 0.1.0 with a throwaway key, ARM64 | A release signed with the project key, read from GitHub; Authenticode is a [limitation](#known-limitations-for-010) |
 | 23.3-6 §17.1 desktop features | `partial` | [platform notes](platform-notes.md): B14: tray icon and flyout, close to tray, Start menu reopen, Quit and stop syncing; setup reaches `daemon.prepareUpdate` before stopping SyncD (package smoke) | `daemon.prepareUpdate` refusals with a real deletion waiting; notifications; start at sign-in; a real sleep is a [limitation](#known-limitations-for-010) |
 | 23.3-7 licenses, source, limits, diagnostics notes | `partial` | [platform notes](platform-notes.md): known limitations; this page's limitation list | User guide; release source materials |
-| 23.3-8 no unverified capability listed as supported | `passed` | [Capability evidence](#capability-evidence): `virtualFiles` stays `false`; `endpointAutoSwitch` and `fullSync` are `true` with their evidence; the 0.1.0 summary in the [version history](version-history.md) offers no on-demand files | none |
+| 23.3-8 no unverified capability listed as supported | `partial` | [Capability evidence](#capability-evidence): `endpointAutoSwitch` and `fullSync` are `true` with their evidence; `virtualFiles` is `true` in 0.1.1 by the user's decision of 2026-11-14 on native ARM64 evidence ([0.1.1 on-demand evidence](#011-on-demand-evidence)); the 0.1.0 summary in the [version history](version-history.md) offered no on-demand files | `virtualFiles` on x64, after an upgrade from 0.1.0 and where Cloud Files is unavailable |
 
 ## Milestone exits (§18)
 
@@ -159,7 +159,7 @@ The property run prints its seed and the minimal failing sequence on a failure;
 | M3 endpoint registry, read-only policy | `partial` | [ipc](ipc.md): consent, namespace check, policy; N01, N02 passed | N04, N06; N07 is a [limitation](#known-limitations-for-010) |
 | M4 safe automatic switching | `partial` | [platform notes](platform-notes.md): manual and failover switching real, uncertain writes recovered (S07, S08), every switch stage killed and recovered (R03); automatic capability `false` | Automatic switching evidence ([Capability evidence](#capability-evidence)); VPN is a [limitation](#known-limitations-for-010) |
 | M5 frontend, first release | `partial` | [platform notes](platform-notes.md): B14 joint acceptance on ARM64, 35.0.2, six of nine steps passed; the B14 findings fixed in SyncD and setup | Steps 6 and 8 again through the interface; upgrade between versions with an account |
-| M6 cloud-file frameworks | `partial` | [on-demand](on-demand.md), [platform notes](platform-notes.md): Windows on-demand registration, hydration, free up space, always keep, switch boundary, crash recovery and unregistration on native ARM64 and x64e against server 35.0.2 through the engine runtime; hosts where Cloud Files cannot answer skip instead of passing | Paired daemon and interface, another origin, deletion protection and offline with placeholders, uninstall unregistration; `virtualFiles` false; the macOS half is outside 0.1.0 by the user's decision of 2026-11-11 |
+| M6 cloud-file frameworks | `partial` | [on-demand](on-demand.md), [platform notes](platform-notes.md): Windows on-demand registration, hydration, free up space, always keep, switch boundary, crash recovery and unregistration on native ARM64 and x64e against server 35.0.2 through the engine runtime; hosts where Cloud Files cannot answer skip instead of passing | Another origin, offline with placeholders, the shipped installers against a server and the uninstall with a real on-demand folder; the 0.1.1 enablement and conversion evidence is under [0.1.1 on-demand evidence](#011-on-demand-evidence); the macOS half is outside 0.1.0 by the user's decision of 2026-11-11 |
 
 ## Joint release acceptance (B14)
 
@@ -183,13 +183,125 @@ Native Windows 11 ARM64, installed package, real window driven by UI Automation,
 
 Only the user decides to enable a capability. For engine builds `endpointAutoSwitch` is `true` since
 2026-11-12 and `fullSync` since 2026-11-13, each by the user's decision once the cases below passed
-on real runs; `virtualFiles` stays `false`. What exists and what is missing for each:
+on real runs; `virtualFiles` is `true` since 0.1.1 (2026-11-14) where Cloud Files runs. What exists
+and what is missing for each:
 
 | Capability | Evidence | Missing to enable it |
 |---|---|---|
 | `fullSync` (`true`) | S01–S08, S11, S12, S20 passed on a real server (ARM64 and x64e for most); conflicts, deletion review, pause and resume through the installed interface (B14); a real cycle's local and server renames and deletions in Activity (B14 step 2, 2026-11-13); two accounts with two folders each (R05 partial); the daemon survives the UI (R01, 23.1-3); the accelerated soak with no rename undone (R21) | E2EE folders (S18, S21), a [limitation](#known-limitations-for-010) |
 | `endpointAutoSwitch` (`true`) | Manual and fixed switching real, deferred to a safe point (N11, B14 step 6); failover with drainage and a fresh epoch (N12); every switch stage killed and recovered (R03); uncertain writes recovered (S07, S08); the automatic policy on real runs: N03–N06, N08–N11, N13–N20 and N22 ([platform notes](platform-notes.md#automatic-switching-acceptance)); P01–P06, P08 and P09; the Network page offers Automatic and Fixed exactly when the capability is true (`TestAutomaticChoiceFollowsCapability`, a native screenshot against the Mock) | Strict VPN egress (N07, N23, not advertised); a real sleep (R15, simulated only); the automatic choice through the installed interface against a real server |
-| `virtualFiles` | Windows on-demand folders through the engine runtime on a real server: placeholders, hydration, free up space, always keep, a switch waiting for a hydration, a kill during a hydration and unregistration, ARM64 and x64e (M6) | The paired daemon and interface choosing the mode; another origin; deletion protection and offline behavior with placeholders; uninstall unregistration; the shell extension for thumbnails and overlays |
+| `virtualFiles` (`true` since 0.1.1) | Windows on-demand folders through the engine runtime on a real server: placeholders, hydration, free up space, always keep, a switch waiting for a hydration, a kill during a hydration and unregistration, ARM64 and x64e (M6); on ARM64 and server 35.0.3 (2026-11-14) also the conversion of a full-file folder and the real pipe at protocol 1.11 ([0.1.1 on-demand evidence](#011-on-demand-evidence)) | the shipped installers against a server (an install over a real 0.1.0, the real uninstaller); SyncD's own navigation entry and icon in Explorer; behavior where Cloud Files is unavailable; another origin; an online-only file opened offline; the shell extension for thumbnails and overlays. Done since ([further evidence](#further-evidence)): x64e, the upgrade through a test host, local deletions, a directory move and deletion protection with placeholders, sparse files |
+
+## 0.1.1 on-demand evidence
+
+Native ARM64, Windows 11 build 26300, Qt 6.12.0, a disposable local server 35.0.3, 2026-11-14, on the first
+0.1.1 build (before patches 0020 to 0023)
+([platform notes](platform-notes.md#on-demand-files-and-the-automatic-conversion-011)):
+
+| Evidence | Result |
+|---|---|
+| SyncD CTest, the full set | 24/24 passed, three runs |
+| `tools/test-ondemand.ps1`, including the conversion steps | passed twice, about 85 s: a conversion pass of 26 entries in 80 ms with one file held delete-pending, the journal digest unchanged, in-sync hydrated placeholders carrying the journal's file IDs, the first on-demand cycle repairing the file left with zero downloads, free up space then re-opening returned the original content |
+| `go test ./internal/syncd` against the real SyncD | passed at protocol 1.11 |
+| `SyncDOnDemandContracts` on real Cloud Files | passed without `SKIP` |
+| Conversion timing (local fixture of 10,000 files of 200 B, hand-written journal, not a real sync) | about 13.4 s for a complete pass, about 1.3 ms per entry |
+
+Not verified in this first run (what was run later and what is still unverified: [further evidence](#further-evidence)):
+x64; the upgrade from an installed 0.1.0; Explorer showing the navigation entry and the icon; the uninstall
+with a real on-demand folder; behavior where Cloud Files is unavailable; timing at 100,000 files.
+
+### Further evidence
+
+Evidence recorded after the table above, with its machine, architecture and date: one Windows 11 ARM64
+host (build 26300, Qt 6.12.0), 2026-11-14; x64 is emulated on the same host; disposable servers 35.0.3 and
+34.0.6. Acceptance found two bugs, fixed by patches 0020 and 0021 ([on-demand](on-demand.md#local-deletions-and-sparse-files)).
+Details are in [platform notes](platform-notes.md#further-011-evidence).
+
+Build with 21 patches (patches 0001–0021, tree `1D235B1119EB`), SyncD 0.1.1, protocol 1.11, Control schema 12. Every figure in this table was measured on this build, not on the 23-patch build:
+
+| Evidence | Result |
+|---|---|
+| SyncD CTest | 24/24: ARM64 40.05 s, x64 56.78 s |
+| Upstream tests through CTest (`UtilityTest` and `SyncCfApiTest` run separately) | 96/96: ARM64 441.0 s, x64 504.0 s |
+| `SyncCfApiTest` through `tools/test-cfapi-upstream.ps1` | 53 passed, 2 skipped, 0 failed: ARM64 92.0 s, x64 93.6 s |
+| `tools/test-ondemand.ps1` | server 35.0.3: ARM64 39.7 s, x64 44.2 s; server 34.0.6: ARM64 40.0 s, x64 41.9 s. Single deletion of an online-only file reaching the server in the automatic follow-up (S12 with placeholders); a directory move as one rename, 0 uploads, 0 deletions (S04 with placeholders); 13 deletions held as `DELETION_CONFIRMATION_REQUIRED`, every file still on the server, deleted after the approval (S11 and INV-13 with placeholders); sparse files: a new file, an edit, a server change, a conflict on both sides, journal type unchanged; conversion of a 0.1.0 folder with a sparse file |
+| `tools/test-all.ps1`, fast tier | ARM64 58.9 s of 120 s; x64 failed once without a named failing test, then passed four reruns (54.3–56.9 s), cause not diagnosed |
+| `tools/test-all.ps1`, server tier, ARM64, server 35.0.3 | passed, 517.0 s of 600 s: the `PLAN.md` §16.5 re-check for the new patch set. The x64 server tier was not re-run on the final build |
+
+Without the fixes: with the flag carry forced off, the on-demand run stopped at the first deletion with
+`SYNC_FAILED`; upstream's sparse tests failed without patch 0021.
+
+Earlier the same day, on the previous build (19 patches, tree `9AD005FA79FF`; packages not rebuilt on the
+21-patch build):
+
+| Evidence | Result |
+|---|---|
+| Packages (`tools/pkg`) | ARM64 29 PE files, all native ARM64; x64 30 PE files, all native x64; version 0.1.1, schema 12, unsigned test packages; SyncD carries an icon resource on both, and `pkg check` fails one without |
+| Real pipe, `go test ./internal/syncd` | 52/52 on ARM64 and x64 |
+| Upgrade 0.1.0 to 0.1.1 through test hosts (not the shipped executables) | ARM64 on 35.0.3 and 34.0.6, x64 on 35.0.3; 302 server files plus 20 uploaded by 0.1.0: backup at `user_version` 11 present, the folder `onDemand` and `converted`, 0 content GETs, 0 of 323 hashes changed, journal digest unchanged; new server file online-only and hydrated on open; free up space and re-open identical; a local edit uploaded; an offline start kept hydrated files readable |
+| A folder of 5,000 files | the first start answered after about 3.3 s; 5,050 of 5,050 in sync, 0 hashes changed; a kill right after the `converting` row, then a restart: converted, journal digest and hashes unchanged, 0 content GETs |
+| Folder removal over the pipe | hydrated files stay with identical content, online-only placeholders removed locally and kept on the server, no placeholders or reparse points left; 228 ms for 336 entries, 2,281 ms for 5,050 |
+| Explorer | the Status column shows the cloud and green-check icons in a converted folder (screenshot inspected) |
+
+Still unverified for 0.1.1: the shipped installers and executables against a server (installing over a
+real 0.1.0, the real uninstaller's release of on-demand folders); `tools/package-smoke.ps1` not run;
+SyncD's own navigation entry (name, icon) in Explorer; already-open Explorer windows; a kill in the middle
+of file conversion; an online-only file opened while offline; switching address with placeholders; folders
+that cannot convert (Cloud Files unavailable, a nested root) on a real profile; conversion timing at 10,000
+and 100,000 files in the real daemon; the x64 upgrade on 34.0.6; the interface for the restarted-cycle
+state; a journal record already rewritten to
+a virtual-file type by a pre-fix development build is not migrated (no released version could produce
+it). Row 23.3-8 stays `partial` for these reasons.
+
+Later runs of the same day, on the 21-patch code (patches 0001–0021, server 35.0.3), on the same ARM64 host,
+for intermittent failures of the on-demand acceptance outside the packaged host (real user registry,
+Explorer seeing the root). Details: [platform notes](platform-notes.md#further-011-evidence).
+
+| Evidence | Result |
+|---|---|
+| Before any fix | outside the packaged host 4/5, 6/8, 7/8, 5/6; inside 4/5 |
+| After the fixes, ARM64 native, outside | 8/8 consecutive passes with an Explorer window open, 37.9–41.9 s each, one first-cycle race hit and handled; 1/1 with the 30 s hold (68.7 s); `tools/test-ondemand.ps1` 1/1 (fixture 38.3 s) |
+| After the fixes, ARM64 native, inside the packaged host | `tools/test-ondemand.ps1` 2/2 (fixture 38.9 s and 38.8 s) |
+| After the fixes, x64 emulated, outside | 2/2 (43.7 s and 43.0 s) |
+| SyncD CTest, fast tier | 24/24 on ARM64 and x64; fast tier ARM64 54.6 s, x64 57.5 s |
+| Navigation pane, outside | a new Explorer window showed "Nextcloud MyGo - root" between Gallery and OneDrive (screenshot inspected, not kept); the fixture's executable has no icon resource, so the icon was generic; 0 sync roots, namespace entries and CLSID keys of the product left |
+
+Causes: a first-cycle listing race (a product defect, fixed), the server keeping an ETag within the same
+second (a fixture assumption, plus a risk that patch 0022 handles later) and a re-entrant `hold` command
+(a fixture defect; INV-05 held). Known risks: [on-demand](on-demand.md#known-risks). Not covered by these
+runs: the once-in-a-row bound of the restart excuse, which was added after them (`SyncDEngineContracts`
+tests it, see below); SyncD's own icon in the navigation pane; already-open Explorer windows; the
+same-second case on Nextcloud 34 and in the versions app.
+
+Patches 0022 and 0023 and the restart tests (2026-11-14 to 2026-11-15, native ARM64, same host; new tests
+only; the results of the full run are in the next paragraph):
+
+| Evidence | Result |
+|---|---|
+| Patch 0022: `testServerSizeChangeUnderSameEtag` (unchanged locally: downloaded, a second sync does nothing; edited locally: conflict, the server's content kept, the conflict copy holds the local edit), `testEncryptedFileSizeIsNotComparedWithTheServer`, `testServerSizeChangeUnderSameEtagUpdatesPlaceholder` | pass on ARM64, run singly. Before the patch the same tests showed no change, an upload and no change |
+| Patch 0023: `testOnDemandListingStoresTheFileIdentity` (another process lists a virtual folder; the stored identity equals the file ID) | passes on ARM64. Before the patch the identity was the ID followed by bytes read past the buffer |
+| On-demand acceptance fixture | keeps its 1.1 s waits; no real-server same-second step was added |
+| Re-entrancy of pipe commands | a code-reading audit, no run: no product defect found, no code change, no test exercises re-entrant delivery ([on-demand](on-demand.md#known-risks)) |
+| `SyncDEngineContracts` (`failureFilter`, `excusedCycles`, `restartFollowUp`, `pausedFollowUp`) | added; deterministic, no server; SyncD CTest is now 25 targets. Its result is part of the final run below, not recorded separately |
+
+Final run on the 23-patch build (2026-11-15):
+
+All runs inside the packaged host, on the same ARM64 host, server 35.0.3; x64 is emulated. Upstream suite
+(`UtilityTest` and `SyncCfApiTest` left out, as the build script does): 95/96 on ARM64 (463.4 s) and 95/96
+on x64 (499.6 s) when both architectures ran at the same time; the failed target on both was
+`PushNotificationsTest`, which listens on a fixed local port; run alone afterwards it passed 2/2 on ARM64
+and 3/3 on x64. `SyncCfApiTest`: 55 passed, 2 skipped, 0 failed on ARM64 (90.9 s) and on x64 (94.2 s).
+Fast tier (Go checks, Go unit and real-pipe tests, SyncD CTest with all 25 targets,
+`SyncDEngineContracts` among them): ARM64 73.0 s, x64 64.3 s. `tools/test-ondemand.ps1`: ARM64 fixture
+43.9 s, x64 45.7 s. Server tier: ARM64 496.5 s of 600 s, all 24 scenarios passed, which is also the
+re-check required after an upstream change; x64 198.5 s, its one smoke scenario (switch-kill committed).
+Packages rebuilt from these trees: `tools/pkg check` reports 29 PE files, all native ARM64, and 30 PE
+files, all native x64, every import resolved; version 0.1.1 agrees in the manifest, SyncD and the
+interface. Not run on this build: anything outside the packaged host; `tools/package-smoke.ps1` (refused
+by the tool permission check, twice); the installers themselves; the upgrade from 0.1.0; server 34.0.6.
+
+Every figure above this paragraph (24/24, 96/96, 53 passed and 2 skipped, the tier timings, the packages)
+was measured on the 21-patch build or an earlier one and is not evidence for the 23-patch build.
 
 ## Known limitations for 0.1.0
 

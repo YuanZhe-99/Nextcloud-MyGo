@@ -4,8 +4,8 @@
 
 Read this section first; everything below it is the dated record, newest first.
 
-The backend is **not complete** and no milestone has passed its exit criteria. Product 0.1.0,
-protocol 1.9, Control schema 11, Desktop v35.0.3 with eighteen recorded patches.
+The backend is **not complete** and no milestone has passed its exit criteria. Product 0.1.1,
+protocol 1.11, Control schema 12, Desktop v35.0.3 with twenty-three recorded patches.
 
 Built and verified on native ARM64 and emulated x64 (evidence in [platform notes](platform-notes.md)):
 
@@ -29,6 +29,9 @@ Built and verified on native ARM64 and emulated x64 (evidence in [platform notes
   folders on upstream's CFAPI plugin ([on-demand](on-demand.md)) — placeholders, hydration on open,
   directory population, free up space, always keep on this device, a switch that waits for a running
   hydration, a kill during a hydration with restart, and complete unregistration.
+- On native ARM64 against a disposable server 35.0.3 (2026-11-14, [platform notes](platform-notes.md)):
+  the same on-demand run extended by the one-time conversion of a full-file folder, and the real pipe
+  at protocol 1.11.
 
 Not done:
 
@@ -40,15 +43,17 @@ Not done:
 | Paired-daemon fixture | On 2026-11-12, after the lane split, `tools/test-login.ps1 -SyncFolders -Reauthenticate` passed against the shared server three times in a row on native ARM64 (253.3 s, 259.6 s, 279.9 s), each run four parallel lanes; one emulated x64 run failed (262.9 s): its renewal lane's fixed-policy reconciliation ended `NETWORK_UNAVAILABLE`, and its abort then lost the pipe to the live daemon during account removal (a second abort removed the account with confirmed revocation; why the connection dropped is not established); the single-flow version took 527–562 s. The earlier "every call busy" runs were a daemon that had stopped itself (exit 0 after a storage failure, with the quota full) while the Go client reported its own missing connection as busy; it now reports `ErrDisconnected`. Every request that authenticates afresh costs the shared server about 2.3 s, and more than about five at once exceed the daemon's 4-second metadata deadline, which a lane sees as a 60 s `NETWORK_UNAVAILABLE` stall |
 | Login throttling | No real-server 429 acceptance. A renewal's candidate password still ends unconfirmed when the daemon restarts during its held revocation |
 | Packaging and update (B13) | Setup calls `daemon.prepareUpdate` and signed in-app updates exist ([packaging](packaging.md)); not verified: installing the x64 package (needs x64 hardware), an upgrade between versions with a signed-in account, the installed interface itself starting an update, a release signed with the project key and read from GitHub; no Authenticode signature |
-| On-demand files (M6, Windows) | `virtualFiles` stays `false`. Not run: through the paired daemon and interface (the interface cannot choose a mode yet), a switch to another origin, deletion protection and offline behavior with placeholders, the §20 cases for on-demand folders. The uninstaller does not end registrations yet; the SyncD executable has no icon for Explorer's sync-root entry; thumbnails and lock/share overlays need the shell extension, which is not built |
+| On-demand files (M6, Windows) | Enabled in 0.1.1 (`virtualFiles` is true where Cloud Files runs). Run since (2026-11-14, [platform notes](platform-notes.md#further-011-evidence)): x64e, the 0.1.0 to 0.1.1 upgrade through test hosts, local deletions, a directory move, deletion protection and sparse files with placeholders. Not run: the shipped installers against a server, SyncD's own navigation entry and icon in Explorer, behavior where Cloud Files is unavailable, a conversion of 100,000 files, a switch to another origin, an online-only file opened offline, the remaining §20 cases for on-demand folders. Thumbnails and lock/share overlays need the shell extension, which is not built; a registration with no folder behind it has no in-app remedy |
 | Platform evidence | No native x64 hardware, interactive browser/SSO/MFA login, a real suspend/resume (simulated only, [acceptance](acceptance.md) R15) or 24-hour run (an accelerated soak run replaces it); clang-tidy could not be run |
 
 What the interface must respect until those pass:
 
-- The `virtualFiles` capability stays `false`; never present it as supported. `endpointAutoSwitch`
-  is `true` for engine builds since 2026-11-12 and `fullSync` since 2026-11-13, each by the user's
-  decision once its cases passed on real runs ([acceptance](acceptance.md#capability-evidence)); a
-  build without the engine reports both `false`.
+- `virtualFiles` is `true` only for an engine build with its state available where
+  `OnDemandRoot::available()` holds (0.1.1, by the user's decision of 2026-11-14); never present it
+  as supported elsewhere. `endpointAutoSwitch` is `true` for engine builds since 2026-11-12 and
+  `fullSync` since 2026-11-13, each by the user's decision once its cases passed on real runs
+  ([acceptance](acceptance.md#capability-evidence)); a build without the engine reports all three
+  `false`.
 - While `daemon.stateAvailable` is `false` nothing is shown as healthy, and a missing collection is
   unknown, not empty.
 - The interface goes only through IPC ([IPC](ipc.md)); the account and engine rules are in
@@ -111,6 +116,30 @@ hydrations as activity for the switch and re-authentication boundary; Control sc
 mode chosen at `folders.add` (protocol 1.8) and removal ends the registration
 ([on-demand](on-demand.md), [IPC](ipc.md)). Runs and durations are in the
 [platform notes](platform-notes.md). The open items are the "On-demand files" row above.
+
+### Enabled for 0.1.1 (2026-11-14)
+
+The user decided on 2026-11-14 to enable on-demand files and to convert the folders 0.1.0 added with
+full files, once and automatically. Control schema 12 and protocol 1.11 carry the conversion state
+(`folders.conversion`, `conversionReason`); `Control::attachFolder` runs the state machine and
+`OnDemandRoot::convertExisting` the pass, which only reads the journal and downloads and deletes
+nothing; a failed attach rolls the registration back and the folder stays full
+([on-demand](on-demand.md#automatic-conversion-of-full-file-folders), [engine](engine.md)). Each
+on-demand folder gets an Explorer navigation entry (HKCU only), and SyncD carries the Nextcloud icon.
+A plain uninstall first has SyncD release every on-demand folder ([packaging](packaging.md#uninstall)).
+The interface offers on demand by default and says in one line what the conversion did or why it has
+not happened ([interface](gui.md)). Acceptance later the same day found two bugs that only on-demand folders reach, and patches 0020 and 0021 fix them: a local deletion never reached the server because SyncD's one-engine-per-cycle lost upstream's restart flag, and an ordinary sparse file was read as an online-only placeholder ([on-demand](on-demand.md#local-deletions-and-sparse-files), [engine](engine.md#local-deletions-in-on-demand-folders)). Upstream versions were checked on
+2026-11-14 and are unchanged ([version history](version-history.md)).
+
+Items left open on 2026-11-14 were worked on on 2026-11-14 and 2026-11-15 (not committed). The
+same-second ETag case is handled by patch 0022 and the identity over-read of the Cloud Files listing is
+fixed by patch 0023 (twenty-three patches in all, fingerprint `CF0C68C10DD7`), both with upstream tests that
+pass on ARM64 run singly ([on-demand](on-demand.md#known-risks), [upstream](upstream.md)). The restarted
+cycle has deterministic tests in the new CTest target `SyncDEngineContracts` (`backend/engine_tests.cpp`;
+it needs the upstream build, as the engine does; SyncD has 25 CTest targets). The re-entrancy of pipe
+commands was audited by reading the code: no product defect, no code change, no test
+([on-demand](on-demand.md#known-risks)). The full run on the 23-patch build is recorded in
+[platform notes](platform-notes.md#further-011-evidence); earlier figures belong to earlier builds.
 
 ## M0 / B01: dependency and interface audit
 

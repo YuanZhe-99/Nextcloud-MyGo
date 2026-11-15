@@ -105,7 +105,7 @@
 
 | 平台 | 框架 | 必须提供 |
 |---|---|---|
-| Windows | Cloud Files API（CFAPI，即 OneDrive 式“按需文件”） | 同步根注册、占位文件、按需下载（hydration）、释放空间（dehydration）、“始终保留在此设备”、资源管理器中的状态与进度 |
+| Windows | Cloud Files API（CFAPI，即 OneDrive 式“按需文件”） | 已实现，见 `doc/en-us/on-demand.md`；自 0.1.1 起启用，用户 2026-11-14 决定：此前以完整文件添加的目录在升级后自动、一次性地转换为按需文件 |
 | macOS | File Provider（`NSFileProviderReplicatedExtension`） | 由系统管理的域、Finder 集成、按需下载与驱逐、状态与进度、与 SyncD 之间的 XPC 通道 |
 
 约束：
@@ -114,7 +114,7 @@
 - **从 M1 起为它们留位置。** 目录模式（完整文件 / 按需文件）是 FolderBinding 的属性；平台差异集中在 SyncD 的 `platform/<os>/` 层；同步根注册与所有权锁、删除保护、切换门闩和 endpoint epoch 同样约束 hydration 请求和 File Provider 回调；进行中的 hydration 按传输对待，切换要等它到达静止边界。
 - **单写者不变量不变。** macOS 的 File Provider 扩展运行在系统托管的独立进程中，它通过 XPC 请求 SyncD，不直接写 journal；INV-01 与 INV-05 在两个平台上同样成立。
 - **平台要求。** macOS 需要签名、公证、App Group 与扩展授权，MyGo 界面同时提供 macOS 构建（与 Kyokai、Easytier-MyGo 一样）；Windows 的同步根注册使用 Nextcloud MyGo 自己的标识，不与官方客户端冲突（第 4.5 节）。
-- **时序。** 首版（M5）仍是 Windows 普通完整文件；Windows CFAPI 与 macOS（含 File Provider）是 M6 的必做项，不是可选扩展。在它们完成前，检测到他人的占位文件或云文件目录继续按第 11.4 节阻止。
+- **时序。** Windows CFAPI 见 `doc/en-us/on-demand.md`；macOS（含 File Provider）是 M6 的必做项，不是可选扩展。在 macOS 完成前，检测到他人的占位文件或云文件目录继续按第 11.4 节阻止。
 
 ### 2.4 完成标准
 

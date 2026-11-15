@@ -22,9 +22,14 @@ class Control {
 public:
   /// schemaVersion is the Control database version this build writes; the
   /// `PRAGMA user_version=` statement in control.cpp must name the same.
-  static constexpr int schemaVersion = 11;
+  /// Notes: schema 12 adds folders.conversion and folders.conversion_reason;
+  /// migrating a schema 1–11 database marks its full-file folders 'pending'
+  /// for conversion to on-demand, once (a folder added as full later keeps
+  /// '').
+  static constexpr int schemaVersion = 12;
   /// protocolMinor is the protocol 1.x minor version this build speaks.
-  static constexpr int protocolMinor = 10;
+  /// Notes: 1.11 adds each folder's conversion and conversionReason.
+  static constexpr int protocolMinor = 11;
   /// protocolVersion is the "1.<minor>" text Diagnostics and the startup
   /// report show; derived from protocolMinor so no copy can drift.
   static QString protocolVersion() {
@@ -354,6 +359,9 @@ private:
                              const QByteArray &digest);
   /// folderProjection reads durable mappings with truthful current-cycle
   /// status.
+  /// Notes: protocol 1.11 conversion is "" | "pending" | "converted"; a pass
+  /// in progress ('converting' in the database) reads as "pending", and
+  /// conversionReason is empty unless pending.
   QJsonArray folderProjection() const;
   /// decisionProjection exposes pending deletion summaries, never authorization
   /// or credentials.
@@ -367,6 +375,19 @@ private:
   void restoreFolders();
   /// attachFolder revalidates a persisted root and registers it with the serial
   /// engine runtime.
+  /// Side effects: a v0.1.0 full-file folder (conversion 'pending', or an
+  /// interrupted 'converting') is switched to on-demand here, at its quiescent
+  /// boundary: an ineligible one records conversionError as its reason and
+  /// attaches as full (retried at every attach); an eligible one becomes
+  /// onDemand/'converting' before any file changes, attaches with
+  /// convertExisting and is 'converted' once attached. When that attach
+  /// throws, the registration is released (hydrated placeholders become plain
+  /// files again, nothing is deleted) and the folder returns to full/'pending'
+  /// with the sanitized reason and attaches as full; it stays 'converting'
+  /// when the release failed, and the attach error is thrown.
+  /// Notes: only for a ready account's folder without a runtime (throws
+  /// otherwise, before any change); a folder whose conversion is '' (added as
+  /// full) or 'converted' is never touched.
   void attachFolder(const QString &id);
   /// publishState commits a new snapshot event without a configuration edit.
   void publishState();

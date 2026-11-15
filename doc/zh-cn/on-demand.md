@@ -1,8 +1,10 @@
 # 按需文件（Windows Cloud Files）
 
 按需目录把每个远程文件都保留为 Cloud Files 占位文件：列表中显示其名称、大小和日期，只有应用打开它时才下载内容。
-这是 M6 的 Windows 部分（`PLAN.md` §2.3）。目录在添加时选择完整文件模式或按需模式；已有目录不会切换模式，
-因为上游的模式切换会删除并重建 journal。
+这是 M6 的 Windows 部分（`PLAN.md` §2.3），自 0.1.1 起启用：当 SyncD 为引擎构建、状态可用且
+`OnDemandRoot::available()` 成立（每个进程只计算一次）时，`virtualFiles` 能力为 true。目录在添加时选择完整文件
+模式或按需模式，默认按需，此后不再改变模式；唯一例外是 0.1.0 添加的目录（始终为完整文件），它会被自动、一次性地转换
+（[见下](#完整文件目录的自动转换)）。
 
 ## 复用的上游代码
 
@@ -17,7 +19,7 @@ SyncD 加载上游的 CFAPI 插件（`src/libsync/vfs/cfapi`、`nextcloudsync_vf
 - `Vfs::refuseNewRequests` 与 `Vfs::hasRequestsInFlight` 让所有者先关闭同步根，并在断开连接前确认没有正在
   运行的按需下载或目录填充回调。
 
-Shell 扩展（缩略图、锁定与共享叠加图标）不构建。资源管理器自身的 Cloud Files 集成提供状态列与图标、传输进度，
+Shell 扩展（缩略图、锁定与共享叠加图标）仍不构建。资源管理器自身的 Cloud Files 集成提供状态列与图标、传输进度，
 以及“始终保留在此设备上”和“释放空间”命令。
 
 ## 注册
@@ -25,7 +27,7 @@ Shell 扩展（缩略图、锁定与共享叠加图标）不构建。资源管�
 `OnDemandRoot`（`backend/platform/windows/`）为一个绑定 epoch 注册并连接一个目录的同步根。注册项为
 `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\SyncRootManager` 下的
 `Nextcloud-MyGo!<用户 SID>!<账号 ID>!<目录 ID>`，由当前用户在不提权的情况下写入，提供程序名为
-`Nextcloud-MyGo`，版本为产品版本。官方客户端注册为 `Nextcloud!…`，两者从不共用同一注册项。
+`Nextcloud-MyGo`，版本为产品版本。同步根的显示名为 `Nextcloud MyGo - <目录名>`，提供程序 ID 仍为 `Nextcloud-MyGo`。官方客户端注册为 `Nextcloud!…`，两者从不共用同一注册项。
 
 只有既不是同步根、也不位于任何同步根之内的目录才能成为按需同步根。Cloud Files 报告属于其他提供程序、其他目录
 或位于某个同步根之内的路径一律为 `FOLDER_OWNED`。按需模式还需要 Cloud Files 微筛选器（服务 `CldFlt`）
@@ -52,18 +54,186 @@ origin。账号为切换或重新认证进入静止时，该账号的所有按�
 提供程序进程结束时，Cloud Files 让打开请求失败。占位文件保留已经到达的内容，仍为仅联机状态；其 journal 记录仍为
 虚拟记录，因为上游只在按需下载完成时才记录。重启后再次打开时从头重新下载该文件。
 
+## 完整文件目录的自动转换
+
+0.1.0 添加的目录保存完整文件。按用户 2026-11-14 的决定，SyncD 把其中每一个一次性转换为按需文件，不下载也不删除
+任何内容。上游自己的模式切换（`Folder::setVirtualFilesEnabled`、`SyncEngine::switchToVirtualFiles`）既不删除也不
+重建 journal，只是把本地文件变成占位文件，并且向转换传入的是空条目，所以 SyncD 有自己的转换流程
+（[上游](upstream.md#现代云文件框架)）。
+
+控制数据库 schema 12 新增 `folders.conversion`（`''`、`pending`、`converting`、`converted`）和
+`folders.conversion_reason`。迁移 schema 1–11 的数据库时，每个 `full` 行都标记为 `pending`；0.1.1 下添加的目录为 `''`，
+无论何种模式都不会被转换。协议 1.11 投影该状态（[IPC](ipc.md)）：`converting` 读作 `pending`。
+
+状态机位于 `Control::attachFolder`，在启动时以及每次挂接目录时运行，针对账号就绪且没有运行时的目录：
+
+1. 资格由 `OnDemandRoot::conversionError` 判定：本机不支持按需模式，或上游拒绝该位置（驱动器根目录、非 NTFS 卷、
+   网络驱动器）时为 `UNSUPPORTED_FOLDER_MODE`，否则按注册一节的所有权检查（`FOLDER_OWNED`）。不合格的目录保持完整文件，
+   把错误码存为 `conversion_reason`，并作为完整文件挂接；下次挂接时再试。
+2. 合格的目录在一个事务中变为 `onDemand` 与 `converting`，此时尚未触碰任何文件。完整文件的根租约拒绝占位文件，
+   而按需租约接受二者混合的目录树，所以从这里起崩溃，重启后按按需转换继续。
+3. 目录带着 `Binding::convertExisting` 挂接：`EngineAdapter` 构造函数注册并连接同步根，然后在控制线程上、
+   第一个同步周期之前运行 `OnDemandRoot::convertExisting`（[引擎](engine.md)）。
+4. 挂接成功后，该行变为 `converted`。
+
+### 转换流程转换什么
+
+转换流程读取目录的 journal 且从不写入；从不删除、释放空间或下载，固定状态保持原样。对每条记录：
+
+- 目录总是被转换。上游没有针对目录的修复（见下），所以目录不受预算限制。
+- 文件在 `EngineAdapter::conversionBudgetMs`（3 秒的文件工作时间）内转换，并且只在其大小和修改时间仍与 journal 记录
+  相同时转换：从未上传的内容绝不标记为已同步，否则它可能在服务器没有副本的情况下被释放空间。
+- 占位文件的标识是 journal 的文件 ID，标记为已同步且已下载。
+- 已经是占位文件的条目（先前被中断的转换流程）被跳过；缺失的条目、被排除的名称以及既非普通文件也非目录的
+  条目同样跳过。稀疏文件与其他文件一样被转换：转换后它读作已下载，因此注销会把它变回普通文件，绝不删除它
+  （[稀疏文件](#稀疏文件)）。
+- 转换流程打不开的文件，例如被标记为删除的文件，保持普通文件。被独占打开的文件可以转换，因为上游的转换以不带任何访问
+  权限的方式打开它。
+
+被预算、失败或变化而遗留的文件，在第一个按需周期中通过上游自己的修复变成占位文件：在 Cloud Files 根中，发现过程把普通
+文件读作缺少元数据，并对未变化的文件发出 `UPDATE_METADATA`，不下载。遗留的 `.lnk` 文件保持普通文件。
+在 ARM64 测试机上，约 2,000 个小文件可在预算内完成；对 10,000 个文件的完整流程在该机器上约用 13.4 秒
+（[平台说明](platform-notes.md)）。
+
+### 崩溃与回滚
+
+| 进程结束的位置 | 重启时的状态 | 发生什么 |
+|---|---|---|
+| 模式翻转之前 | `full`、`pending` | 整个挂接重试 |
+| 翻转与 `converted` 之间 | `onDemand`、`converting` | 转换流程重复；它是幂等的 |
+| `converted` 之后 | `onDemand`、`converted` | 普通的按需目录 |
+
+若行处于 `converting` 时适配器构造函数抛出异常（journal 无法读取、账号需要登录、同步根已移动），则尚未运行过按需周期，
+所以没有仅联机的占位文件。`OnDemandRoot::unregister` 把占位文件变回普通文件，不删除任何内容。成功后，该行回到 `full`
+与 `pending` 并带上原因码，目录作为完整文件挂接。若注销失败，该行保持 `converting`，抛出错误，下次启动重试。
+
+已转换的目录不再转换，转换状态为 `''` 的目录从不被触碰。
+
+## 本地删除与稀疏文件
+
+### 本地删除
+
+当发现过程在 Cloud Files 目录中发现本地移除时，上游的 `SyncEngine::shouldRestartSync` 会把该周期作为失败结束一次，
+使下一个周期在服务器上移除任何内容之前重新发现，然后放行下一个周期。这个“一次”是引擎对象的一个标志。SyncD 每个周期
+创建一个引擎，标志因此丢失：每个这样的周期都重启，按需目录中的本地删除从未到达服务器，目录停在 `SYNC_FAILED`，删除保护
+也从未触发。该缺陷从按需代码出现起就存在，在 0.1.0 中因该能力关闭而不可达。补丁 0020 增加
+`SyncEngine::restartedSyncAfterDiscovery()` 与 `setRestartedSyncAfterDiscovery(bool)`；`EngineAdapter` 在周期之间保存该标志，
+把它设入每个新引擎并读回（[引擎](engine.md#按需目录中的本地删除)）。
+
+用户看到的：重启的周期不是失败。目录显示 `syncing` 且没有原因，不计失败，不设阻塞，工作保持待处理，后续周期约 2 秒后运行
+（`EngineRuntime::restartDelayMs`），没有退避。按需目录中每个含本地移除的周期仍像上游那样重启一次，包括用户批准被保留的
+删除之后的那个周期；批准在其中保留。
+
+重启周期的第二个原因是目录第一个周期中的列表请求。注册同步根会让外壳立即列出它，所以周期运行时，另一个进程可能向 Cloud Files
+请求目录列表（FETCH_PLACEHOLDERS）。该进程未被识别，推测是资源管理器。上游的列表回调随后创建占位文件，而引擎自己的批量占位文件创建
+以“Cannot create a file when that file already exists”失败。这些条目以 NormalError 结束，周期以 `SYNC_FAILED` 结束，目录因此显示错误，
+尽管列表会写入 journal 记录，下一个周期也是干净的。在打包宿主之外、打开着资源管理器窗口时，约每 7 到 8 次运行出现 1 次；
+在打包宿主之内从未出现。`OnDemandRoot::holds(relativePath, fileId)` 在不请求内容的情况下读取占位文件的标识。
+`EngineAdapter` 记录失败的条目（`EngineAdapter::failure`）并决定豁免（`EngineAdapter::excused`）。当一个周期仅有的失败是下载方向、虚拟文件、状态为 NormalError 的新条目，且其路径现在持有相同服务器文件 ID 的占位文件时，
+该周期被报告为重启：没有原因，2 秒后后续周期，没有退避，目录显示 `syncing`。这只连续豁免一次：如果下一个周期以同样方式失败，
+则像以前一样报告为 `SYNC_FAILED`。周期中的任何其他失败条目都会使它失效。数据处理不变，只是分类改变。`holds` 接受存在的两种标识形式：
+精确的文件 ID（占位文件创建以及自补丁 0023 起的列表路径都存它），以及转换所存的带结束符的 UTF-16 字符串（[上游](upstream.md#nextcloud-desktop)）。
+
+### 稀疏文件
+
+上游把每个 NTFS 稀疏文件都读作仅在线的占位文件。新的本地稀疏文件在本地被删除且从未上传，已有稀疏文件的编辑没有上传，
+之后悄然分叉。补丁 0021 让 `VfsCfApi::isDehydratedPlaceholder` 与 `statTypeVirtualFile` 仅当文件带有云重解析标记和
+`FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS` 且不是目录时才视为已释放空间；仅有稀疏属性不再算数（属性表见
+[上游](upstream.md#nextcloud-desktop)）。`OnDemandRoot::convertExisting` 不再跳过稀疏文件：转换后的稀疏文件读作已下载。
+
+## 导航窗格条目与图标
+
+每个按需目录在资源管理器导航窗格中都有一个条目，名称与其同步根相同，CLSID 为 `{<目录 ID>}`
+（`OnDemandRoot::navigationClsid`；目录 ID 不是 UUID 时没有条目）。它只写在 HKCU 下，仿照上游的
+`src/gui/navigationpanehelper.cpp`（无法链接的 GUI 代码）：`Software\Classes\CLSID\{clsid}` 及其 `Wow6432Node` 副本、
+`Explorer\Desktop\NameSpace\{clsid}` 和 `HideDesktopIcons\NewStartPanel` 值。进程内服务器是系统的 `shell32.dll`，
+因此本产品没有任何 DLL 被加载进资源管理器。每个键都带有 `ApplicationName=Nextcloud-MyGo`（官方客户端写入
+`Nextcloud`），卸载程序据此识别遗留项。该 CLSID 同时作为 `VfsSetupParams::navigationPaneClsid` 传入，因此补丁 0017
+把它写为同步根的 `NamespaceCLSID`。
+
+该条目在每次启动时重写，因为它的图标是正在运行的 SyncD，而 SyncD 位于带版本号的目录中；凡是结束注册的路径都会移除它。
+首次注册失败时不会留下条目。条目写入失败只损失侧边栏项：注册继续进行。
+
+新的资源管理器窗口无需重启也无需 `SHChangeNotify` 即可看到新增或移除的条目（在 build 26300 ARM64 上以同样布局的手写条目
+观察到）；已打开的窗口未测试。在打包宿主之外，验收的根注册期间打开的新资源管理器窗口，
+在“库”与 OneDrive 之间显示了条目“Nextcloud MyGo - root”（已检查截图，未保存在仓库中）。那是验收程序的可执行文件，
+它没有图标资源，所以条目显示的是通用文件夹图标。SyncD 自己的图标在窗格中的显示尚未验证，已打开的窗口也一样。运行之后，
+真实注册表中没有该产品的同步根、命名空间条目或 CLSID 键。
+
+`nextcloud-mygo-syncd.exe` 以图标 0 携带 Nextcloud 图标（`backend/platform/windows/syncd.ico`，见
+[第三方代码](third-party.md)），资源管理器用它显示同步根及其条目。`tools/pkg check` 与 `stage` 拒绝 SyncD 没有图标资源的包。
+
 ## 移除
 
 移除按需目录时，在其运行时结束后注销注册项。内容已在磁盘上的文件恢复为普通文件，因此以后仍可把该目录映射为完整
 文件模式；仅联机占位文件会被删除，因为没有提供程序就无法打开它们，而服务器仍保存其内容。其他本地内容和 journal
-保留不变。SyncD 从不调用上游的 `unregisterFolder`，它会在其提供程序的同步根全部移除后删除 Shell 扩展类。
+保留不变。该目录的导航窗格条目随注册项一起移除。SyncD 从不调用上游的 `unregisterFolder`，它会在其提供程序的同步根全部移除后删除 Shell 扩展类。
+
+普通卸载会先移除每个按需目录，因此没有注册项或仅联机文件会比程序存活得更久（[打包](packaging.md#卸载)）。
 
 ## 验证
+
+外壳集成检查（HKCU 与 HKLM 键、导航窗格）只有在 SyncD 或测试运行于打包（MSIX）宿主应用之外时才有效：由其启动的进程写入该包的
+私有注册表视图，资源管理器从不读取它。
+
+验收在两处检查：开发工具所运行的打包宿主之内，以及之外（真实用户注册表，资源管理器能看到该根）。间歇性失败主要出现在之外（之内有过一次），
+[平台说明](platform-notes.md#011-的后续证据)中的运行把两者分开。验收程序在内存中保留一个环形缓冲区：上游的 info 级日志
+（对 Cloud Files 回调包含请求进程的映像名）、周期的开始与结束，以及根的变更通知。它只在周期失败、步骤失败（`dump` 命令）或 hold 超时之后
+把它们打印为 `LOG` 行；实时打印会改变时序，已被移除。`SYNCD_TEST_HOLD=<marker>` 让已注册的根在检查之后继续服务 30 秒，
+以便检查资源管理器。`Dav::change` 在它的三次服务器端重写之前各等待 1.1 秒，因为文件在同一秒内被重写时服务器保留其 ETag
+（[已知风险](#已知风险)）；没有这个等待时，冲突步骤有时找不到冲突副本。补丁 0022 之后这些等待仍保留；没有增加真实服务器上的同一秒步骤。步骤“切换等待正在运行的按需下载（INV-05）”曾以 `hold waited 30000 ms`
+失败：验收程序的 `hold` 命令在周期预检收集读取的嵌套事件循环中重入运行并在那里空转 30 秒，使周期无法开始，之后迟到的按需下载请求因根正在关闭
+而被正确拒绝。现在 `hold` 冻结准入并通过定时器轮询空闲。产品的 INV-05 成立。
 
 `syncd_ondemand_tests`（CTest `SyncDOnDemandContracts`）在临时 NTFS 目录上针对真实的 Cloud Files API 运行，
 不连接服务器：注册标识、拒绝外部和嵌套同步根、切换所等待的请求闸门，以及完整注销。它先在每台机器上对模拟的
 Cloud Files 结果分类（`OnDemandRoot::ownershipReason`）；Cloud Files 无法为其临时目录作答时，它打印带查询 HRESULT
 与筛选器状态的 `SKIP` 并以 77 退出，CTest 将其报告为已跳过，绝不报告为通过。`tools/test-ondemand.ps1`
 针对一次性本地服务器运行 `syncd_ondemand_acceptance`：占位文件、打开时按需下载、目录填充、释放空间、始终保留在
-此设备上、等待正在运行的按需下载的切换、关闭期间的拒绝与下一个 epoch 的服务、按需下载期间终止进程后重启，以及注销。
-`tools/test-cfapi-upstream.ps1` 运行上游的 `SyncCfApiTest`。结果见[平台说明](platform-notes.md)。
+此设备上、等待正在运行的按需下载的切换、关闭期间的拒绝与下一个 epoch 的服务、按需下载期间终止进程后重启，以及注销；
+之后是转换步骤：以完整文件同步的目录、在一个文件被挂起删除时运行转换流程（该文件保持普通）、journal 不变，
+以及带有 journal 文件 ID 的已同步、已下载的占位文件，随后第一个按需周期修复遗留的文件且不下载任何内容，最后是释放空间
+并重新打开该文件。它还覆盖仅在线文件的本地删除（在自动后续周期中到达服务器）、作为一次重命名的目录移动、删除 13 个条目后被保留
+直到用户批准，以及稀疏情形（新文件、编辑、服务器上的变化、两侧都变化；journal 类型保持为文件）；转换部分也转换一个稀疏文件。
+`tools/test-cfapi-upstream.ps1` 运行上游的 `SyncCfApiTest`。
+
+转换还有两个契约测试，均在真实 Cloud Files 上运行且不需要服务器。`syncd_ondemand_tests` 中的 `conversionCase` 对手写的
+journal 运行 `OnDemandRoot::convertExisting`：标识来自 journal 的文件 ID、预算耗尽后目录仍被转换、文件只在预算内转换、
+第二次流程完成被中断的第一次、已变化、缺失和挂起删除的条目被保留、稀疏文件被转换、被独占打开的文件可转换、journal 不变，以及回滚
+（`unregister`）让每个文件保持普通且不删除任何内容。`folder_error_tests.cpp` 中的 `conversionStates` 驱动
+`Control::attachFolder` 走过状态表的每一行：以完整文件添加的目录从不被转换；位于另一提供程序根之内的待转换目录以
+`FOLDER_OWNED` 保持完整文件，该根消失后转换；合格的和被中断的目录最终为 `converted`；注册后转换流程失败（journal 无法读取）
+的目录被释放并带着原因回到 `full`，journal 原封不动；已转换的目录保持不变。两者在 Cloud Files 无法作答时打印 `SKIP`。
+结果见[平台说明](platform-notes.md)。
+
+契约测试还有步骤“占位文件按其文件 ID 在两种标识形式下被识别”（`OnDemandRoot::holds`：原始形式、列表形式，以及反例：另一个 ID、
+ID 前缀、普通文件、缺失的文件、空 ID）。它在 ARM64 与 x64 上通过。自补丁 0023 起，列表路径也存精确的形式；转换仍存带结束符的 UTF-16 字符串，所以 `holds` 继续接受两种。
+
+重启周期在引擎一侧的决定有确定性测试，不需要服务器，也不需要 Cloud Files：`syncd_engine_tests`（CTest `SyncDEngineContracts`，需要上游构建）。
+`failureFilter` 通过 `EngineAdapter::failure` 对真实同步条目分类（无、占位文件、其他）。`excusedCycles` 把 `EngineAdapter::excused` 的结果
+回馈四个周期，得到豁免、不豁免、豁免、不豁免：连续一次的限制。`restartFollowUp` 在可控时钟上运行 `EngineRuntime::settle`：
+后续周期在 +1999 毫秒不被准入，在 +2000 毫秒被准入，失败计数不变，其后的真实失败退避 16 秒，成功则重置。`pausedFollowUp`
+表明周期中设置的用户暂停在后续周期之后仍然保留，全局冻结会将其挡住（INV-13、INV-14）。竞态本身在一次真实运行中命中过一次
+（ARM64，打包宿主之外），验收程序打印了 `STEP first cycle restarted, its follow-up answers` 并通过；在 x64 上从未命中。
+
+## 已知风险
+
+- **同一秒内的 ETag（由补丁 0022 处理，有限制）。** Nextcloud 35.0.3 在文件于一秒内被重写两次时可能保留其 ETag：一次探测中，2 MiB 上传的
+  15 对连续 PUT 里有 5 对得到相同的 ETag。上游的发现过程只用 ETag 判断文件在服务器端是否变化（`processFileAnalyzeRemoteInfo`），
+  因此 ETag 相同而大小不同被视为“服务器未变化”；本地编辑随后被上传，上传的 If-Match 因 ETag 相同而通过，服务器上较新的内容被替换。
+  补丁 0022 把在 ETag 相等的情况下服务器大小与 journal 中大小不同的文件，按服务器端已变化处理，走上游现有的路径：下载；若本地也被编辑，
+  则成为冲突副本并保留服务器的内容；已释放的占位文件取得新的大小。排除：目录（其大小是整棵树的大小）、端到端加密的条目
+  （journal 存明文大小，服务器报告密文大小）以及名称被改写的 journal 记录。虚拟文件和实况照片有意不排除。不比较 mtime 与服务器校验和：
+  仅 mtime 变化仍走上游的元数据分支，且服务器对不带校验和上传的客户端不提供校验和。仍无法检测：一秒内的同大小重写，以及父目录也保留其
+  ETag 的服务器上的重写（未变化的目录不会被列出；如所观察到的，Nextcloud 在每次写入时都会给父目录新的 ETag）。残余风险，已记录但没有防护：
+  服务器报告的大小始终与下载内容的长度不同、且没有 Content-Length 的服务器，会在每次同步时重复下载（不丢数据）；防护需要 journal 状态。
+  未测试：补丁之前被替换的内容是否保留在服务器的版本应用中，以及 Nextcloud 34（[上游](upstream.md#nextcloud-服务器-api)）。
+- **可重入的管道命令（已审计，产品无缺陷，未改动代码）。** Control 在控制线程上的产品代码中有三处嵌套事件循环：读取服务器 JSON
+  （无凭据时限 4 秒，有凭据时限 15 秒）、读取集合（30 秒），以及适配器在其根忙碌时被销毁时 `~OnDemandRoot` 中的等待（60 秒）。
+  每个定时器、管道命令和排队回调都可能在其中被送达。读代码所见，每种情形都被拒绝、推迟到定时器重试，或变成被挂起的栈帧在读取之后检查的取消：
+  一个周期运行时不可能有第二个周期；删除正在运行的目录被拒绝；账号移除、端点切换、故障转移和重新认证等待静止并重试；
+  暂停和停止把周期标为已取消；关闭只在周期完成后结束；嵌套的分发被拒绝。没有产品处理程序等待或空转。因此在运行中的周期之下，
+  既没有第二个 journal 写入者，也没有 epoch 变化。残余，已记录：嵌套在另一次读取内的读取会延迟外层读取，以读取期限为界；
+  在目录移除的静止检查与移除之间到达的 Cloud Files 回调，可能让析构函数为它服务最长 60 秒。未确定：Qt 的 Windows 分发器从不重入定时器槽，
+  这一点在此没有测试（上述保护不依赖它）；没有发现在退役期间被推迟的删除会释放另一个目录被挂起的栈帧所使用的对象的路径，但没有证明其不存在。
+  这是读代码的审计：产品中没有测试演练重入的送达。

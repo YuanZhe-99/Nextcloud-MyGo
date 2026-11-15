@@ -76,6 +76,10 @@ Nextcloud-MyGo、MyGo、Qt、Microsoft），以及协议与 API 名称（WebDAV�
 | always keep on this device | 始终保留在此设备上 |
 | directory population | 目录填充（population） |
 | Cloud Files provider | 提供程序（provider） |
+| switch to on-demand files (automatic conversion) | 改用按需文件 |
+| conversion pass | 转换流程 |
+| navigation pane entry (Explorer) | 导航窗格条目 |
+| Dismiss (a note) | 关闭 |
 | sleep and resume | 休眠与唤醒 |
 | simulation, simulated (sleep) | 模拟，模拟休眠（emulated x64 仍是“仿真”） |
 | suspend (a process) | 挂起（进程） |

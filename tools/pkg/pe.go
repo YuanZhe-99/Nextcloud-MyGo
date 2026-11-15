@@ -27,7 +27,13 @@ type image struct {
 	// view is ARM64).
 	Hybrid  bool
 	Imports []string // DLL names, normal and delay-loaded, as written in the image
+	// Icon means the resource directory holds an icon group (RT_GROUP_ICON),
+	// which Explorer shows for the file and the shortcuts that name it.
+	Icon bool
 }
+
+// rtGroupIcon is the resource type of an icon group (RT_GROUP_ICON).
+const rtGroupIcon = 14
 
 // describe names the code an image runs: ARM64, ARM64X, ARM64EC, x64 or x86.
 func describe(img image) string {
@@ -128,7 +134,45 @@ func inspect(name string) (img image, isPE bool, err error) {
 			img.Hybrid = binary.LittleEndian.Uint64(lc[200:]) != 0
 		}
 	}
+	if d := dir(pe.IMAGE_DIRECTORY_ENTRY_RESOURCE); d.VirtualAddress != 0 {
+		if img.Icon, err = hasResource(p, d.VirtualAddress, rtGroupIcon); err != nil {
+			return img, true, fmt.Errorf("%s: resources: %w", name, err)
+		}
+	}
 	return img, true, nil
+}
+
+// hasResource reports whether the resource directory at rva has a type
+// entry with the numeric ID typ that holds at least one resource.
+// Notes: IMAGE_RESOURCE_DIRECTORY is 16 bytes, with the named and the ID
+// entry counts at 12 and 14; its 8-byte entries follow, named ones first.
+// An entry's offset, relative to the directory start, has the high bit set
+// when it points at a subdirectory (here: the resources of that type).
+func hasResource(p *pe.File, rva uint32, typ uint32) (bool, error) {
+	head, err := at(p, rva, 16)
+	if err != nil {
+		return false, err
+	}
+	named, ids := uint32(binary.LittleEndian.Uint16(head[12:])), uint32(binary.LittleEndian.Uint16(head[14:]))
+	entries, err := at(p, rva+16, (named+ids)*8)
+	if err != nil {
+		return false, err
+	}
+	for i := named; i < named+ids; i++ {
+		if binary.LittleEndian.Uint32(entries[i*8:]) != typ {
+			continue
+		}
+		off := binary.LittleEndian.Uint32(entries[i*8+4:])
+		if off&0x80000000 == 0 {
+			return false, nil
+		}
+		sub, err := at(p, rva+(off&0x7fffffff), 16)
+		if err != nil {
+			return false, err
+		}
+		return binary.LittleEndian.Uint16(sub[12:])+binary.LittleEndian.Uint16(sub[14:]) > 0, nil
+	}
+	return false, nil
 }
 
 // at reads n bytes of the image at a relative virtual address, zero-filled

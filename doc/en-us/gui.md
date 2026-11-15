@@ -3,9 +3,11 @@
 The interface is a native MyGo application (`cmd/nextcloud-mygo`, `internal/gui`) for the person
 using Nextcloud MyGo, built from the screens in `design/`. It holds no sync state of its own: SyncD
 owns accounts, folders, addresses and decisions; the interface shows the snapshot SyncD reports
-and sends it commands through `internal/syncd.Remote` (protocol 1.9, see [IPC](ipc.md)). The paired
+and sends it commands through `internal/syncd.Remote` (protocol 1.11, see [IPC](ipc.md)). The paired
 SyncD executable is the default; `NEXTCLOUD_MYGO_MOCK=1` explicitly selects `syncd.Mock`, which
-labels its sample data, declares the capabilities it simulates and changes nothing on this PC.
+labels its sample data, declares the capabilities it simulates, reports the protocol minor this
+client speaks, shows one folder SyncD switched to on-demand files and one still waiting, and changes
+nothing on this PC.
 
 ## Threads and state
 
@@ -15,7 +17,8 @@ redraws the window and the tray. A command keeps its button disabled until it re
 shows as a toast in words taken from SyncD's stable reason code, never the code itself. An
 accepted command is not shown as done: the next snapshot shows the outcome. The interface's own
 settings are in `gui.json` in `%AppData%\Nextcloud-MyGo`, written atomically; nothing about sync is
-kept there.
+kept there except `conversionNotesClosed`, the IDs of folders whose "now uses on-demand files" note
+was dismissed (folders SyncD no longer lists are dropped the next time a note is dismissed).
 
 ## Connection and capabilities
 
@@ -30,7 +33,8 @@ kept there.
   first says that file sync is still being verified, and no state is ever green: a folder SyncD
   reports up to date reads "Last sync finished". Automatic and Always use one address are offered
   only while SyncD reports `endpointAutoSwitch`; without it each account uses the one address chosen. A further account needs `multiAccount`
-  (the first never does). Full files or On demand is offered only with `virtualFiles`.
+  (the first never does). On demand or Full files is offered only with `virtualFiles`, On demand
+  first and chosen by default; without the capability no mode is sent and SyncD keeps full files.
 - **Signing in again.** An account needs it as its `auth` says: `needsSignIn` (the saved sign-in
   cannot be used on this PC, or a renewal waits for the browser) or `revoked` (the server refused
   the app password), each in its own words. Only a daemon before 1.9, which sends no `auth`, is
@@ -57,7 +61,11 @@ kept there.
   in browser (then Open the browser again and Cancel while it waits), and in a menu Sign in again
   and Remove this account; its folders with their mode (when `virtualFiles` is on or the folder is
   on demand), paths, state, the reason in words, and Open, Pause or Resume, Review, and in a menu
-  Check now and Stop syncing. Removing a folder or an account asks first and says that the files
+  Check now and Stop syncing. A folder added by 0.1.0 shows one plain line under its row for SyncD's
+  switch to on-demand files (protocol 1.11 `conversion`): while pending, why it still downloads every
+  file (soon, unavailable on this PC, inside a folder another app syncs, or waiting, each from the
+  reason code and never showing it); once converted, that it now uses on-demand files and keeps what
+  is already on the PC, with Dismiss, which is remembered in `gui.json`. Removing a folder or an account asks first and says that the files
   stay on both sides; removing an account is one `accounts.remove`, which stops its folders itself
   after a running cycle.
 - **Network:** Automatic or Always use one address (only with `endpointAutoSwitch`); the account's
@@ -99,8 +107,8 @@ again each time the step is shown and on Refresh, so a folder made on the server
 listing that fails keeps the folders listed before and says why; the first listing chooses
 Documents and Photos where the server has them, as `design/SetupFolders.html` shows, and later
 listings keep the user's choices and drop any folder the server no longer has; encrypted folders
-cannot be chosen; with `virtualFiles`, Full files or On demand for the folders chosen, fixed for
-each folder's life; SyncD creates a local folder that does not exist yet), Start (Start when I
+cannot be chosen; with `virtualFiles`, On demand (recommended, the default) or Full files for the
+folders chosen, fixed for each folder's life; SyncD creates a local folder that does not exist yet), Start (Start when I
 sign in to Windows and notifications, both on; an optional other address). Nothing syncs before
 Start syncing. Add a folder opens the Folders step for an account that exists.
 
@@ -164,7 +172,8 @@ folder made on the server after sign-in, a failed listing, a folder gone from th
 that Notifications' switches survive a restart. The protocol 1.9
 states are table-driven (`protocol19_test.go`): each account `auth`, several accounts in the
 sidebar, `multiAccount`, a duplicate account, account removal as one command, phases and a full
-server, the folder mode with and without `virtualFiles`, every blocked reason, the reasons for
+server, the folder mode with and without `virtualFiles` and on demand as the default for new folders, the
+conversion line and its dismissal kept across a restart, every blocked reason, the reasons for
 the address in use, several reviews and a conflict closed, the update's postponement, and the
 start report only in Diagnostics. The Mock's sample shows each of these states. With
 `SYNCD_TEST_EXE` set, `TestRealDaemonInterface` drives the interface against the compiled SyncD

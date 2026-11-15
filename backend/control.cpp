@@ -1,6 +1,9 @@
 #include "control.h"
 #include "startup.h"
 #include "switch_state.h"
+#ifdef SYNCD_WITH_ENGINE
+#include "platform/windows/ondemand.h"
+#endif
 #include <QCryptographicHash>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -27,7 +30,8 @@ void execute(QSqlQuery &q) {
 }
 /// addColumn adds one later-schema column unless the table already has it
 /// (schema 10: folders.mode; schema 11: endpoints.kind, decisions.groups,
-/// settings.daemon_version).
+/// settings.daemon_version; schema 12: folders.conversion,
+/// folders.conversion_reason).
 /// Returns: false on a SQL failure, which aborts the migration.
 bool addColumn(QSqlQuery &q, const QString &table, const QString &column,
                const QString &definition) {
@@ -44,23 +48,29 @@ bool addColumn(QSqlQuery &q, const QString &table, const QString &column,
 /// capabilities advertises only end-to-end implemented workflows.
 /// Notes: `engine` separates a build linked to the upstream engine (folders,
 /// switching) from a foundation build (pipe, login, settings only).
+/// virtualFiles follows OnDemandRoot::available(), computed once per process,
+/// the same answer folders.add and the v0.1.0 conversion use.
 QJsonObject capabilities(bool available = true) {
 #ifdef SYNCD_WITH_ENGINE
   constexpr bool engine = true;
+  const bool onDemand = OnDemandRoot::available();
 #else
   constexpr bool engine = false;
+  constexpr bool onDemand = false;
 #endif
   // multiAccount: two accounts with two folders each passed on a real server
   // (multi-account acceptance, 2026-11-12). endpointAutoSwitch: the
   // automatic policy's cases passed on real runs (switching acceptance,
   // 2026-11-12). fullSync: the basic-sync, file-safety and soak cases passed
   // on real runs and the installed interface showed a real cycle's activity
-  // (capability evidence, 2026-11-13). Both need the engine.
+  // (capability evidence, 2026-11-13). Both need the engine. virtualFiles:
+  // the real on-demand acceptance (tools/test-ondemand.ps1) passed; it also
+  // needs Cloud Files on this machine.
   return {{"multiAccount", available},
           {"login", available},
           {"fullSync", engine && available},
           {"endpointAutoSwitch", engine && available},
-          {"virtualFiles", false},
+          {"virtualFiles", engine && available && onDemand},
           {"endToEndEncryption", false},
           {"engine", engine && available}};
 }
@@ -225,7 +235,17 @@ Control::Control(const QString &path, StartupMode mode, Startup *startup)
                 "folder_id TEXT NOT NULL REFERENCES folders(id) ON DELETE "
                 "CASCADE,file TEXT NOT NULL,copy TEXT NOT NULL,dismissed "
                 "INTEGER NOT NULL DEFAULT 0,UNIQUE(folder_id,copy))") ||
-        !SwitchState::createSchema(db_) || !q.exec("PRAGMA user_version=11")) {
+        // Schema 12: an existing full-file folder is converted to on-demand
+        // once, at its next attach; one added as full after this keeps ''.
+        !addColumn(q, "folders", "conversion",
+                   "TEXT NOT NULL DEFAULT '' CHECK(conversion IN "
+                   "('','pending','converting','converted'))") ||
+        !addColumn(q, "folders", "conversion_reason",
+                   "TEXT NOT NULL DEFAULT ''") ||
+        (schema > 0 && schema < 12 &&
+         !q.exec(
+             "UPDATE folders SET conversion='pending' WHERE mode='full'")) ||
+        !SwitchState::createSchema(db_) || !q.exec("PRAGMA user_version=12")) {
       db_.rollback();
       throw std::runtime_error("Schema version update failed");
     }

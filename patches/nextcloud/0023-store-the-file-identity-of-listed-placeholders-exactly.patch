@@ -1,0 +1,53 @@
+diff --git a/src/libsync/vfs/cfapi/cfapiwrapper.cpp b/src/libsync/vfs/cfapi/cfapiwrapper.cpp
+--- a/src/libsync/vfs/cfapi/cfapiwrapper.cpp
++++ b/src/libsync/vfs/cfapi/cfapiwrapper.cpp
+@@ -158,9 +158,10 @@ void cfApiSendPlaceholdersTransferInfo(const CF_CONNECTION_KEY &connectionKey,
+                                  << "fileResourceType:" << (entryInfo.parsedProperties.isDirectory ? "folder" : "file");
+ 
+         newPlaceholder.RelativeFileName = entryInfo.stdWStringName.c_str();
+-        const auto fileIdentity = entryInfo.parsedProperties.fileId;
++        // The file ID's UTF-8 bytes without a terminator, as createPlaceholderInfo() stores it.
++        const auto &fileIdentity = entryInfo.parsedProperties.fileId;
+         newPlaceholder.FileIdentity = fileIdentity.data();
+-        newPlaceholder.FileIdentityLength = (fileIdentity.length() + 1) * sizeof(wchar_t);
++        newPlaceholder.FileIdentityLength = static_cast<DWORD>(fileIdentity.length());
+         newPlaceholder.Flags = CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC;
+         auto &fsMetadata = newPlaceholder.FsMetadata;
+ 
+diff --git a/test/testsynccfapi.cpp b/test/testsynccfapi.cpp
+--- a/test/testsynccfapi.cpp
++++ b/test/testsynccfapi.cpp
+@@ -2298,6 +2298,33 @@ private Q_SLOTS:
+         QCOMPARE(completeSpy.findItem("a")->_instruction, CSYNC_INSTRUCTION_NONE);
+     }
+ 
++    // A placeholder created by listing a folder on demand stores the file ID as sync-created placeholders do.
++    void testOnDemandListingStoresTheFileIdentity()
++    {
++        FakeFolder fakeFolder{FileInfo{}};
++        setupVfs(fakeFolder);
++        fakeFolder.remoteModifier().mkdir("A");
++        QVERIFY(fakeFolder.syncOnce());
++        QCOMPARE(dbRecord(fakeFolder, "A")._type, ItemTypeVirtualDirectory);
++
++        // Added after the sync, so only the listing creates its placeholder.
++        fakeFolder.remoteModifier().insert("A/a1", 64);
++        const auto fileId = fakeFolder.remoteModifier().find("A/a1")->fileId;
++
++        // The provider refuses listings by its own process, so another process lists the folder.
++        QProcess dir;
++        dir.setProgram(QStringLiteral("cmd.exe"));
++        dir.setArguments({QStringLiteral("/c"), QStringLiteral("dir"), QStringLiteral("/b"), QDir::toNativeSeparators(fakeFolder.localPath() + "A")});
++        dir.start();
++        QVERIFY(QTest::qWaitFor([&dir] { return dir.state() == QProcess::NotRunning; }, 30000));
++        QVERIFY(dir.readAllStandardOutput().contains("a1"));
++
++        const auto info = cfapi::findPlaceholderInfo(fakeFolder.localPath() + "A/a1");
++        QVERIFY(info);
++        const auto identity = QByteArray(reinterpret_cast<const char *>(info->FileIdentity), static_cast<int>(info->FileIdentityLength));
++        QCOMPARE(identity, fileId);
++    }
++
+     void testServer_caseClash_createConflict()
+     {
+         FakeFolder fakeFolder{ FileInfo{} };

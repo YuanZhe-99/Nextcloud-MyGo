@@ -37,26 +37,10 @@ void EngineRuntime::add(const QString &folder, const QString &account,
     if (!active_ || active_->folder != folder)
       qFatal("Engine completion does not match active generation");
     auto &entry = folders_.at(folder);
-    const auto now = clock_.elapsed();
-    entry.failures = result.success ? 0 : std::min(entry.failures + 1, 8u);
-    auto retryAt = now + std::min<qint64>(300000, 1000LL << entry.failures);
-    if (result.reason == "REMOTE_LOCKED" || result.reason == "SERVER_THROTTLED")
-      retryAt =
-          result.retryAfterMs < 0
-              ? std::numeric_limits<qint64>::max()
-              : std::max(
-                    retryAt,
-                    now + std::min(result.retryAfterMs,
-                                   std::numeric_limits<qint64>::max() - now));
     if (result.reason == "SERVER_THROTTLED" && result.retryAfterMs != 0)
       throttleObserved(entry.account, result.retryAfterMs);
-    if (result.success)
-      scheduler_.complete(*active_, true, retryAt);
-    else
-      scheduler_.fail(*active_, result.reason, retryAt);
+    settle(scheduler_, *active_, result, entry.failures, clock_.elapsed());
     active_.reset();
-    if (result.followUp)
-      scheduler_.enqueue(folder, Scheduler::Reason::FollowUp, now);
     const bool completingShutdown = stopping_;
     if (cycle)
       cycle(folder, result);
@@ -73,6 +57,32 @@ void EngineRuntime::add(const QString &folder, const QString &account,
                    Folder{account, std::move(adapter), std::move(watcher),
                           now + 60000, now + 86400000});
   scheduler_.enqueue(folder, Scheduler::Reason::Recovery, now);
+}
+
+void EngineRuntime::settle(Scheduler &scheduler, const Scheduler::Run &run,
+                           const EngineAdapter::Result &result,
+                           unsigned &failures, qint64 now) {
+  // A restarted cycle is no failure: its work stays pending and its
+  // follow-up discovers again shortly, without backoff and without a
+  // blocker (EngineAdapter::Result::restarted).
+  if (!result.restarted)
+    failures = result.success ? 0 : std::min(failures + 1, 8u);
+  auto retryAt = now + (result.restarted
+                            ? restartDelayMs
+                            : std::min<qint64>(300000, 1000LL << failures));
+  if (result.reason == "REMOTE_LOCKED" || result.reason == "SERVER_THROTTLED")
+    retryAt =
+        result.retryAfterMs < 0
+            ? std::numeric_limits<qint64>::max()
+            : std::max(retryAt,
+                       now + std::min(result.retryAfterMs,
+                                      std::numeric_limits<qint64>::max() - now));
+  if (result.success || result.restarted)
+    scheduler.complete(run, result.success, retryAt);
+  else
+    scheduler.fail(run, result.reason, retryAt);
+  if (result.followUp)
+    scheduler.enqueue(run.folder, Scheduler::Reason::FollowUp, now);
 }
 
 bool EngineRuntime::remove(const QString &folder) {

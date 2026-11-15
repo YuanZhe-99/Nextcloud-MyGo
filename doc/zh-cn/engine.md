@@ -191,6 +191,25 @@ SyncD 绝不以第二个请求来回应丢失的回复（`PLAN.md` §12.3）。�
 目录所有权、传播安全和真实守护进程完整验收接通并通过前，
 完整同步能力保持禁用。
 
+### 按需目录中的本地删除
+
+在 Windows Cloud Files 下，上游的 `SyncEngine::shouldRestartSync` 在发现过程发现本地移除时让一个周期失败一次，并借助引擎的
+一个标志放行下一个周期。SyncD 每个周期创建一个引擎，因此 `EngineAdapter` 在其状态中保存该标志（`restartedAfterDiscovery`），
+把它设入每个新引擎，并在周期结束后读回（补丁 0020：`restartedSyncAfterDiscovery()` 与
+`setRestartedSyncAfterDiscovery(bool)`）。上游以此方式结束的周期，在没有其他原因且不在停止过程中时，以 `Result::restarted`
+报告。它不是失败：原因为空、`followUp` 已设置，连接保持（不强制 `freshConnections`）。随后 `EngineRuntime` 不计失败、不设
+阻塞、保持工作待处理，并在 `EngineRuntime::restartDelayMs`（2 秒）后排入后续周期，没有退避。`Control::cycleFinished` 为它写入
+状态 `syncing` 与空原因；对于存储状态为 `syncing` 但没有运行周期的已暂停目录，目录投影显示 `paused`。协议与 schema 均无变化。
+按需目录中每个含本地移除的周期仍像上游那样重启一次，包括用户批准删除之后的那个周期；批准在其中保留
+（[按需文件](on-demand.md#本地删除与稀疏文件)）。没有被携带的标志时，每个这样的周期都重启，没有本地删除到达服务器。
+
+`restarted` 还有第二种用法，连续最多一次。适配器记录一个周期的失败条目，`EngineAdapter::failure(item, onDemand)` 把每个条目分为无、占位文件或其他。
+当仅有的失败是新的、下载方向、状态为 NormalError 的虚拟文件条目，
+且其路径现在持有相同服务器文件 ID 的占位文件（`OnDemandRoot::holds`）时，说明另一个进程的列表请求先创建了它们，`EngineAdapter::excused` 把该周期报告为重启而不是失败。
+如果下一个周期以同样方式失败，则报告为 `SYNC_FAILED`；任何其他失败条目都会使该豁免失效（[按需文件](on-demand.md#本地删除)）。`EngineRuntime::settle` 在周期之后保持调度：
+失败计数、重试时间、退避和后续周期。这三项决定在 CTest 目标 `SyncDEngineContracts`（`backend/engine_tests.cpp`，需要上游构建）中运行，不需要服务器或 Cloud Files，
+后续周期在可控时钟上测试：+1999 毫秒不被准入，+2000 毫秒被准入，不计失败；周期中设置的用户暂停在其后仍然保留，全局冻结会将其挡住。
+
 ## 进度、决定与更新保持
 
 协议 1.9 读取适配器已观察到的内容，不改变任何决定。周期运行时，`EngineRuntime::progress` 根据实时请求
@@ -261,6 +280,13 @@ TLS、身份、凭据、journal 和不支持模式的失败仍是独立安全阻
 `OnDemandRoot`，把它的 VFS 交给每个同步周期，并把正在运行的按需下载计为活动：`quiesceAccount` 关闭该账号的
 同步根，只有在没有同步周期和按需请求运行时才报告静止；`retire` 先销毁空闲的同步根再释放账号；`rebind` 连接新的
 同步根；未重新绑定的静止结束后，下一个同步周期会重新连接已关闭的同步根（[按需文件](on-demand.md)）。
+
+带有 `onDemand` 和 `convertExisting` 的 `Binding`（正在切换的 v0.1.0 完整文件目录，`Control::attachFolder`）会让
+`EngineAdapter` 构造函数在注册并连接同步根之后转换目录已有的内容：`OnDemandRoot::convertExisting` 在控制线程上、任何
+同步周期之前运行，只读取目录的 journal 而不写入，转换所有目录，并在至多 `EngineAdapter::conversionBudgetMs`（3 秒的文件
+工作时间）内转换文件，其余留给第一个周期的发现过程
+（[按需文件](on-demand.md#完整文件目录的自动转换)）。构造失败时抛出已清理的原因码，且没有任何内容保持连接。
+`attachFolder` 还会拒绝已有运行时的目录。
 
 ## 构建与验收
 

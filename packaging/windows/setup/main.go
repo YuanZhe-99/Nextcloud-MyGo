@@ -73,9 +73,6 @@ func main() {
 	}
 }
 
-// step prints one stage of the install or uninstall.
-func step(format string, args ...any) { fmt.Printf("- "+format+"\n", args...) }
-
 // install puts the payload in a fresh version directory, stops the running
 // version, then moves the shortcut, the Apps entry and the startup entry over.
 // Side effects: writes under root, the Start menu and HKCU; may stop and
@@ -315,10 +312,16 @@ func shutdown(profile, executable string, ps []process) error {
 	}
 }
 
-// uninstallApp stops Nextcloud-MyGo, removes its startup entry, shortcut,
-// Apps entry and program files, and with removeData its accounts and settings.
+// uninstallApp stops Nextcloud-MyGo, has SyncD release every on-demand
+// folder, removes leftover Explorer navigation entries, then its startup
+// entry, shortcut, Apps entry and program files, and with removeData its
+// accounts and settings (uninstallSequence).
 // Side effects: deletes the install root (the last part once this process
-// exits); never touches synced folders or server content.
+// exits); the on-demand release turns downloaded files into ordinary files
+// and deletes online-only placeholders (the server keeps them); never touches
+// full-file folders or server content.
+// Notes: when an on-demand folder cannot be released nothing else is
+// removed, and the interface is started again so it can be removed there.
 func uninstallApp(root, profile string, removeData bool) error {
 	dir, _, ok, err := readState(root)
 	if err != nil {
@@ -327,16 +330,31 @@ func uninstallApp(root, profile string, removeData bool) error {
 	if err := stopApp(root, profile, "", ""); err != nil {
 		return err
 	}
-	var dataErr error
-	if removeData {
-		if !ok {
-			dataErr = errors.New("no installed SyncD to remove the accounts with; user data kept")
-		} else {
-			dataErr = removeUserData(root, profile, filepath.Join(dir, syncdExe))
-		}
-	} else {
+	exe := ""
+	if ok {
+		exe = filepath.Join(dir, syncdExe)
+	}
+	if !removeData {
 		step("keeping accounts, settings and synced files (use -remove-user-data to remove accounts and settings)")
 	}
+	err = uninstallSequence(func() (error, error) {
+		kept, err := releaseUserData(root, profile, exe, removeData)
+		if err != nil && ok {
+			if err := launch(filepath.Join(dir, uiExe)); err != nil {
+				step("could not reopen the interface: %v", err)
+			}
+		}
+		return kept, err
+	}, removeNavigation, func() error { return removeProgram(root) })
+	if err == nil {
+		step("uninstalled")
+	}
+	return err
+}
+
+// removeProgram removes the startup entry, the shortcut, the Apps entry and
+// the install root (the uninstaller itself once this process exits).
+func removeProgram(root string) error {
 	step("removing the startup entry, shortcut and Apps entry")
 	if err := startupEntries(root, func(string) string { return "" }); err != nil {
 		return err
@@ -363,32 +381,132 @@ func uninstallApp(root, profile string, removeData bool) error {
 	} else if err := removeAll(root); err != nil {
 		return err
 	}
-	if dataErr != nil {
-		return dataErr
-	}
-	step("uninstalled")
 	return nil
 }
 
-// removeUserData removes every account of the profile through SyncD, which
-// deletes their saved credentials and revokes the app passwords on the
-// server, then deletes the profile's SyncD data and interface settings.
-// Notes: an account SyncD cannot remove keeps the data (and with it the
-// credential reference) in place and is reported; an unconfirmed server
-// revocation is reported but does not block the uninstall (PLAN.md §16.4).
-func removeUserData(root, profile, executable string) error {
-	step("removing accounts through SyncD")
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+// releaseUserData starts the profile's installed SyncD, has it release every
+// on-demand folder (releaseOnDemand) and, with removeData, remove every
+// account, shuts it down, and checks that Windows has no sync root of the
+// profile's accounts left; with removeData it then deletes the profile's
+// SyncD data and interface settings.
+// Inputs: executable is the installed SyncD, "" when none is installed.
+// Returns: kept, why user data stayed (reported once the program is gone);
+// abort, why the uninstall must stop before removing the program.
+// Side effects: starts and stops SyncD; releasing a folder turns its
+// downloaded files into ordinary files and deletes its online-only
+// placeholders; removing an account deletes its saved credential and
+// revokes its app password on the server. Prints setup's progress.
+// Notes: with no installed SyncD, or one that does not start, the uninstall
+// goes on only when Windows has no Nextcloud-MyGo sync root of this user at
+// all. folders.remove works for a folder whose account is not signed in: it
+// needs only the folder's row and its local path. Only roots of the profile's
+// accounts are checked afterwards: another (development) profile's roots
+// stay, and Cloud Files alone unregisters a root, never this program.
+func releaseUserData(root, profile, executable string, removeData bool) (kept, abort error) {
+	sid, err := userSID()
+	if err != nil {
+		return nil, err
+	}
+	roots, err := syncRoots(sid)
+	if err != nil {
+		return nil, fmt.Errorf("reading Windows' sync root registrations: %w", err)
+	}
+	noData := func(why string) error {
+		if removeData {
+			return errors.New(why + "; accounts and settings were kept")
+		}
+		return nil
+	}
+	if executable == "" {
+		if len(roots) > 0 {
+			return nil, fmt.Errorf("no installed SyncD can release the on-demand folders Windows still has registered for Nextcloud MyGo (%s), so the program was not removed. Install Nextcloud MyGo again, remove those folders there, then uninstall", rootList(roots))
+		}
+		return noData("no installed SyncD to remove the accounts with"), nil
+	}
+	step("starting SyncD to release on-demand folders")
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	r := syncd.NewRemote(ctx, profile, executable)
-	for !r.Snapshot().Daemon.Connected {
-		select {
-		case <-ctx.Done():
-			r.Close()
-			return errors.New("SyncD did not start; accounts and settings were kept")
-		case <-time.After(200 * time.Millisecond):
+	if !connected(r, 2*time.Minute) {
+		r.Close()
+		if err := stopApp(root, profile, "", ""); err != nil {
+			return nil, err
 		}
+		if len(roots) > 0 {
+			return nil, fmt.Errorf("SyncD did not start, so the on-demand folders Windows has registered for Nextcloud MyGo (%s) could not be released and the program was not removed. Open Nextcloud MyGo, remove those folders there, then run the uninstall again", rootList(roots))
+		}
+		step("SyncD did not start; Windows has no on-demand folder of Nextcloud MyGo registered, so the uninstall goes on")
+		return noData("SyncD did not start"), nil
 	}
+	snap := r.Snapshot()
+	accounts := map[string]bool{}
+	for _, a := range snap.Accounts {
+		accounts[a.ID] = true
+	}
+	for _, f := range snap.Folders {
+		accounts[f.AccountID] = true
+	}
+	err = releaseOnDemand(func() []syncd.Folder { return r.Snapshot().Folders }, r.RemoveFolder, time.Now, time.Sleep)
+	failed := 0
+	if err == nil && removeData {
+		failed = removeAccounts(r)
+	}
+	if e := r.Shutdown(); e != nil {
+		step("SyncD stop request: %v", e)
+	}
+	r.Close()
+	if e := stopApp(root, profile, "", ""); e != nil && err == nil {
+		err = e
+	}
+	if err != nil {
+		return nil, err
+	}
+	if roots, err = syncRoots(sid); err != nil {
+		return nil, fmt.Errorf("reading Windows' sync root registrations: %w", err)
+	}
+	roots = slices.DeleteFunc(roots, func(s syncRoot) bool { return !accounts[s.account] })
+	if len(roots) > 0 {
+		return nil, fmt.Errorf("Windows still has %s registered as an on-demand folder of Nextcloud MyGo, so the program was not removed. Open Nextcloud MyGo, remove that folder there, then run the uninstall again", rootList(roots))
+	}
+	if !removeData {
+		return nil, nil
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d account(s) could not be removed; accounts and settings were kept", failed), nil
+	}
+	return removeProfileData(profile), nil
+}
+
+// connected waits until r has a live SyncD connection with its state, or the
+// timeout passes.
+func connected(r *syncd.Remote, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for !r.Snapshot().Daemon.Connected {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return true
+}
+
+// rootList names registered roots by their local paths.
+func rootList(roots []syncRoot) string {
+	paths := make([]string, len(roots))
+	for i, s := range roots {
+		paths[i] = s.path
+	}
+	return strings.Join(paths, ", ")
+}
+
+// removeAccounts removes every account of the profile through SyncD, which
+// deletes their saved credentials and revokes the app passwords on the
+// server.
+// Returns: how many accounts SyncD could not remove.
+// Notes: an unconfirmed server revocation is reported but does not block the
+// uninstall (PLAN.md §16.4).
+func removeAccounts(r *syncd.Remote) int {
+	step("removing accounts through SyncD")
 	failed := 0
 	for _, a := range r.Snapshot().Accounts {
 		switch err := r.RemoveAccount(a.ID); {
@@ -401,17 +519,12 @@ func removeUserData(root, profile, executable string) error {
 			step("removed an account and revoked its app password")
 		}
 	}
-	err := r.Shutdown()
-	r.Close()
-	if err != nil {
-		step("SyncD stop request: %v", err)
-	}
-	if err := stopApp(root, profile, "", ""); err != nil {
-		return err
-	}
-	if failed > 0 {
-		return fmt.Errorf("%d account(s) could not be removed; accounts and settings were kept", failed)
-	}
+	return failed
+}
+
+// removeProfileData deletes the profile's SyncD data and interface settings,
+// once SyncD has removed every account and stopped.
+func removeProfileData(profile string) error {
 	local, err := localAppData()
 	if err != nil {
 		return err

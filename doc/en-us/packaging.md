@@ -129,6 +129,7 @@ reads every file that starts with `MZ`, whatever its name, and fails on:
 | ARM64X image (ARM64 machine with CHPE metadata) | fail, except the Visual C++ runtime |
 | import that neither the package nor Windows provides | fail |
 | Visual C++ runtime import satisfied only by an installed redistributable | fail |
+| `nextcloud-mygo-syncd.exe` without an icon resource (`RT_GROUP_ICON`), which Explorer shows for its sync roots | fail |
 
 Microsoft ships the ARM64 Visual C++ runtime only as ARM64X. An ARM64 process maps its ARM64 code and
 never its ARM64EC code, so it runs natively; the checker prints each such file as a note. Every
@@ -216,17 +217,43 @@ or HTTP to a loopback address for tests; a redirect may not leave HTTPS.
 
 ## Uninstall
 
-`uninstall.exe -uninstall` (the Apps entry's command) closes the interface, stops SyncD as above,
-removes this install's startup entries, the shortcut, the Apps entry and the install folder, and
-keeps accounts, settings and synced files. `-remove-user-data` additionally starts SyncD and removes
-each account through `accounts.remove`, which deletes its saved credential and revokes its app
-password on the server, then deletes the profile's SyncD data and interface settings. An unconfirmed
-revocation is reported and does not block the uninstall; an account SyncD cannot remove keeps the
-user data in place and is reported. Neither option touches synced folders or server content.
-Folders are removed bottom-up by path, not with Go's `os.RemoveAll` ([upstream](upstream.md#go)).
-An on-demand folder keeps its Cloud Files registration through an uninstall, so a reinstall serves
-it again. `-remove-user-data` cannot remove an account that still has folders, so it keeps that data and
-never orphans a registration; removing the folders first at uninstall is an open item ([on-demand](on-demand.md)).
+`uninstall.exe -uninstall` (the Apps entry's command) runs in this order, so that no program file goes
+while an on-demand folder may still be registered (its online-only files could no longer be opened):
+
+1. Close the interface (a stateless client), as above.
+2. Start the profile's installed SyncD and call `folders.remove` for every on-demand folder. SyncD ends
+   the folder's Windows sync root registration: downloaded files become ordinary files, online-only
+   placeholders are deleted locally (the server keeps them), and the journal, the accounts and the
+   settings stay. First the uninstall waits up to 20 seconds for an automatic conversion that is still
+   pending to settle ([on-demand](on-demand.md#automatic-conversion-of-full-file-folders)); a busy
+   answer (a running cycle, a switch, a sign-in renewal) is asked again every second for up to 5
+   minutes. Full-file folders are untouched. With `-remove-user-data` SyncD then also removes each
+   account through `accounts.remove`, which deletes its saved credential and revokes its app password
+   on the server. An unconfirmed revocation is reported and does not block the uninstall.
+3. Shut SyncD down and check that Windows has no `Nextcloud-MyGo!<SID>!` sync root left for the
+   profile's accounts. Another profile's roots stay. With `-remove-user-data` the profile's SyncD data and
+   interface settings are then deleted.
+4. Remove leftover HKCU navigation entries tagged exactly `ApplicationName=Nextcloud-MyGo` (never the
+   official client's `Nextcloud`); an entry that backs another profile's live root is kept.
+5. Remove this install's startup entries, the shortcut, the Apps entry and the install folder.
+   Accounts, settings and synced files are otherwise kept.
+
+If step 2 or 3 fails, nothing is removed, the interface is started again so the folder can be removed
+there, and setup exits 1 naming the folder's local path. With no installed SyncD, or one that does not
+start, the uninstall goes on only when Windows has no Nextcloud-MyGo sync root of this user; otherwise
+it stops with the roots named. An account SyncD cannot remove keeps the user data in place and is
+reported once the program is gone. The uninstall never touches synced folders beyond releasing the
+on-demand folders as described, or server content. Folders are removed bottom-up by path, not with Go's `os.RemoveAll`
+([upstream](upstream.md#go)). `tools/package-smoke.ps1` asserts that an uninstall leaves no new sync root or navigation
+entry.
+
+Known limits:
+
+- Only the running (default) profile is handled; another profile's registrations stay.
+- A registration with no folder behind it (for example after the Control DB was lost) blocks the
+  uninstall, and the interface has no way yet to remove it.
+- Downgrade: 0.1.0 refuses a Control schema 12 database, in the installer and in SyncD. The supported
+  way back is to remove the folders in 0.1.1 first, then reinstall 0.1.0.
 
 The installer and uninstaller act on the default profile; `NEXTCLOUD_MYGO_PROFILE` selects a
 development profile, as it does for the interface.
@@ -283,7 +310,9 @@ refusals of the safe point on a real install (unit tests only, `TestPrepare`); a
 signed-in account or a Control schema change; the installed interface itself starting the update (the
 test plays its part, so the interface's `PrepareUpdate` and its own handover are unit-level only); a
 release signed with the project key and read from GitHub; an interrupted download or a failing setup in
-the in-app path on a real install.
+the in-app path on a real install. For 0.1.1, the uninstall that releases a real on-demand folder, the
+upgrade from an installed 0.1.0 and the package icon in Explorer are not verified either (see
+[platform notes](platform-notes.md)).
 
 ## What SyncD needs to provide
 

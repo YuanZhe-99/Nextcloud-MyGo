@@ -35,7 +35,8 @@ type mockLogin struct {
 // NewMock returns a Mock. With sample true it holds the sample state of the
 // design (design/README.md): two accounts, five folders, six addresses and
 // two decisions, with one of each protocol 1.9 state the interface shows (a
-// revoked account, a full server, an on-demand folder, blocked addresses);
+// revoked account, a full server, an on-demand folder, blocked addresses)
+// and of 1.11 (a folder switched to on-demand files, one still waiting);
 // without, nothing, as on a first run.
 func NewMock(sample bool, now func() time.Time) *Mock {
 	if now == nil {
@@ -59,14 +60,14 @@ func mockDaemon(now time.Time) Daemon {
 	return Daemon{
 		Connected: true, StateAvailable: true, StartupState: StartupNormal,
 		Capabilities: map[string]bool{"login": true, "fullSync": true, "endpointAutoSwitch": true, "multiAccount": true, "virtualFiles": true},
-		Version:      "0.1.0", Protocol: 1, ProtocolMinor: 9, Demo: true, CheckedAt: now.Add(-2 * time.Minute),
+		Version:      "0.1.0", Protocol: 1, ProtocolMinor: protocolMinor, Demo: true, CheckedAt: now.Add(-2 * time.Minute),
 		StartupReport: StartupReport{PreviousSchema: 10, Schema: 11, SelfCheck: "passed"},
 	}
 }
 
 // SetCapability turns a capability the Mock simulates on or off, so the
-// interface can be shown with and without it (virtualFiles is still false
-// in SyncD).
+// interface can be shown with and without it (SyncD reports virtualFiles
+// false where Windows Cloud Files is unavailable).
 func (m *Mock) SetCapability(name string, on bool) {
 	m.change(func() { m.s.Daemon.Capabilities[name] = on })
 }
@@ -89,10 +90,13 @@ func sampleState(now time.Time) Snapshot {
 		Folders: []Folder{
 			// Documents finished its cycle, but the server refused its uploads.
 			{ID: "f-docs", AccountID: "a-home", Name: "Documents", LocalPath: `C:\Users\Alex\Documents`, RemotePath: "/Documents", State: FolderUpToDate, ReasonCode: "REMOTE_QUOTA_EXCEEDED", Mode: FolderFull},
-			{ID: "f-projects", AccountID: "a-home", Name: "Projects", LocalPath: `D:\Projects`, RemotePath: "/Work/Projects", State: FolderSyncing, Phase: PhaseUploading, FilesDone: 3, Mode: FolderOnDemand},
+			{ID: "f-projects", AccountID: "a-home", Name: "Projects", LocalPath: `D:\Projects`, RemotePath: "/Work/Projects", State: FolderSyncing, Phase: PhaseUploading, FilesDone: 3, Mode: FolderOnDemand, Conversion: ConversionConverted},
 			{ID: "f-photos", AccountID: "a-home", Name: "Photos", LocalPath: `C:\Users\Alex\Pictures`, RemotePath: "/Photos", State: FolderNeedsReview, Mode: FolderFull},
 			{ID: "f-team", AccountID: "a-work", Name: "Team share", LocalPath: `C:\Users\Alex\Team`, RemotePath: "/Shared/Team", State: FolderWaitingSignIn, ReasonCode: "AUTH_REQUIRED", Mode: FolderFull},
-			{ID: "f-reports", AccountID: "a-work", Name: "Reports", LocalPath: `C:\Users\Alex\Reports`, RemotePath: "/Reports", State: FolderPaused, UserPaused: true, Mode: FolderFull},
+			// Protocol 1.11: Projects, added by 0.1.0, was switched to
+			// on-demand files when SyncD started; Reports, from 0.1.0 too,
+			// lies inside another app's sync folder and keeps full files.
+			{ID: "f-reports", AccountID: "a-work", Name: "Reports", LocalPath: `C:\Users\Alex\Reports`, RemotePath: "/Reports", State: FolderPaused, UserPaused: true, Mode: FolderFull, Conversion: ConversionPending, ConversionReason: "FOLDER_OWNED"},
 		},
 		Endpoints: []Endpoint{
 			{ID: "e-lan", AccountID: "a-home", Name: "Home network", Kind: KindHome, URL: "https://cloud.lan.example", Approved: true, Verified: VerifyVerified, Reachable: true, LatencyMs: 8, InUse: true},

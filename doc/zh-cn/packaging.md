@@ -115,6 +115,7 @@ qtsvg 与 qtwebsockets 的文本、OpenSSL、SQLite、zlib、QtKeychain、KArchi
 | ARM64X 映像（带 CHPE 元数据的 ARM64 machine） | 失败，Visual C++ 运行库除外 |
 | 包内与 Windows 都不提供的导入 | 失败 |
 | 只能由已安装可再发行组件满足的 Visual C++ 运行库导入 | 失败 |
+| 没有图标资源（`RT_GROUP_ICON`）的 `nextcloud-mygo-syncd.exe`，资源管理器用它显示其同步根 | 失败 |
 
 Microsoft 只以 ARM64X 形式提供 ARM64 Visual C++ 运行库。ARM64 进程映射其 ARM64 代码，从不映射其 ARM64EC
 代码，因此它原生运行；检查器把每个此类文件作为提示列出。其他所有混合映像都失败。用户已于 2026-11-12 接受此例外。检查器的测试构造合成
@@ -188,14 +189,31 @@ Nextcloud-MyGo、清单中的版本、本机架构以及比运行版本更新的
 
 ## 卸载
 
-`uninstall.exe -uninstall`（应用列表条目的命令）关闭界面，按上文停止 SyncD，删除此安装的开机启动项、
-快捷方式、应用列表条目与安装目录，保留账号、设置与同步文件。`-remove-user-data` 另外启动 SyncD，通过
-`accounts.remove` 删除每个账号：删除其保存的凭据并在服务器上吊销其应用密码；然后删除该 profile 的 SyncD
-数据与界面设置。未确认的吊销会被报告，但不阻止卸载；SyncD 无法删除的账号会使用户数据保持原样并被报告。
-两种方式都不触碰同步文件夹或服务器内容。
-目录按路径自下而上删除，不使用 Go 的 `os.RemoveAll`（[上游](upstream.md#go)）。
-按需目录的 Cloud Files 注册在卸载后保留，重新安装后会再次为其提供服务。`-remove-user-data` 无法删除仍有目录的账号，因此会保留其数据，
-绝不会留下无主的注册；卸载时先移除这些目录是一个未完成项（[按需文件](on-demand.md)）。
+`uninstall.exe -uninstall`（应用列表条目的命令）按下面的顺序执行，以保证只要仍可能有按需目录处于注册状态，
+就不会删除任何程序文件（否则它们的仅联机文件将无法再打开）：
+
+1. 关闭界面（无状态客户端），同上。
+2. 启动该 profile 已安装的 SyncD，对每个按需目录调用 `folders.remove`。SyncD 结束该目录的 Windows 同步根注册：
+   已下载的文件变为普通文件，仅联机占位文件在本地被删除（服务器仍保存它们），journal、账号和设置保留。卸载程序先等待
+   仍待处理的自动转换最多 20 秒使其落定（[按需文件](on-demand.md#完整文件目录的自动转换)）；遇到忙碌答复（正在运行的周期、切换、
+   登录续期）时每秒重试一次，最多 5 分钟。完整文件目录不受影响。使用 `-remove-user-data` 时，SyncD 随后还通过
+   `accounts.remove` 删除每个账号：删除其保存的凭据并在服务器上吊销其应用密码。未确认的吊销会被报告，但不阻止卸载。
+3. 关闭 SyncD，并检查 Windows 中不再有该 profile 账号的 `Nextcloud-MyGo!<SID>!` 同步根。其他 profile 的同步根保留。
+   使用 `-remove-user-data` 时，随后删除该 profile 的 SyncD 数据与界面设置。
+4. 删除遗留的、标记恰好为 `ApplicationName=Nextcloud-MyGo` 的 HKCU 导航窗格条目（绝不删除官方客户端的 `Nextcloud`）；
+   支撑另一个 profile 现存同步根的条目会保留。
+5. 删除此安装的开机启动项、快捷方式、应用列表条目与安装目录。账号、设置与同步文件另行保留。
+
+若第 2 步或第 3 步失败，则不删除任何内容，界面会重新启动以便在其中移除该目录，setup 以退出码 1 结束并指出该目录的本地路径。
+没有已安装的 SyncD，或 SyncD 无法启动时，只有当 Windows 中没有此用户的 Nextcloud-MyGo 同步根时卸载才会继续；否则它会停止并列出这些同步根。
+SyncD 无法删除的账号会使用户数据保持原样，并在程序删除之后被报告。卸载除按上述方式释放按需目录之外，不触碰同步文件夹或服务器内容。
+目录按路径自下而上删除，不使用 Go 的 `os.RemoveAll`（[上游](upstream.md#go)）。`tools/package-smoke.ps1` 断言卸载后没有新的同步根或导航窗格条目。
+
+已知限制：
+
+- 只处理正在运行的（默认）profile；其他 profile 的注册保留。
+- 没有任何目录支撑的注册（例如控制数据库丢失之后）会阻止卸载，目前界面中没有办法移除它。
+- 降级：0.1.0 拒绝 Control schema 12 的数据库，安装器和 SyncD 都是如此。受支持的回退方式是先在 0.1.1 中移除这些目录，再重新安装 0.1.0。
 
 安装器与卸载程序作用于默认 profile；`NEXTCLOUD_MYGO_PROFILE` 选择开发 profile，与界面相同。
 
@@ -238,7 +256,7 @@ ARM64（ARM64 硬件上的 Windows 11），2026-11-12：
 账号执行 `-remove-user-data`；真实硬件上的安装失败（仅单元测试覆盖）；真实安装中安全点的删除等待与仍忙
 拒绝（仅单元测试 `TestPrepare`）；带已登录账号或 Control schema 变更的升级；由已安装的界面本身发起更新（测试
 代替了它的角色，因此界面的 `PrepareUpdate` 与它自己的交接只有单元级覆盖）；用项目密钥签名并从 GitHub 读取的
-release；真实安装中应用内路径的下载中断或 setup 失败。
+release；真实安装中应用内路径的下载中断或 setup 失败。对于 0.1.1，释放真实按需目录的卸载、从已安装的 0.1.0 升级，以及资源管理器中的包图标同样未经验证（见[平台说明](platform-notes.md)）。
 
 ## 需要 SyncD 提供的内容
 

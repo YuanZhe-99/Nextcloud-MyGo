@@ -123,6 +123,22 @@ public:
   /// stopped notifies the owner that destroying the runtime no longer
   /// interrupts an active cycle.
   std::function<void()> stopped;
+  /// restartDelayMs is how long a restarted cycle's follow-up waits, as a
+  /// local change's debounce does: upstream restarts because a moved
+  /// directory may not have shown all its entries yet.
+  static constexpr qint64 restartDelayMs = 2000;
+  /// settle applies a finished cycle's result to the scheduler at monotonic
+  /// time now.
+  /// Inputs: failures is the folder's consecutive-failure count.
+  /// Side effects: success resets failures and completes the run; a restarted
+  /// cycle keeps failures and retries at now + restartDelayMs with no
+  /// backoff; any other failure counts once (at most 8) and backs off
+  /// exponentially up to five minutes, longer for a server lock or throttle;
+  /// followUp queues a follow-up. Notes: never clears a blocker, so a user's
+  /// pause survives the follow-up (INV-13/14).
+  static void settle(Scheduler &scheduler, const Scheduler::Run &run,
+                     const EngineAdapter::Result &result, unsigned &failures,
+                     qint64 now);
 
 private:
   /// Folder retains one journal/runtime across cycles and bounded retry/poll

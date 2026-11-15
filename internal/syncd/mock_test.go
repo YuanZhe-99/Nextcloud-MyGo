@@ -213,3 +213,24 @@ func TestHostOf(t *testing.T) {
 		}
 	}
 }
+
+// TestMockSpeaksClientMinor: the Mock reports the protocol minor this
+// client speaks, and its sample holds both protocol 1.11 conversion states
+// so the interface can show them.
+func TestMockSpeaksClientMinor(t *testing.T) {
+	s := NewMock(true, fixed).Snapshot()
+	if s.Daemon.ProtocolMinor != protocolMinor {
+		t.Fatalf("Mock speaks 1.%d, client 1.%d", s.Daemon.ProtocolMinor, protocolMinor)
+	}
+	if NewMock(false, fixed).Snapshot().Daemon.ProtocolMinor != protocolMinor {
+		t.Fatal("the empty Mock speaks another minor")
+	}
+	converted, _ := s.Folder("f-projects")
+	pending, _ := s.Folder("f-reports")
+	if converted.Conversion != ConversionConverted || converted.Mode != FolderOnDemand {
+		t.Fatalf("converted sample: %+v", converted)
+	}
+	if pending.Conversion != ConversionPending || pending.Mode != FolderFull || pending.ConversionReason == "" {
+		t.Fatalf("pending sample: %+v", pending)
+	}
+}

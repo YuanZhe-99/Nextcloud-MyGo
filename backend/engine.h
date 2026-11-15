@@ -1,10 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #pragma once
+#include <QList>
 #include <QObject>
 #include <QString>
 #include <QUrl>
 #include <functional>
 #include <memory>
+#include <utility>
+
+namespace OCC {
+class SyncFileItem;
+}
 
 /// EngineAdapter hosts one immutable single-endpoint libsync runtime on the Qt
 /// control thread. Notes: callers must validate folder ownership and namespace
@@ -23,6 +29,10 @@ public:
     /// onDemand serves the folder as Windows Cloud Files placeholders; the
     /// folder and account IDs then name its sync root.
     bool onDemand = false;
+    /// convertExisting makes the content a former full-file folder already
+    /// has in-sync placeholders before the first on-demand cycle
+    /// (OnDemandRoot::convertExisting); only with onDemand.
+    bool convertExisting = false;
     QString folderId, accountId;
   };
   /// Result reports sanitized completion only after teardown; it is not a
@@ -50,6 +60,16 @@ public:
     /// removed them; renamedRemote and renamedLocal count renames or moves
     /// applied on the server and on this PC (protocol 1.10).
     quint64 deletedLocal = 0, renamedRemote = 0, renamedLocal = 0;
+    /// restarted marks a cycle upstream ended after a complete discovery that
+    /// found a local removal in an on-demand folder, so that the follow-up
+    /// discovers again before anything is removed on the server
+    /// (SyncEngine::shouldRestartSync, patch 0020). It also marks a cycle
+    /// whose only failures were new placeholders that another process's
+    /// directory listing of an on-demand folder had created first, for the
+    /// same server files (Explorer opened on a folder while its first cycle
+    /// ran; OnDemandRoot::holds). It is no failure: success and reason stay
+    /// false and empty, followUp is set.
+    bool restarted = false;
   };
   /// Requests counts creation, active/retained replies, live managers and
   /// unconfirmed writes without recording paths, headers, credentials or
@@ -66,7 +86,17 @@ public:
   };
   /// EngineAdapter reads the stable vault reference and prepares a private
   /// upstream account.
+  /// Side effects: an on-demand binding registers and connects its sync root;
+  /// with convertExisting it then converts the folder's existing content for
+  /// at most conversionBudgetMs of file work on this (control) thread.
+  /// Notes: throws a sanitized reason code; nothing of a failed construction
+  /// stays connected (the registration may).
   explicit EngineAdapter(const Binding &binding);
+  /// conversionBudgetMs bounds the file part of a conversion pass; files left
+  /// are made placeholders by the first cycle without a download.
+  /// Notes: about 2,000 small files fit on the ARM64 test machine (10,000
+  /// took 13.4 s in all, 2026-11-14).
+  static constexpr int conversionBudgetMs = 3000;
   /// ~EngineAdapter requires the cycle to have completed; active teardown is a
   /// lifecycle error.
   ~EngineAdapter() override;
@@ -120,6 +150,33 @@ public:
   /// authorize permits exactly one recomputed matching deletion proposal;
   /// bindings and expiry are enforced by Control.
   void authorize(const QString &digest, qint64 remainingMilliseconds);
+  /// Failure is how one failed item of a cycle counts toward
+  /// Result::restarted: a new placeholder another process's listing may have
+  /// created first, an item that fails nothing (a kept conflict copy, an
+  /// ignored file), or any other failure.
+  enum class Failure { none, placeholder, other };
+  /// failure classifies one item upstream completed without success.
+  /// Notes: only a new, downloaded virtual file of an on-demand folder that
+  /// failed with a normal error is a placeholder; the caller skips
+  /// successful items.
+  static Failure failure(const OCC::SyncFileItem &item, bool onDemand);
+  /// Populated is a failed new placeholder: its folder-relative path and the
+  /// server file ID it was created for.
+  using Populated = std::pair<QString, QByteArray>;
+  /// excused decides whether a finished cycle's failure is only the race with
+  /// another process's directory listing (Result::restarted).
+  /// Inputs: the reason reached so far, whether the cycle was stopped, whether
+  /// any item failed otherwise, whether the previous cycle was excused this
+  /// way, the failed placeholders, and holds (OnDemandRoot::holds).
+  /// Returns: true only for a plain SYNC_FAILED, not stopped, with at least one
+  /// failed placeholder, every one held for its own file ID, no other
+  /// failure, and the previous cycle not excused; the caller keeps the
+  /// result as the next cycle's excusedBefore, so a failure that repeats is
+  /// reported and a later one can be excused again.
+  static bool
+  excused(const QString &reason, bool stopping, bool otherFailure,
+          bool excusedBefore, const QList<Populated> &populated,
+          const std::function<bool(const QString &, const QByteArray &)> &holds);
   /// completed runs on the control thread with no password, raw server error or
   /// request URL.
   std::function<void(const Result &)> completed;

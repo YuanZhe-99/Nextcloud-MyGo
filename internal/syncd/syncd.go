@@ -254,7 +254,29 @@ type Folder struct {
 	// FilesDone counts the files of the current cycle so far; SyncD gives
 	// no total while discovery runs, so there is none to show.
 	FilesDone int `json:"filesDone"`
+	// Conversion is where a folder added by 0.1.0 with full files stands in
+	// SyncD's automatic switch to on-demand files (protocol 1.11); empty
+	// for every other folder and from earlier daemons.
+	Conversion Conversion `json:"conversion"`
+	// ConversionReason is a folder reason code saying why a pending
+	// conversion has not happened yet, or empty; SyncD retries it at each
+	// start. Meaningful only with ConversionPending.
+	ConversionReason string `json:"conversionReason"`
 }
+
+// Conversion is where a folder stands in the automatic switch from full
+// files to on-demand files (protocol 1.11).
+type Conversion string
+
+const (
+	// ConversionNone: nothing to say; the folder was never eligible.
+	ConversionNone Conversion = ""
+	// ConversionPending: a 0.1.0 folder that still downloads every file.
+	ConversionPending Conversion = "pending"
+	// ConversionConverted: switched automatically; the files already on
+	// this computer stayed.
+	ConversionConverted Conversion = "converted"
+)
 
 // FolderMode is how a folder keeps its files on this computer.
 type FolderMode string

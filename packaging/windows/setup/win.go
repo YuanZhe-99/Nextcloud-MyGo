@@ -24,6 +24,163 @@ const (
 	approvedKey  = `Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run`
 )
 
+// Registry locations of Cloud Files sync roots (HKLM) and of the Explorer
+// navigation entries SyncD writes for on-demand folders (HKCU, on-demand.md).
+const (
+	syncRootsKey   = `SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\SyncRootManager`
+	classesKey     = `Software\Classes\CLSID`
+	classesWow64   = `Software\Classes\Wow6432Node\CLSID`
+	namespaceKey   = `Software\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace`
+	hiddenIconsKey = `Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel`
+)
+
+var regDeleteTree = windows.NewLazySystemDLL("advapi32.dll").NewProc("RegDeleteTreeW")
+
+// userSID returns the string SID of the user setup runs as, the second part
+// of every sync root ID of that user.
+func userSID() (string, error) {
+	u, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return "", err
+	}
+	return u.User.Sid.String(), nil
+}
+
+// syncRoot is one Cloud Files registration of SyncD for this user.
+type syncRoot struct {
+	id, account, path string
+}
+
+// syncRoots lists the user's Nextcloud-MyGo sync root registrations, of
+// every profile, with the local root Windows recorded for each.
+// Notes: read-only; only Cloud Files (through SyncD) ever unregisters one.
+func syncRoots(sid string) ([]syncRoot, error) {
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, syncRootsKey, registry.ENUMERATE_SUB_KEYS)
+	if errors.Is(err, registry.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer k.Close()
+	names, err := k.ReadSubKeyNames(0)
+	if err != nil {
+		return nil, err
+	}
+	var out []syncRoot
+	for _, id := range names {
+		account, ok := rootAccount(id, sid)
+		if !ok {
+			continue
+		}
+		path := "(unknown folder)"
+		if u, err := registry.OpenKey(k, id+`\UserSyncRoots`, registry.QUERY_VALUE); err == nil {
+			if p, _, err := u.GetStringValue(sid); err == nil && p != "" {
+				path = p
+			}
+			u.Close()
+		}
+		out = append(out, syncRoot{id, account, path})
+	}
+	return out, nil
+}
+
+// tagged reports whether the HKCU key carries ApplicationName=Nextcloud-MyGo.
+func tagged(key string) bool {
+	k, err := registry.OpenKey(registry.CURRENT_USER, key, registry.QUERY_VALUE)
+	if err != nil {
+		return false
+	}
+	defer k.Close()
+	v, _, err := k.GetStringValue("ApplicationName")
+	return err == nil && ourTag(v)
+}
+
+// removeNavigation deletes the user's leftover Explorer navigation entries of
+// Nextcloud-MyGo: the CLSID keys (both views) and NameSpace keys tagged
+// ApplicationName=Nextcloud-MyGo whose target folder is no longer a
+// registered sync root, and their HideDesktopIcons values. It backs up
+// SyncD's own removal, which ends each entry with its folder.
+// Side effects: deletes HKCU keys and values; never an entry tagged
+// otherwise (the official client's say "Nextcloud"), nor one still serving a
+// root of another profile.
+// Notes: a HideDesktopIcons value whose CLSID keys are already gone carries
+// no tag, so it is left alone.
+func removeNavigation() error {
+	sid, err := userSID()
+	if err != nil {
+		return err
+	}
+	roots, err := syncRoots(sid)
+	if err != nil {
+		return err
+	}
+	live := map[string]bool{}
+	for _, r := range roots {
+		live[rootPath(r.path)] = true
+	}
+	keep, removed := map[string]bool{}, map[string]bool{}
+	var errs []error
+	for _, tree := range []string{classesKey, classesWow64, namespaceKey} {
+		for _, name := range subKeys(tree) {
+			key := tree + `\` + name
+			if name == "" || !tagged(key) || keep[name] {
+				continue
+			}
+			if tree != namespaceKey {
+				if target := stringValue(key+`\Instance\InitPropertyBag`, "TargetFolderPath"); target != "" && live[rootPath(target)] {
+					keep[name] = true
+					continue
+				}
+			}
+			if r, _, _ := regDeleteTree.Call(uintptr(registry.CURRENT_USER), uintptr(unsafe.Pointer(windows.StringToUTF16Ptr(key)))); r != 0 && syscall.Errno(r) != windows.ERROR_FILE_NOT_FOUND {
+				errs = append(errs, fmt.Errorf("removing %s: %w", key, syscall.Errno(r)))
+				continue
+			}
+			removed[name] = true
+		}
+	}
+	if len(removed) > 0 {
+		if k, err := registry.OpenKey(registry.CURRENT_USER, hiddenIconsKey, registry.SET_VALUE); err == nil {
+			for name := range removed {
+				if !keep[name] {
+					if err := k.DeleteValue(name); err != nil && !errors.Is(err, registry.ErrNotExist) {
+						errs = append(errs, err)
+					}
+				}
+			}
+			k.Close()
+		}
+		step("removed leftover Explorer navigation entries of Nextcloud MyGo (%d)", len(removed))
+	}
+	if err := errors.Join(errs...); err != nil {
+		return fmt.Errorf("some Explorer navigation entries of Nextcloud MyGo could not be removed: %w", err)
+	}
+	return nil
+}
+
+// subKeys lists the names of an HKCU key's subkeys, none when it is missing.
+func subKeys(key string) []string {
+	k, err := registry.OpenKey(registry.CURRENT_USER, key, registry.ENUMERATE_SUB_KEYS)
+	if err != nil {
+		return nil
+	}
+	defer k.Close()
+	names, _ := k.ReadSubKeyNames(0)
+	return names
+}
+
+// stringValue reads one HKCU string value, "" when it is missing.
+func stringValue(key, name string) string {
+	k, err := registry.OpenKey(registry.CURRENT_USER, key, registry.QUERY_VALUE)
+	if err != nil {
+		return ""
+	}
+	defer k.Close()
+	v, _, _ := k.GetStringValue(name)
+	return v
+}
+
 // nativeMachine returns the machine Windows itself runs (IMAGE_FILE_MACHINE_*),
 // which differs from this process's when it runs under emulation.
 func nativeMachine() (uint16, error) {

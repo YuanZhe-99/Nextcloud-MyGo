@@ -12,8 +12,20 @@
 #include <QSqlQuery>
 #include <QTemporaryDir>
 #include <QUuid>
+#include <algorithm>
 #include <cstdio>
 #include <stdexcept>
+#ifdef SYNCD_WITH_ENGINE
+#include "platform/windows/ondemand.h"
+#include <QScopeGuard>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <winternl.h>
+
+#include <cfapi.h>
+#endif
 
 #ifdef SYNCD_WITH_ENGINE
 /// NetworkTestAccess reserves local-only startup records and prevents health
@@ -369,6 +381,170 @@ void removalWhileStuck() {
   require(QFile::exists(local.filePath("present/kept.txt")) && journal.exists(),
           "removal touched local files or an engine journal");
 }
+/// conversionStates runs the v0.1.0 full -> on-demand conversion through real
+/// Control starts on real Cloud Files (schema 12, protocol 1.11): a folder
+/// added as full (conversion '') is never converted; a pending one inside
+/// another provider's root keeps full files with FOLDER_OWNED, keeps it on a
+/// retry and converts once the root is gone; an eligible or interrupted one
+/// ends onDemand/'converted' under its own registration; one whose pass fails
+/// after registering (an unreadable journal) is released and back to full
+/// with the reason, its journal untouched; a converted one stays.
+/// Side effects: one fixture secret per case in the current user's vault and
+/// sync roots of its own, all removed again, also on failure.
+void conversionStates(const QString &name) {
+  if (!OnDemandRoot::available()) {
+    std::printf("SKIP conversion %s: Cloud Files unavailable here\n",
+                qPrintable(name));
+    return;
+  }
+  const struct Case {
+    QString name, mode, conversion;
+    bool foreign, unreadable;
+    QString wantMode, wantConversion, wantReason;
+  } cases[] = {
+      {"added as full", "full", "", false, false, "full", "", ""},
+      {"pending inside another root", "full", "pending", true, false, "full",
+       "pending", "FOLDER_OWNED"},
+      {"pending", "full", "pending", false, false, "onDemand", "converted", ""},
+      {"interrupted pass", "onDemand", "converting", false, false, "onDemand",
+       "converted", ""},
+      {"pass fails", "full", "pending", false, true, "full", "pending",
+       "JOURNAL_ERROR"},
+      {"converted", "onDemand", "converted", false, false, "onDemand",
+       "converted", ""},
+  };
+  const auto c = *std::find_if(std::begin(cases), std::end(cases),
+                               [&](const Case &c) { return c.name == name; });
+  QTemporaryDir profile, local;
+  require(profile.isValid() && local.isValid(), "conversion fixture missing");
+  const auto outer = QDir::cleanPath(local.path());
+  const auto root = c.foreign ? outer + "/inner" : outer;
+  require(QDir().mkpath(root), "conversion root missing");
+  QString folder, account, reference;
+  {
+    Control first(profile.filePath("control.sqlite"));
+    folder = NetworkTestAccess::seed(first, root, RootLease(root).identity(),
+                                     false);
+    QSqlQuery q(NetworkTestAccess::db(first));
+    q.prepare("UPDATE folders SET mode=?,conversion=? WHERE id=?");
+    q.addBindValue(c.mode);
+    q.addBindValue(c.conversion);
+    q.addBindValue(folder);
+    require(q.exec(), "conversion row fixture failed");
+    require(q.exec("SELECT account_id FROM folders") && q.next(),
+            "conversion account missing");
+    account = q.value(0).toString();
+    reference = NetworkTestAccess::credential(first, account);
+  }
+  const OnDemandRoot::Identity identity{account, folder, {}},
+      other{account, QUuid::createUuid().toString(QUuid::WithoutBraces), {}};
+  writeCredential(reference, "fixture-login", "fixture-only-secret");
+  const auto journalPath = profile.filePath("journals/" + folder + ".sqlite");
+  const QByteArray unreadable(4096, 'x');
+  if (c.unreadable) {
+    QFile journal(journalPath);
+    require(QDir().mkpath(profile.filePath("journals")) &&
+                journal.open(QIODevice::WriteOnly) &&
+                journal.write(unreadable) == unreadable.size(),
+            "unreadable journal fixture failed");
+  }
+  const auto native = QDir::toNativeSeparators(outer).toStdWString();
+  bool foreign = false;
+  const auto cleanup = qScopeGuard([&] {
+    if (foreign)
+      CfUnregisterSyncRoot(native.c_str());
+    OnDemandRoot::unregister(root, identity);
+    removeCredential(reference);
+  });
+  if (c.foreign) {
+    const std::wstring provider = L"SyncD-Contract-Foreign", version = L"1";
+    CF_SYNC_REGISTRATION registration{};
+    registration.StructSize = sizeof(registration);
+    registration.ProviderName = provider.c_str();
+    registration.ProviderVersion = version.c_str();
+    CF_SYNC_POLICIES policies{};
+    policies.StructSize = sizeof(policies);
+    policies.Hydration.Primary = CF_HYDRATION_POLICY_FULL;
+    policies.Population.Primary = CF_POPULATION_POLICY_ALWAYS_FULL;
+    require(SUCCEEDED(CfRegisterSyncRoot(native.c_str(), &registration,
+                                         &policies, CF_REGISTER_FLAG_NONE)),
+            "foreign fixture root not registered");
+    foreign = true;
+  }
+  struct Row {
+    QString mode, conversion, reason, shownConversion, shownReason;
+    qint64 revision = 0;
+  };
+  // start runs one SyncD start up to its folder attachment.
+  const auto start = [&] {
+    Control control(profile.filePath("control.sqlite"));
+    NetworkTestAccess::quiet(control);
+    NetworkTestAccess::pump(control);
+    require(!NetworkTestAccess::stopped(control), "conversion stopped SyncD");
+    Row row;
+    QSqlQuery q(NetworkTestAccess::db(control));
+    q.prepare("SELECT mode,conversion,conversion_reason FROM folders WHERE "
+              "id=?");
+    q.addBindValue(folder);
+    require(q.exec() && q.next(), "conversion row missing");
+    row.mode = q.value(0).toString();
+    row.conversion = q.value(1).toString();
+    row.reason = q.value(2).toString();
+    const auto projection = control.projection();
+    row.revision = projection.value("revision").toString().toLongLong();
+    const auto shown = projection.value("snapshot")
+                           .toObject()
+                           .value("folders")
+                           .toArray()
+                           .first()
+                           .toObject();
+    row.shownConversion = shown.value("conversion").toString();
+    row.shownReason = shown.value("conversionReason").toString();
+    require(shown.value("mode").toString() == row.mode,
+            "the snapshot's mode differs from the database");
+    return row;
+  };
+  const auto expect = [&](const Row &row, const QString &mode,
+                          const QString &conversion, const QString &reason) {
+    if (row.mode != mode || row.conversion != conversion ||
+        row.reason != reason)
+      std::fprintf(stderr, "  got %s/%s/%s\n", qPrintable(row.mode),
+                   qPrintable(row.conversion), qPrintable(row.reason));
+    require(row.mode == mode && row.conversion == conversion &&
+                row.reason == reason,
+            "the conversion did not end in the expected state");
+    require(row.shownConversion == conversion &&
+                row.shownReason == (conversion == "pending" ? reason : ""),
+            "the snapshot does not show the conversion as protocol 1.11 says");
+    // Registered as this folder's sync root exactly when it is on demand.
+    const bool registered =
+        OnDemandRoot::ownershipError(root, identity).isEmpty() &&
+        OnDemandRoot::ownershipError(root, other) == "FOLDER_OWNED";
+    require(c.foreign || registered == (mode == "onDemand"),
+            "the registration does not match the folder's mode");
+  };
+  auto row = start();
+  expect(row, c.wantMode, c.wantConversion, c.wantReason);
+  if (c.unreadable) {
+    QFile journal(journalPath);
+    require(journal.open(QIODevice::ReadOnly) &&
+                journal.readAll() == unreadable,
+            "a failed conversion changed the journal");
+  }
+  // A retry with the same answer writes nothing; the next start after the
+  // obstacle is gone converts.
+  const auto again = start();
+  expect(again, c.wantMode, c.wantConversion, c.wantReason);
+  if (c.foreign || c.wantConversion != "pending")
+    require(again.revision == row.revision,
+            "a start that changed nothing wrote the folder again");
+  if (c.foreign) {
+    require(SUCCEEDED(CfUnregisterSyncRoot(native.c_str())),
+            "foreign fixture root not removed");
+    foreign = false;
+    expect(start(), "onDemand", "converted", "");
+  }
+}
 #endif
 } // namespace
 
@@ -405,6 +581,11 @@ int main(int argc, char **argv) {
   run("persistence", [] { failClosed(true); });
   run("removal while stuck", [] { removalWhileStuck(); });
   run("inspect a folder that does not exist yet", [] { inspectMissing(); });
+  for (const auto *name :
+       {"added as full", "pending inside another root", "pending",
+        "interrupted pass", "pass fails", "converted"})
+    run(qPrintable(QStringLiteral("conversion: %1").arg(name)),
+        [name] { conversionStates(name); });
   return failures ? 1 : 0;
 #endif
 }

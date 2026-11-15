@@ -88,3 +88,42 @@ func TestFolderModeProjection(t *testing.T) {
 		t.Fatalf("modes %q %q %q", folders[0].Mode, folders[1].Mode, folders[2].Mode)
 	}
 }
+
+// TestFolderConversionProjection decodes protocol 1.11's conversion of a
+// 0.1.0 folder from the shared fixture, and reads a 1.10 projection, which
+// has none, as nothing to say rather than as pending.
+func TestFolderConversionProjection(t *testing.T) {
+	b, err := os.ReadFile("../../protocol/fixtures.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixtures []struct{ Name, JSON string }
+	if err := json.Unmarshal(b, &fixtures); err != nil {
+		t.Fatal(err)
+	}
+	var event struct{ Params projection }
+	for _, f := range fixtures {
+		if f.Name == "folder-conversion" {
+			if err := json.Unmarshal([]byte(f.JSON), &event); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	folders := event.Params.Snapshot.Folders
+	if len(folders) != 2 {
+		t.Fatalf("fixture folders: %+v", folders)
+	}
+	if f := folders[0]; f.Conversion != ConversionPending || f.ConversionReason != "FOLDER_OWNED" || f.Mode != FolderFull {
+		t.Fatalf("pending folder: %+v", f)
+	}
+	if f := folders[1]; f.Conversion != ConversionConverted || f.ConversionReason != "" || f.Mode != FolderOnDemand {
+		t.Fatalf("converted folder: %+v", f)
+	}
+	var older []Folder
+	if err := json.Unmarshal([]byte(`[{"id":"a","mode":"full","phase":"","filesDone":0}]`), &older); err != nil {
+		t.Fatal(err)
+	}
+	if older[0].Conversion != ConversionNone || older[0].ConversionReason != "" {
+		t.Fatalf("1.10 folder: %+v", older[0])
+	}
+}

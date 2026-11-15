@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "SyncD 1.9 folder inspection and decision results",
+  "title": "SyncD 1.11 folder inspection and decision results",
   "$defs": {
     "addParams": {
       "type": "object",
@@ -9,7 +9,7 @@
         "operationKey": {"type": "string", "format": "uuid"},
         "expectedRevision": {"type": "string", "pattern": "^[0-9]+$"},
         "inspectToken": {"type": "string", "format": "uuid"},
-        "mode": {"enum": ["full", "onDemand"], "default": "full", "description": "Fixed for the folder's lifetime; onDemand needs Windows Cloud Files and answers UNSUPPORTED_CAPABILITY without it."}
+        "mode": {"enum": ["full", "onDemand"], "default": "full", "description": "Fixed for the folder's lifetime: only folders added by 0.1.0 are switched to onDemand, once, by SyncD itself (1.11 conversion). onDemand needs Windows Cloud Files (the virtualFiles capability) and answers UNSUPPORTED_CAPABILITY without it; the interface sends onDemand by default where it is available."}
       },
       "additionalProperties": false
     },

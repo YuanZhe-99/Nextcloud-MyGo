@@ -314,6 +314,19 @@ struct EngineAdapter::State {
   quint64 cycleNetworkGeneration = 0;
   quint64 cycle = 0;
   bool capabilitiesInstalled = false;
+  /// restartedAfterDiscovery carries upstream's once-per-removal restart from
+  /// one cycle's engine into the next (patch 0020): set after a cycle was
+  /// restarted, cleared after one passed. Without it every cycle with a local
+  /// removal in an on-demand folder restarted, and none propagated.
+  bool restartedAfterDiscovery = false;
+  /// populated lists the current cycle's failed new placeholders (path, file
+  /// ID) another process's listing may have created first; otherFailure is
+  /// any other failed item. See EngineAdapter::Result::restarted.
+  QList<EngineAdapter::Populated> populated;
+  bool otherFailure = false;
+  /// populatedBefore marks that the previous cycle was excused this way: the
+  /// next one is not, so a failure that repeats is reported.
+  bool populatedBefore = false;
 };
 
 EngineAdapter::EngineAdapter(const Binding &binding)
@@ -324,8 +337,9 @@ EngineAdapter::EngineAdapter(const Binding &binding)
       !QFileInfo(binding.journalPath).isAbsolute() ||
       !QFileInfo(binding.excludePath).isFile())
     throw std::runtime_error("Invalid engine binding");
-  if (binding.onDemand &&
-      (binding.folderId.isEmpty() || binding.accountId.isEmpty()))
+  if ((binding.onDemand &&
+       (binding.folderId.isEmpty() || binding.accountId.isEmpty())) ||
+      (binding.convertExisting && !binding.onDemand))
     throw std::runtime_error("Invalid engine binding");
   state_->binding = binding;
   state_->root =
@@ -343,6 +357,11 @@ EngineAdapter::EngineAdapter(const Binding &binding)
   createAccount();
   state_->journal = std::make_unique<OCC::SyncJournalDb>(binding.journalPath);
   connectOnDemand();
+  // No cycle has run in this epoch: the journal is read, never written, and
+  // what the budget leaves is repaired by the first cycle (ondemand.h).
+  if (binding.convertExisting)
+    state_->onDemand->convertExisting(*state_->journal,
+                                      QDeadlineTimer(conversionBudgetMs));
 }
 
 void EngineAdapter::connectOnDemand() {
@@ -351,7 +370,7 @@ void EngineAdapter::connectOnDemand() {
     return;
   s.onDemand = std::make_unique<OnDemandRoot>(
       OnDemandRoot::Identity{s.binding.accountId, s.binding.folderId,
-                             QString(OnDemandRoot::provider) + " - " +
+                             "Nextcloud MyGo - " +
                                  QFileInfo(s.binding.localPath).fileName()},
       s.binding.localPath, s.binding.remotePath, s.account, s.journal.get());
 }
@@ -383,6 +402,33 @@ void EngineAdapter::createAccount() {
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     throw;
   }
+}
+
+EngineAdapter::Failure EngineAdapter::failure(const OCC::SyncFileItem &item,
+                                              bool onDemand) {
+  // A new placeholder another process's directory listing (Explorer, an
+  // indexer) created first fails as "already exists" (2026-11-14).
+  if (onDemand && item._instruction == CSYNC_INSTRUCTION_NEW &&
+      item._direction == OCC::SyncFileItem::Down &&
+      item._type == ItemTypeVirtualFile &&
+      item._status == OCC::SyncFileItem::NormalError)
+    return Failure::placeholder;
+  return item._status == OCC::SyncFileItem::Conflict ||
+                 item._status == OCC::SyncFileItem::FileIgnored
+             ? Failure::none
+             : Failure::other;
+}
+
+bool EngineAdapter::excused(
+    const QString &reason, bool stopping, bool otherFailure,
+    bool excusedBefore, const QList<Populated> &populated,
+    const std::function<bool(const QString &, const QByteArray &)> &holds) {
+  return reason == "SYNC_FAILED" && !stopping && !excusedBefore &&
+         !otherFailure && !populated.isEmpty() &&
+         std::all_of(populated.cbegin(), populated.cend(),
+                     [&](const Populated &entry) {
+                       return holds(entry.first, entry.second);
+                     });
 }
 
 EngineAdapter::~EngineAdapter() {
@@ -542,6 +588,8 @@ void EngineAdapter::start() {
   };
   s.uploaded = s.downloaded = s.deletedRemote = s.done = 0;
   s.deletedLocal = s.renamedRemote = s.renamedLocal = 0;
+  s.populated.clear();
+  s.otherFailure = false;
   s.cycleNetworkGeneration =
       s.binding.networkGeneration ? *s.binding.networkGeneration : 0;
   s.stopping = false;
@@ -638,6 +686,7 @@ void EngineAdapter::start() {
     s.active = false;
     throw;
   }
+  s.engine->setRestartedSyncAfterDiscovery(s.restartedAfterDiscovery);
   s.engine->excludedFiles().addExcludeFilePath(s.binding.excludePath);
   if (!s.engine->excludedFiles().reloadExcludeFiles()) {
     s.engine.reset();
@@ -730,8 +779,15 @@ void EngineAdapter::start() {
       Qt::DirectConnection);
   QObject::connect(s.engine.get(), &OCC::SyncEngine::itemCompleted, this,
                    [this](const OCC::SyncFileItemPtr &item, auto) {
-                     if (item->_status != OCC::SyncFileItem::Success)
+                     if (item->_status != OCC::SyncFileItem::Success) {
+                       const auto kind =
+                           failure(*item, state_->onDemand != nullptr);
+                       if (kind == Failure::placeholder)
+                         state_->populated.append({item->_file, item->_fileId});
+                       else if (kind == Failure::other)
+                         state_->otherFailure = true;
                        return;
+                     }
                      if (!item->isDirectory())
                        ++state_->done;
                      const bool up =
@@ -770,9 +826,31 @@ void EngineAdapter::start() {
           state_->reason = "SYNC_FAILED";
       });
   QObject::connect(
-      s.engine.get(), &OCC::SyncEngine::finished, this, [this](bool success) {
-        if (state_->reason.isEmpty() && (!success || state_->stopping))
+      s.engine.get(), &OCC::SyncEngine::finished, this,
+      [this, restartedBefore = s.restartedAfterDiscovery](bool success) {
+        // Upstream sets the flag only where it restarts a cycle whose
+        // discovery completed; nothing else failed such a cycle.
+        state_->restartedAfterDiscovery =
+            state_->engine->restartedSyncAfterDiscovery();
+        const bool restarted = !success && !state_->stopping &&
+                               state_->reason.isEmpty() && !restartedBefore &&
+                               state_->restartedAfterDiscovery;
+        if (state_->reason.isEmpty() && !restarted &&
+            (!success || state_->stopping))
           state_->reason = state_->stopping ? "CANCELLED" : "SYNC_FAILED";
+        // When every failure was a new placeholder that a directory listing
+        // of another process had created first, for the same server file,
+        // the cycle failed at nothing it meant to do: no error, and the
+        // follow-up discovers again (Result::restarted).
+        const bool populated = excused(
+            state_->reason, state_->stopping, state_->otherFailure,
+            state_->populatedBefore, state_->populated,
+            [this](const QString &path, const QByteArray &fileId) {
+              return state_->onDemand && state_->onDemand->holds(path, fileId);
+            });
+        state_->populatedBefore = populated;
+        if (populated)
+          state_->reason.clear();
         if (state_->requests->denied > state_->requestBaseline.denied)
           state_->reason = "ENDPOINT_UNTRUSTED";
         else if (state_->requests->tlsFailures >
@@ -814,7 +892,11 @@ void EngineAdapter::start() {
             state_->cycleNetworkGeneration,
             retryAfter,
             state_->proposal.isEmpty() ? QByteArray{} : state_->groups};
-        state_->freshConnections = !result.success;
+        result.restarted =
+            (restarted || populated) && state_->reason.isEmpty();
+        result.followUp = result.followUp || result.restarted;
+        // A restarted cycle lost no connection; it only discovers again.
+        state_->freshConnections = !result.success && !result.restarted;
         result.deletedLocal = state_->deletedLocal;
         result.renamedRemote = state_->renamedRemote;
         result.renamedLocal = state_->renamedLocal;
@@ -842,6 +924,7 @@ void EngineAdapter::start() {
             result.success = false;
             result.followUp = false;
             result.reason = "JOURNAL_ERROR";
+            result.restarted = false;
             result.proposalDigest.clear();
             result.retryAfterMs = 0;
           }

@@ -20,6 +20,8 @@ Nextcloud-MyGo 以 GPL-3.0 授权。本清单列出它复用或内嵌的每个�
 Nextcloud 名称与图标是 Nextcloud GmbH 的商标。产品名称与图标复用遵循用户的决定；首次发布前核对商标条款。
 `resources/icon.png` 是 `third_party/nextcloud/theme/colored/Nextcloud-icon.svg` 未经修改、以 1024×1024
 渲染的结果；`mygo build` 将其制成可执行文件图标，快捷方式与应用列表条目显示该图标。
+`backend/platform/windows/syncd.ico`（`nextcloud-mygo-syncd.exe` 的图标，资源管理器用它显示其 Cloud Files 同步根与导航窗格条目）由
+`resources/icon.png` 生成，尺寸为 16、20、24、32、40、48、64、128 和 256 px，条目为 PNG 压缩格式。
 
 ## 计划中的组件
 

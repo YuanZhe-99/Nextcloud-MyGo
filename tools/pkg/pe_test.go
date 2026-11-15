@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -14,6 +15,13 @@ import (
 // for imports and a load configuration whose CHPE metadata pointer is set
 // when hybrid is.
 func fakePE(t *testing.T, path string, machine uint16, hybrid bool, imports ...string) {
+	t.Helper()
+	fakePEResource(t, path, machine, hybrid, 0, imports...)
+}
+
+// fakePEResource is fakePE with a resource directory holding one resource of
+// type resource (RT_*), or no resource directory for 0.
+func fakePEResource(t *testing.T, path string, machine uint16, hybrid bool, resource uint32, imports ...string) {
 	t.Helper()
 	const rva, raw, size = 0x1000, 0x400, 0x400
 	sec := make([]byte, size)
@@ -27,6 +35,15 @@ func fakePE(t *testing.T, path string, machine uint16, hybrid bool, imports ...s
 	if hybrid {
 		binary.LittleEndian.PutUint64(sec[0x200+200:], rva+0x380)
 	}
+	const res = 0x3a0 // type directory with one ID entry, then that type's directory of one resource
+	if resource != 0 {
+		binary.LittleEndian.PutUint16(sec[res+14:], 1)
+		binary.LittleEndian.PutUint32(sec[res+16:], resource)
+		binary.LittleEndian.PutUint32(sec[res+20:], 0x80000018)
+		binary.LittleEndian.PutUint16(sec[res+0x18+14:], 1)
+		binary.LittleEndian.PutUint32(sec[res+0x28:], 1)
+		binary.LittleEndian.PutUint32(sec[res+0x2c:], 0x80000030)
+	}
 	var b bytes.Buffer
 	dos := make([]byte, 0x40)
 	copy(dos, "MZ")
@@ -37,6 +54,9 @@ func fakePE(t *testing.T, path string, machine uint16, hybrid bool, imports ...s
 	oh := pe.OptionalHeader64{Magic: 0x20b, SectionAlignment: 0x1000, FileAlignment: 0x200, SizeOfImage: 0x2000, SizeOfHeaders: raw, NumberOfRvaAndSizes: 16, Subsystem: 3}
 	oh.DataDirectory[pe.IMAGE_DIRECTORY_ENTRY_IMPORT] = pe.DataDirectory{VirtualAddress: rva, Size: uint32(20 * (len(imports) + 1))}
 	oh.DataDirectory[pe.IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG] = pe.DataDirectory{VirtualAddress: rva + 0x200, Size: 0x140}
+	if resource != 0 {
+		oh.DataDirectory[pe.IMAGE_DIRECTORY_ENTRY_RESOURCE] = pe.DataDirectory{VirtualAddress: rva + res, Size: 0x30}
+	}
 	binary.Write(&b, binary.LittleEndian, oh)
 	sh := pe.SectionHeader32{VirtualSize: size, VirtualAddress: rva, SizeOfRawData: size, PointerToRawData: raw, Characteristics: 0x40000040}
 	copy(sh.Name[:], ".rdata")
@@ -128,6 +148,56 @@ func TestCheck(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestIcon covers the package check that SyncD's executable carries an icon
+// group, which Explorer shows for its on-demand folders: found in a fixture
+// with RT_GROUP_ICON, absent with only a version resource or none, and read
+// from real Windows files where they are present.
+func TestIcon(t *testing.T) {
+	dir := t.TempDir()
+	for _, c := range []struct {
+		name     string
+		resource uint32
+		icon     bool
+	}{
+		{"icon group", rtGroupIcon, true},
+		{"version only", 16, false},
+		{"no resources", 0, false},
+	} {
+		p := filepath.Join(dir, c.name, syncdExe)
+		fakePEResource(t, p, machineARM64, false, c.resource, "api-ms-win-core-synch-l1-1-0.dll")
+		img, _, err := inspect(p)
+		if err != nil || img.Icon != c.icon {
+			t.Errorf("%s: Icon = %v, %v; want %v", c.name, img.Icon, err, c.icon)
+		}
+		_, problems, err := check(p, "ARM64")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if failed := slices.ContainsFunc(problems, func(s string) bool { return strings.Contains(s, "no icon") }); failed == c.icon {
+			t.Errorf("%s: problems = %q", c.name, problems)
+		}
+		other := filepath.Join(dir, c.name, "other.exe")
+		fakePEResource(t, other, machineARM64, false, c.resource, "api-ms-win-core-synch-l1-1-0.dll")
+		if _, problems, _ := check(other, "ARM64"); len(problems) > 0 {
+			t.Errorf("%s: an executable other than SyncD's needs no icon: %q", c.name, problems)
+		}
+	}
+	system32 := filepath.Join(os.Getenv("SystemRoot"), "System32")
+	for _, c := range []struct {
+		file string
+		icon bool
+	}{{"cmd.exe", true}, {"kernel32.dll", false}} {
+		img, ok, err := inspect(filepath.Join(system32, c.file))
+		if err != nil || !ok {
+			t.Logf("%s: not inspected here (%v)", c.file, err)
+			continue
+		}
+		if img.Icon != c.icon {
+			t.Errorf("%s: Icon = %v, want %v", c.file, img.Icon, c.icon)
+		}
 	}
 }
 

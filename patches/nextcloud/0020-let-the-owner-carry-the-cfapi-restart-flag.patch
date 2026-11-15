@@ -1,0 +1,60 @@
+diff --git a/src/libsync/syncengine.h b/src/libsync/syncengine.h
+--- a/src/libsync/syncengine.h
++++ b/src/libsync/syncengine.h
+@@ -80,6 +80,16 @@ public:
+     /* Returns whether another sync is needed to complete the sync */
+     [[nodiscard]] AnotherSyncNeeded isAnotherSyncNeeded() const { return _anotherSyncNeeded; }
+ 
++    /** Whether the last sync that reached reconcile was failed once to be restarted
++     *
++     * With Windows CfApi, a sync whose discovery found a local removal is failed once and
++     * the next one trusts its discovery (see shouldRestartSync()). The flag lives in the
++     * engine: an owner that creates a new engine for every sync carries it into the next
++     * engine, or every such sync is restarted again and the removal never propagates.
++     */
++    [[nodiscard]] bool restartedSyncAfterDiscovery() const { return _restartedSyncAfterDiscovery; }
++    void setRestartedSyncAfterDiscovery(bool restarted) { _restartedSyncAfterDiscovery = restarted; }
++
+     [[nodiscard]] bool wasFileTouched(const QString &fn) const;
+ 
+     [[nodiscard]] AccountPtr account() const { return _account; };
+diff --git a/test/testsynccfapi.cpp b/test/testsynccfapi.cpp
+--- a/test/testsynccfapi.cpp
++++ b/test/testsynccfapi.cpp
+@@ -2110,6 +2110,36 @@ private Q_SLOTS:
+         QVERIFY(!vfs->hasRequestsInFlight());
+     }
+ 
++    // An owner that creates a new engine for every sync carries the restart flag into the next one.
++    void testRestartAfterLocalRemovalCarriesToTheNextEngine()
++    {
++        FakeFolder fakeFolder{FileInfo{}};
++        setupVfs(fakeFolder);
++        fakeFolder.remoteModifier().insert("a", 64);
++        QVERIFY(fakeFolder.syncOnce());
++        QVERIFY(!fakeFolder.syncEngine().restartedSyncAfterDiscovery());
++
++        // A local removal fails the sync once, asking for a delayed follow-up.
++        fakeFolder.localModifier().remove("a");
++        QVERIFY(!fakeFolder.syncOnce());
++        QVERIFY(fakeFolder.syncEngine().restartedSyncAfterDiscovery());
++        QCOMPARE(fakeFolder.syncEngine().isAnotherSyncNeeded(), DelayedFollowUp);
++        QVERIFY(fakeFolder.currentRemoteState().find("a"));
++
++        // A new engine that starts without the flag restarts again, every time.
++        fakeFolder.syncEngine().setRestartedSyncAfterDiscovery(false);
++        QVERIFY(!fakeFolder.syncOnce());
++        QVERIFY(fakeFolder.currentRemoteState().find("a"));
++
++        // Carried over, the next sync trusts its discovery, removes the file and clears the flag.
++        const auto restarted = fakeFolder.syncEngine().restartedSyncAfterDiscovery();
++        QVERIFY(restarted);
++        fakeFolder.syncEngine().setRestartedSyncAfterDiscovery(restarted);
++        QVERIFY(fakeFolder.syncOnce());
++        QVERIFY(!fakeFolder.currentRemoteState().find("a"));
++        QVERIFY(!fakeFolder.syncEngine().restartedSyncAfterDiscovery());
++    }
++
+     void testServer_caseClash_createConflict()
+     {
+         FakeFolder fakeFolder{ FileInfo{} };

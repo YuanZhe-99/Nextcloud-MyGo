@@ -73,7 +73,38 @@ SyncD 为按需目录复用该插件（[按需文件](on-demand.md)）；Desktop
   填充，这发生在同步周期之外，并在 VFS 线程上写 journal。来自提供程序自身进程的请求会被拒绝。
 - 插件及其 Shell 扩展受 `BUILD_SHELL_INTEGRATION` 控制（补丁 0001）；补丁 0017 为单独构建插件增加
   `BUILD_CFAPI_VFS`。
-- `Folder::setVirtualFilesEnabled` 会删除并重建 journal，因此不提供切换目录模式。
+- `Folder::setVirtualFilesEnabled` 与 `SyncEngine::switchToVirtualFiles` 切换目录模式时既不删除也不重建 journal：它们只把
+  本地文件转换为占位文件。它们向转换传入空条目，这会让每个条目的标识为空、并让目录带上文件的标志，所以 SyncD 改用
+  journal 的记录进行转换（[按需文件](on-demand.md#完整文件目录的自动转换)）。
+- 发现过程会修复文件，但不修复目录：在 Cloud Files 根中，普通文件读作缺少元数据（`vfs_cfapi` 对非占位文件设置
+  `is_metadata_missing`），未变化的文件得到 `UPDATE_METADATA` 且不下载（`discovery.cpp`）；没有任何机制对目录这样做。
+- 任何稀疏文件都曾读作已释放空间的占位文件（`VfsCfApi::isDehydratedPlaceholder` 并不存在；由 `isSparseFile` 决定）。新的本地
+  稀疏文件在本地被删除且从未上传，已有稀疏文件的编辑没有上传，之后悄然分叉。补丁 0021 要求带有云重解析标记和
+  `FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS`（且不是目录）；仅有稀疏属性不再算数。真实 Cloud Files 上的探测（Windows 11 ARM64，
+  2026-11-14）；Windows 对提供程序之外的进程隐藏占位文件的稀疏位：
+
+  | 情形 | 属性 | 重解析标记 | 占位文件状态 |
+  |---|---|---|---|
+  | 已释放空间的占位文件 | 0x00401620 | 9000401A | 0x39 |
+  | 已下载、已同步 | 0x420 | 9000601A | 0x09 |
+  | 带内容的稀疏文件，已转换 | 0x620 | 9000601A | 0x09 |
+  | 普通稀疏文件，不是占位文件 | 0x220 | 0 | 0 |
+  | 固定的已释放空间文件 | 0x00481620 | 9000401A | 0x39 |
+
+- 在 Cloud Files 下，`SyncEngine::shouldRestartSync` 在发现过程发现本地移除时让一个周期失败一次，并借助每个引擎的一个标志放行
+  下一个周期。SyncD 每个周期创建一个引擎，标志因此丢失：每个这样的周期都重启，按需目录中没有本地删除到达服务器，目录停在
+  `SYNC_FAILED`。补丁 0020 增加 `restartedSyncAfterDiscovery()` 与 `setRestartedSyncAfterDiscovery(bool)`，让所有者携带该标志
+  （[引擎](engine.md#按需目录中的本地删除)）。
+- `convertToPlaceholder` 以不带任何访问权限的方式打开文件，所以被另一应用独占打开的文件仍可转换；完全无法打开的文件，
+  例如被标记为删除的文件，则不能。
+- `VfsSetupParams::navigationPaneClsid` 成为同步根的 `NamespaceCLSID`。上游在 `src/gui/navigationpanehelper.cpp` 中自己写该
+  条目，那是 SyncD 无法链接的 GUI 代码；SyncD 在 HKCU 下写入同样的键（[按需文件](on-demand.md#导航窗格条目与图标)）。
+- `cfapiwrapper.cpp` 的列表路径（`cfApiSendPlaceholdersTransferInfo`，约第 161–163 行）曾把列表的 `FileIdentity` 存为 UTF-8 字节，
+  却按 UTF-16 计算大小，即 `(len+1)*sizeof(wchar_t)`。它多读出缓冲区之后 len+1 个字节，因此存下的标识是文件 ID、一个 NUL，
+  以及同样多的无意义字节。补丁 0023 现在只存精确的 UTF-8 文件 ID，不带结束符，与占位文件创建所存的形式相同。转换（`convertToPlaceholder`）
+  仍存带结束符的 UTF-16 字符串，所以 `OnDemandRoot::holds` 同时接受两种形式（[按需文件](on-demand.md#本地删除)）。上游测试
+  `testOnDemandListingStoresTheFileIdentity` 让另一个进程列出一个虚拟目录，并把所存标识与文件 ID 比较；它在 ARM64 上通过，补丁之前的标识
+  是文件 ID 加上越过缓冲区读出的字节。真实 Cloud Files 上的契约测试覆盖两种形式。
 
 macOS 扩展目标在 `shell_integration/MacOSX/NextcloudIntegration/FileProviderExt`。
 其桩文件将实际实现指定为 `shell_integration/MacOSX/NextcloudFileProviderKit` 中的
@@ -90,6 +121,7 @@ macOS 扩展目标在 `shell_integration/MacOSX/NextcloudIntegration/FileProvide
 | MOVE 保留条目的 `oc:fileid`；分块会话的最终 MOVE 在文件组装完成后才应答；已提交的写入即使回复丢失也仍然已提交 | 上游发现按文件 ID 识别已改名的条目、按校验和识别已组装的文件，因此回复丢失通过重新发现恢复，绝不通过第二个请求恢复 | 针对服务器 35.0.2 的真实运行 |
 | 替换已有文件的 PUT 直接覆盖写入原文件，不使用 part 文件（当 part 路径不可创建而目标可更新时，`File::put` 放弃 part 文件，而 `Common::isCreatable` 使每个文件都满足这一条件）；正文被截断时文件也被截断，服务器察觉后应答 `400 Expected filesize`，文件缓存在有人读取该文件之前保留旧的大小和 ETag。新文件的 PUT 使用 part 文件，不留下任何内容 | 补丁 0018 把每个非空修改都作为分块上传发送，由最终 MOVE 在服务器上组装（[引擎](engine.md#完成与安全)） | 针对服务器 35.0.2 手工发送的短 PUT：已有的 1 MiB 文件只剩 294,912 字节，新文件未被创建 |
 | 后备目录已消失的 `files_external` 存储，在客户端所请求属性的父目录列表中被省略，或以权限 `MG`、大小 0 和空 ETag 列出，其自身列表应答 207 且没有成员 | 若一个周期会在本地移除挂载点或其全部内容，SyncD 会阻止该周期（`DISCOVERY_INCOMPLETE`） | 针对服务器 35.0.2 的真实运行（`partial-listing`）和手工 PROPFIND |
+| Nextcloud 35.0.3 在文件于一秒内被重写两次时可能保留其 ETag：2 MiB 上传的 15 对连续 PUT 里有 5 对得到相同的 ETag。上游的发现过程只用 ETag 判断文件在服务器端是否变化（`processFileAnalyzeRemoteInfo`），因此 ETag 相同而大小不同被视为未变化 | 在本地也被编辑的文件曾覆盖服务器上较新的内容上传，因为上传的前置条件通过。补丁 0022 把 ETag 相等时服务器大小不同视为服务器端变化（下载；若本地也被编辑则生成冲突副本；已释放的占位文件取得新的大小）；排除目录、端到端加密的条目以及名称被改写的 journal 记录。仍无法检测：一秒内的同大小重写，以及父目录也保留其 ETag 的服务器上的重写（[按需文件](on-demand.md#已知风险)） | 针对服务器 35.0.3 的手工探测；上游测试 `testServerSizeChangeUnderSameEtag`、`testEncryptedFileSizeIsNotComparedWithTheServer` 和 `testServerSizeChangeUnderSameEtagUpdatesPlaceholder` 在 ARM64 上通过（单独运行），补丁之前同样的测试显示无变化、上传和无变化；被替换的内容是否保留在版本应用中，以及 Nextcloud 34，均未测试 |
 
 ## Qt
 

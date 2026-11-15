@@ -15,8 +15,9 @@
           {"id": "20000000-0000-4000-8000-000000000002", "user": "bob", "displayName": "Bob", "server": "cloud.example.invalid", "auth": "revoked", "signedIn": false}
         ],
         "folders": [
-          {"id": "30000000-0000-4000-8000-000000000001", "accountId": "20000000-0000-4000-8000-000000000001", "name": "Photos", "localPath": "C:/Sync/Photos", "remotePath": "/Photos", "userPaused": false, "state": "syncing", "reasonCode": "", "mode": "full", "phase": "uploading", "filesDone": 12},
-          {"id": "30000000-0000-4000-8000-000000000002", "accountId": "20000000-0000-4000-8000-000000000002", "name": "Work", "localPath": "C:/Sync/Work", "remotePath": "/Work", "userPaused": false, "state": "error", "reasonCode": "AUTH_REQUIRED", "mode": "full", "phase": "", "filesDone": 0}
+          {"id": "30000000-0000-4000-8000-000000000001", "accountId": "20000000-0000-4000-8000-000000000001", "name": "Photos", "localPath": "C:/Sync/Photos", "remotePath": "/Photos", "userPaused": false, "state": "syncing", "reasonCode": "", "mode": "full", "phase": "uploading", "filesDone": 12, "conversion": "", "conversionReason": ""},
+          {"id": "30000000-0000-4000-8000-000000000002", "accountId": "20000000-0000-4000-8000-000000000002", "name": "Work", "localPath": "C:/Sync/Work", "remotePath": "/Work", "userPaused": false, "state": "error", "reasonCode": "AUTH_REQUIRED", "mode": "full", "phase": "", "filesDone": 0, "conversion": "pending", "conversionReason": "UNSUPPORTED_FOLDER_MODE"},
+          {"id": "30000000-0000-4000-8000-000000000003", "accountId": "20000000-0000-4000-8000-000000000001", "name": "Archive", "localPath": "C:/Sync/Archive", "remotePath": "/Archive", "userPaused": false, "state": "upToDate", "reasonCode": "", "mode": "onDemand", "phase": "", "filesDone": 0, "conversion": "converted", "conversionReason": ""}
         ],
         "endpoints": [
           {"id": "40000000-0000-4000-8000-000000000001", "accountId": "20000000-0000-4000-8000-000000000001", "name": "cloud.example.invalid", "kind": "internet", "url": "https://cloud.example.invalid/", "main": true, "approved": true, "verified": "verified", "reachable": true, "blocked": false, "blockedReason": "", "latencyMs": 48, "inUse": false},
@@ -72,5 +73,5 @@
     "jsonrpc": "2.0", "id": "status",
     "result": {"state": "failed", "reasonCode": "ACCOUNT_EXISTS"}
   },
-  "versionReport": {"version": "0.1.0", "protocol": {"major": 1, "minor": 10}, "controlSchema": 11, "engine": true}
+  "versionReport": {"version": "0.1.0", "protocol": {"major": 1, "minor": 11}, "controlSchema": 12, "engine": true}
 }

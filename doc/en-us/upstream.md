@@ -83,8 +83,50 @@ points of Desktop v35.0.3 shaped that integration (read, and exercised by the on
   journal on the VFS thread. A request from the provider's own process is refused.
 - The plugin and its shell extension are gated on `BUILD_SHELL_INTEGRATION` (patch 0001); patch 0017
   adds `BUILD_CFAPI_VFS` for the plugin alone.
-- `Folder::setVirtualFilesEnabled` deletes and recreates the journal; switching a folder's mode is
-  therefore not offered.
+- `Folder::setVirtualFilesEnabled` and `SyncEngine::switchToVirtualFiles` switch a folder's mode
+  without deleting or rebuilding the journal: they only convert local files to placeholders. They
+  pass an empty item to the conversion, which gives every entry an empty identity and a directory a
+  file's flags, so SyncD converts with the journal's records instead
+  ([on-demand](on-demand.md#automatic-conversion-of-full-file-folders)).
+- Discovery repairs files but not directories: in a Cloud Files root a plain file reads as
+  metadata-missing (`vfs_cfapi` sets `is_metadata_missing` for a non-placeholder) and an unchanged
+  file gets `UPDATE_METADATA` without a download (`discovery.cpp`); nothing does this for a directory.
+- Any sparse file read as a dehydrated placeholder (`VfsCfApi::isDehydratedPlaceholder` did not exist;
+  `isSparseFile` decided). A new local sparse file was deleted locally and never uploaded, and edits of an
+  existing sparse file were not uploaded and later diverged silently. Patch 0021 requires the cloud reparse
+  tag and `FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS` (not a directory); sparse no longer counts. Probe on real
+  Cloud Files (Windows 11 ARM64, 2026-11-14); Windows hides the sparse bit of placeholders from processes
+  other than the provider:
+
+  | Case | Attributes | Reparse tag | Placeholder state |
+  |---|---|---|---|
+  | dehydrated placeholder | 0x00401620 | 9000401A | 0x39 |
+  | hydrated, in sync | 0x420 | 9000601A | 0x09 |
+  | sparse with content, converted | 0x620 | 9000601A | 0x09 |
+  | plain sparse, not a placeholder | 0x220 | 0 | 0 |
+  | pinned dehydrated | 0x00481620 | 9000401A | 0x39 |
+
+- Under Cloud Files `SyncEngine::shouldRestartSync` fails a cycle once when discovery found a local removal
+  and lets the next one through using a per-engine flag. SyncD creates one engine per cycle, so the flag
+  was lost: every such cycle restarted, no local deletion in an on-demand folder reached the server and the
+  folder stayed in `SYNC_FAILED`. Patch 0020 adds `restartedSyncAfterDiscovery()` and
+  `setRestartedSyncAfterDiscovery(bool)` so the owner carries the flag
+  ([engine](engine.md#local-deletions-in-on-demand-folders)).
+- `convertToPlaceholder` opens the file with no access rights, so a file another application holds
+  open without sharing still converts; a file that cannot be opened at all, such as one marked for
+  deletion, does not.
+- `VfsSetupParams::navigationPaneClsid` becomes the sync root's `NamespaceCLSID`. Upstream writes the
+  entry itself in `src/gui/navigationpanehelper.cpp`, GUI code that SyncD cannot link; SyncD writes the
+  same keys under HKCU ([on-demand](on-demand.md#navigation-pane-entry-and-icon)).
+- The listing path of `cfapiwrapper.cpp` (`cfApiSendPlaceholdersTransferInfo`, around lines 161–163)
+  stored the listing's `FileIdentity` as UTF-8 bytes but sized it as UTF-16, `(len+1)*sizeof(wchar_t)`.
+  It read len+1 bytes past the buffer, so the stored identity was the file ID, a NUL, and as many
+  meaningless bytes. Patch 0023 stores exactly the UTF-8 file ID without a terminator, the form placeholder
+  creation stores. Conversion (`convertToPlaceholder`) still stores a UTF-16 string with its terminator, so
+  `OnDemandRoot::holds` accepts both forms ([on-demand](on-demand.md#local-deletions)). The upstream test
+  `testOnDemandListingStoresTheFileIdentity` has another process list a virtual folder and compares the
+  stored identity with the file ID; it passes on ARM64, and before the patch the identity was the ID
+  followed by bytes read past the buffer. The contract test on real Cloud Files covers both forms.
 
 The macOS extension target is under `shell_integration/MacOSX/NextcloudIntegration/FileProviderExt`.
 Its stub names `NextcloudFileProviderKit.FileProviderExtension` as the actual implementation in
@@ -102,6 +144,7 @@ remain unverified. These sources retain their own SPDX headers and bundled licen
 | A MOVE keeps the entry's `oc:fileid`; a chunk session's final MOVE answers only after the file is assembled; a committed write stays committed when its reply is lost | upstream discovery recognizes the renamed entry by file ID and the assembled file by checksum, so a lost reply is recovered by rediscovery, never by a second request | real runs against server 35.0.2 |
 | A PUT that replaces an existing file is written over it in place, with no part file (`File::put` drops the part file when the part path is not creatable but the target is updatable, which `Common::isCreatable` makes true for every file); a body cut short leaves the file truncated, answered `400 Expected filesize` once the server notices, and the file cache keeps the old size and ETag until something reads the file. A PUT of a new file uses a part file and leaves nothing | patch 0018 sends every nonempty modification as a chunked upload, whose final MOVE assembles on the server ([engine](engine.md#completion-and-safety)) | a short PUT by hand against server 35.0.2: an existing 1 MiB file was left at 294,912 bytes, a new file was not created |
 | A `files_external` storage whose backing directory is gone is left out of its parent's listing for the client's properties, or listed with permissions `MG`, size 0 and an empty ETag, and its own listing answers 207 with no members | SyncD holds a cycle that would remove a mount point or all of its content locally (`DISCOVERY_INCOMPLETE`) | real runs against server 35.0.2 (`partial-listing`) and a PROPFIND by hand |
+| Nextcloud 35.0.3 can keep a file's ETag when the file is rewritten twice within one second: identical ETags for both PUTs in 5 of 15 back-to-back pairs of 2 MiB uploads. Upstream discovery tested a server-side file change only by the ETag (`processFileAnalyzeRemoteInfo`), so an equal ETag with a different size counted as unchanged | a file also edited locally was uploaded over the server's newer content, because the upload's precondition passed. Patch 0022 treats a different server size under an equal ETag as a server change (download, or a conflict copy when also edited locally; a dehydrated placeholder takes the new size); folders, end-to-end-encrypted entries and journal records with a mangled name are excluded. Still undetectable: a same-size rewrite within one second, and a rewrite on a server whose parent folder also keeps its ETag ([on-demand](on-demand.md#known-risks)) | a probe by hand against server 35.0.3; upstream tests `testServerSizeChangeUnderSameEtag`, `testEncryptedFileSizeIsNotComparedWithTheServer` and `testServerSizeChangeUnderSameEtagUpdatesPlaceholder` pass on ARM64 (run singly), and the same tests showed no change, an upload and no change before the patch; whether the replaced content survives in the versions app, and Nextcloud 34, are not tested |
 
 ## Qt
 

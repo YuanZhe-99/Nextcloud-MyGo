@@ -21,6 +21,9 @@ The Nextcloud name and icon are trademarks of Nextcloud GmbH. The product name a
 icon follow the user's decision; the trademark terms are checked before the first release.
 `resources/icon.png` is `third_party/nextcloud/theme/colored/Nextcloud-icon.svg` rendered unchanged
 at 1024×1024; `mygo build` makes it the executable's icon, which the shortcut and the Apps entry show.
+`backend/platform/windows/syncd.ico` (the icon of `nextcloud-mygo-syncd.exe`, shown by Explorer for its Cloud
+Files sync roots and navigation entries) is generated from `resources/icon.png` at 16, 20, 24, 32, 40, 48, 64,
+128 and 256 px, as PNG-compressed entries.
 
 ## Planned components
 

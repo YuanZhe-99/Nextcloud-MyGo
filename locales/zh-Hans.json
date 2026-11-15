@@ -366,7 +366,7 @@
   "ReasonCredentialsLocked": "Windows 无法解锁已保存的登录信息。请重新登录 Windows 后再试。",
   "ReasonDeletions": "大量删除正在等待你审阅。",
   "ReasonDiscovery": "未能检查全部文件。完整检查成功之前不会删除任何内容。",
-  "ReasonFolderMode": "此目录无法同步，例如它采用了端到端加密。",
+  "ReasonFolderMode": "此目录无法在当前位置同步，例如它位于网络驱动器上，或包含端到端加密的文件。",
   "ReasonFolderOwned": "此目录或其上下级目录已在同步。",
   "ReasonAccountExists": "此账号已添加：同一服务器上的同一用户。",
   "ReasonQuota": "你在服务器上的存储空间已满：在服务器上释放一些空间之前，新增和修改的文件不会上传。",
@@ -421,7 +421,7 @@
   "ModeFull": "完整文件",
   "ModeOnDemand": "按需文件",
   "ModeFullHint": "下载每个文件，离线时也能使用。",
-  "ModeOnDemandHint": "文件显示在资源管理器中，打开时才下载。每个目录只能选择一次。",
+  "ModeOnDemandHint": "推荐。文件以占位文件显示在资源管理器中，打开时才下载。每个目录只能选择一次。",
   "FieldKind": "连接方式",
   "KindInternet": "互联网",
   "KindHome": "家庭网络",
@@ -444,5 +444,11 @@
   "DiagUpgradeValue": "{from} · schema {before} → {after}",
   "DiagSelfCheck": "自检",
   "DiagDisconnect": "上次断开原因",
-  "FolderQuotaDetail": "新增和修改的文件不会上传。"
+  "FolderQuotaDetail": "新增和修改的文件不会上传。",
+  "ConversionSoon": "此目录仍会下载每个文件，稍后将改用按需文件。",
+  "ConversionUnavailable": "此目录仍会下载每个文件：本机无法为它使用按需文件。Nextcloud MyGo 每次启动时都会重试。",
+  "ConversionOwned": "此目录仍会下载每个文件：它位于另一个应用同步的目录中，因此无法使用按需文件。Nextcloud MyGo 每次启动时都会重试。",
+  "ConversionWaiting": "此目录仍会下载每个文件，尚未改用按需文件。Nextcloud MyGo 每次启动时都会重试。",
+  "ConversionDone": "此目录现在使用按需文件。本机上已有的内容都会保留；服务器上的新文件显示为占位文件，打开时才下载。",
+  "ActionDismiss": "关闭"
 }

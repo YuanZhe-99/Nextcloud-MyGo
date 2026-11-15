@@ -24,13 +24,13 @@ Windows 11 on x64 and native ARM64.
 ## Upstream versions
 
 Go, MyGo and Nextcloud are not pinned: they always follow their latest stable release. The table
-shows the latest release at the last check (2026-11-03); `build-lock.json` records what each build
+shows the latest release at the last check (2026-11-14); `build-lock.json` records what each build
 actually used.
 
 | Component | Policy | Latest at last check |
 |---|---|---|
-| Go | latest release | 1.27.3 |
-| MyGo | latest tag | v0.8.1 |
-| Nextcloud Desktop | latest release tag | v35.0.2 |
+| Go | latest release | 1.27.4 |
+| MyGo | latest tag | v0.9.0 |
+| Nextcloud Desktop | latest release tag | v35.0.3 |
 | Qt, QtKeychain, TLS backend, SQLite | combination chosen in M0, recorded | not chosen yet |
 | MSVC, Windows SDK, CMake, Ninja | combination chosen in M0, recorded | not chosen yet |

@@ -5,8 +5,29 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+// TestSyncRoots reads this user's real sync root registrations (read-only):
+// every one listed is a Nextcloud-MyGo root of this user's SID, never the
+// official client's.
+func TestSyncRoots(t *testing.T) {
+	sid, err := userSID()
+	if err != nil || !strings.HasPrefix(sid, "S-1-") {
+		t.Fatalf("userSID = %q, %v", sid, err)
+	}
+	roots, err := syncRoots(sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range roots {
+		if !strings.HasPrefix(r.id, "Nextcloud-MyGo!"+sid+"!") || r.account == "" {
+			t.Errorf("listed %+v", r)
+		}
+	}
+	t.Logf("%d Nextcloud-MyGo sync root(s) registered for this user", len(roots))
+}
 
 // TestRemoveAllUnderAppData checks that -remove-user-data removes a non-empty
 // settings folder directly under %APPDATA% (packaging.md, uninstall). Go's

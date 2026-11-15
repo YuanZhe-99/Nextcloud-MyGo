@@ -48,7 +48,7 @@ M0 的仅上游构建入口为 `tools/build-upstream.ps1`。在 PowerShell 中�
 及 `-DependencyPrefix`。前缀参数为 SDK 或依赖的绝对目录；DependencyPrefix 可包含多个目录。
 脚本发现 Visual Studio 的 CMake，核对记录中的干净上游提交，并构建到
 `build/<a|x><e|t>-<source fingerprint>`（架构和模式缩写使生成的 MSBuild 路径不超过 Windows
-限制）。记录的补丁经哈希检查后仅应用于
+限制）。测试模式下，SVG 转换器（`.dev/tools/inkscape/bin`）必须在 PATH 中。在 ARM64 上，脚本还需要把 `PKG_CONFIG` 设为 ARM64 的 pkg-config（`.dev\ci-verify\tools\pkgconf-arm64\clangarm64\bin\pkg-config.exe`）。记录的补丁经哈希检查后仅应用于
 生成的源码克隆。引擎模式构建无 GUI 和 Shell 集成的 `nextcloudcmd`；
 测试模式启用上游 GUI 测试依赖，并以 `--no-tests=error` 运行 CTest。
 它从不安装或启动官方应用。完整依赖组合仍在组装；这不代表构建已成功。
@@ -223,13 +223,25 @@ M0 CTest 运行排除 `UtilityTest`，因为其中的启动测试会实际创建
 必须明确报告此排除项；此配置不验证启动集成。
 它们还排除 `SyncCfApiTest`，该测试会注册临时同步根，且有一个用例会打开资源管理器窗口。请用
 `tools/test-cfapi-upstream.ps1 -Build <上游测试构建树>` 运行它（PATH 中需有目标 Qt 和依赖的 `bin` 目录）：
-它跳过该用例，若遗留 `OC-TEST` 注册项或上游的 Shell 扩展类注册项则失败。
+它跳过该用例，若遗留 `OC-TEST` 注册项或上游的 Shell 扩展类注册项则失败。在 0.1.1 构建（补丁 0001–0021）上，两个架构均为 53 通过、2 跳过。
 
 `tools/test-ondemand.ps1 -Architecture ARM64|x64 [-Build <SyncD 构建树>]` 是真实的按需运行
 （[按需文件](on-demand.md)）。它用 `tools/test-server.ps1` 启动一次性服务器，在 150 秒内运行
 `syncd_ondemand_acceptance`（其中每一步都有各自的期限），移除服务器，并在运行期间注册的
 `Nextcloud-MyGo!` 同步根仍存在时失败。`-State` 复用已在运行的服务器。CTest 目标 `SyncDOnDemandContracts`
 不需要服务器。
+
+SyncD 共有 25 个 CTest 目标。`SyncDEngineContracts`（`backend/engine_tests.cpp`，`syncd_engine_tests`）在没有服务器和 Cloud Files 的情况下运行 `EngineAdapter` 与 `EngineRuntime` 对重启周期的决定，
+与其他引擎目标一样需要上游构建（[按需文件](on-demand.md#验证)）。
+除先前的按需与转换步骤外，它还运行仅在线文件的单个删除（必须在自动后续周期中到达服务器）、必须是一次重命名的目录移动、必须被保留直到批准的 13 个条目的删除，
+以及稀疏情形（新文件、编辑、服务器上的变化、两侧都变化）；其转换部分也转换一个稀疏文件（[按需文件](on-demand.md#本地删除与稀疏文件)）。
+
+验收程序在内存的环形缓冲区中保留上游的 info 级日志（对 Cloud Files 回调包含请求进程的映像名）、周期的开始与结束，以及根的变更通知，
+只在周期失败、步骤失败（`dump` 命令）或 hold 超时之后把它们打印为 `LOG` 行。`SYNCD_TEST_HOLD=<marker>` 让已注册的根在检查之后继续服务 30 秒，
+用于检查资源管理器。它的服务器端重写各等待 1.1 秒（[按需文件](on-demand.md#验证)）。在 ARM64 上运行约需 38 到 40 秒。
+
+外壳集成检查（HKCU 与 HKLM 键、导航窗格）只有在 SyncD 或测试运行于打包（MSIX）宿主应用之外时才有效：由其启动的进程写入该包的私有注册表视图，
+资源管理器从不读取它。请在普通终端中运行这些检查。
 
 复用的构建源码通过临时 Git 索引检查：按相反顺序撤销记录补丁，再与记录的上游提交比较。
 这样可处理重叠补丁，且不修改源码工作目录及其真实索引。

@@ -24,6 +24,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -34,6 +35,9 @@ import (
 	"github.com/YuanZhe-99/Nextcloud-MyGo/internal/syncd"
 	"github.com/YuanZhe-99/Nextcloud-MyGo/internal/version"
 )
+
+// syncdExe is SyncD's executable in a package; check requires its icon.
+const syncdExe = "nextcloud-mygo-syncd.exe"
 
 // main dispatches the stage, check and report commands; a failed command exits 1.
 func main() {
@@ -197,7 +201,8 @@ func checkCommand(args []string) error {
 
 // check inspects every file under root (or root itself, when it is a file).
 // Returns: the number of PE files and one line per problem: code that is not
-// native for arch, or an import that neither the package nor Windows provides.
+// native for arch, an import that neither the package nor Windows provides,
+// or a SyncD executable without an icon resource.
 // Notes: a DLL a PE file imports resolves from the package root or the
 // importing file's own directory, as the loader finds it there first.
 func check(root, arch string) (int, []string, error) {
@@ -246,6 +251,11 @@ func check(root, arch string) (int, []string, error) {
 		} else if got != arch {
 			fmt.Printf("note: %s is %s (the Visual C++ runtime; ARM64 processes map its ARM64 code)\n", e.rel, got)
 		}
+		// Cloud Files and Explorer show the sync root provider's icon from
+		// SyncD's executable (on-demand.md).
+		if strings.EqualFold(path.Base(e.rel), syncdExe) && !e.img.Icon {
+			problems = append(problems, fmt.Sprintf("%s has no icon resource (RT_GROUP_ICON)", e.rel))
+		}
 		dir := strings.ToLower(filepath.ToSlash(filepath.Dir(e.rel)))
 		for _, imp := range e.img.Imports {
 			name := strings.ToLower(imp)
@@ -292,7 +302,7 @@ func stageCommand(args []string) error {
 	m := release.Manifest{
 		Product: "Nextcloud-MyGo", Version: version.Version, Arch: *arch, TestBuild: true,
 		UI:    release.Half{Executable: "Nextcloud-MyGo.exe"},
-		SyncD: release.Half{Executable: "nextcloud-mygo-syncd.exe"},
+		SyncD: release.Half{Executable: syncdExe},
 	}
 	if *testVersion != "" {
 		m.Version, m.TestVersion = *testVersion, true

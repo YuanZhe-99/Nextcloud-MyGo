@@ -8,12 +8,13 @@ SyncD 连通基础已实现；完整同步尚未完成。见 [IPC](../ipc.md) �
 | 包 / 模块 | 职责 | 先读 |
 |---|---|---|
 | `cmd/nextcloud-mygo` | 单实例、托盘、窗口、配套 SyncD 及显式演示模式 | `main` |
-| `internal/gui` | 窗口、页面、首次设置、设置、托盘、更新（[gui.md](../gui.md)） | `App`、`App.view`、`App.do`、`Prefs`、`overallOf` |
-| `internal/syncd` | 经过身份验证的管道客户端、快照投影、命令重试、支持取消的操作等待及显式 Mock；针对已编译守护进程、使用恶意原始客户端的真实管道测试 | `Client`、`Remote`、`dialPipe`、`Snapshot`、`Mock`、`rawPipe` |
+| `internal/gui` | 窗口、页面、首次设置、设置、托盘、更新、目录行的转换提示（[gui.md](../gui.md)） | `App`、`App.view`、`App.do`、`Prefs`、`overallOf`、`conversionLine` |
+| `internal/syncd` | 经过身份验证的管道客户端、快照投影、命令重试、支持取消的操作等待、显式 Mock 及 1.11 的目录转换状态；针对已编译守护进程、使用恶意原始客户端的真实管道测试 | `Client`、`Remote`、`dialPipe`、`Snapshot`、`Mock`、`rawPipe`、`Conversion` |
 | `backend/` | 控制线程守护进程、持久账号/设置/回执、原生凭据、登录、Win32 传输及独立切换守卫 | `Control`、`LoginFlow`、`writeCredential`、`PipeServer`、`SwitchCoordinator`、`decodeMessage` |
 | `backend/control_reauth.cpp` | 保留账号的凭据替换、原生凭据库回滚/清理及同 origin 运行时重新加载 | `reauthenticate`、`installReauthentication`、`recoverReauthentication`、`reloadCredentials` |
-| `backend/engine*`, `backend/scheduler.*`, `backend/root*` | 进程内引擎/运行时、排空后的账号重新绑定、按需请求静止、重试/安全阻塞、确定性串行队列及根租约（[引擎](../engine.md)） | `EngineAdapter`、`rebindError`、`rebind`、`EngineRuntime`、`quiesceAccount`、`Scheduler`、`RootLease` |
-| `backend/control_folders.cpp`, `backend/namespace.*`, `backend/deletion.*` | 持久映射及其固定的文件模式、完成持久化失败时安全关闭、按步骤设截止时间的有界 DAV 元数据及独立权限/锁定/限流结果、传播前提案及单次批准、消失的外部存储按未知扣住 | `folderMutation`、`restoreFolders`、`cycleFinished`、`MetadataError`、`checkMetadataReply`、`metadataDeadline`、`parseCollections`、`readCollections`、`assessDeletion`、`emptiesMount`、`decisionMutation` |
+| `backend/engine*`, `backend/scheduler.*`, `backend/root*` | 进程内引擎/运行时、排空后的账号重新绑定、按需请求静止、已切换的完整文件目录在控制线程上的转换流程、在周期之间携带的重启标志（重启的周期不算失败；`failure` 和 `excused` 对失败条目分类并决定连续一次的豁免，`settle` 在周期之后保持调度）、重试/安全阻塞、确定性串行队列及根租约（[引擎](../engine.md)） | `EngineAdapter`、`rebindError`、`rebind`、`EngineRuntime`、`quiesceAccount`、`Scheduler`、`RootLease`、`Binding::convertExisting`、`conversionBudgetMs`、`Result::restarted`、`restartDelayMs`、`failure`、`excused`、`settle` |
+| `backend/engine_tests.cpp` | 重启周期的确定性契约，不需要服务器和 Cloud Files，在 CTest 目标 `SyncDEngineContracts` 中（需要上游构建）：对真实同步条目的失败分类、四个周期上的豁免限制、可控时钟上的 2 秒后续周期、用户暂停与全局冻结跨过后续周期 | `failureFilter`、`excusedCycles`、`restartFollowUp`、`pausedFollowUp` |
+| `backend/control_folders.cpp`, `backend/namespace.*`, `backend/deletion.*` | 持久映射及其固定的文件模式与一次性转换为按需文件、完成持久化失败时安全关闭、按步骤设截止时间的有界 DAV 元数据及独立权限/锁定/限流结果、传播前提案及单次批准、消失的外部存储按未知扣住 | `folderMutation`、`restoreFolders`、`cycleFinished`、`MetadataError`、`checkMetadataReply`、`metadataDeadline`、`parseCollections`、`readCollections`、`assessDeletion`、`emptiesMount`、`decisionMutation`、`attachFolder`（v0.1.0 转换状态机）、`folderProjection` |
 | `backend/control_endpoints.cpp`, `backend/control_switch.cpp` | 持久 origin 许可、只读 UID/全部根验证及门槛保护的手动激活 | `endpointMutation`、`probeEndpoint`、`switchMutation`、`advanceSwitch`、`verifySwitchTarget` |
 | `backend/control_update.cpp` | 更新安全点（`daemon.prepareUpdate`）、启动后报告与自检，以及不修改配置的快照事件 | `prepareUpdate`、`advanceUpdate`、`releaseUpdate`、`startupReport`、`selfCheck`、`publishState` |
 | `backend/endpoint_policy.*`、`backend/property_tests.cpp` | 确定性的仅提议评分、代次隔离、去抖、隔离及熔断恢复；带缩减的固定 seed 随机性质测试（P04、P08） | `EndpointPolicy`、`beginProbe`、`observe`、`choose`、`run`、`shrink` |
@@ -30,11 +31,11 @@ SyncD 连通基础已实现；完整同步尚未完成。见 [IPC](../ipc.md) �
 | `backend/request_lifetime.*` | 回复完成/销毁计数及粘滞的结果不明写入观察 | `RequestLifetime`、`observe`、`Counts` |
 | `backend/resume_context.*` | 只读 ETag 下载、带校验和单 PUT 及分块 v2 会话准入；保留被阻塞轮询/v1 分块索引及损坏 journal | `resumeContextError` |
 | `backend/switch_state.*` | 事务化切换意图/epoch 存储、已提交绑定解析及重启门槛 | `SwitchState`、`begin`、`commit`、`reconciled`、`interrupt` |
-| `backend/platform/windows/ondemand*` | Cloud Files 同步根注册、归属检查、切换所等待的按需请求闸门、注销，以及真实服务器按需验收程序（[按需文件](../on-demand.md)） | `OnDemandRoot`、`ownershipError`、`close`、`busy`、`unregister`、`EngineAdapter::quiescent` |
-| `protocol/` | 协议 1.10 清单、schema 及共享恶意输入夹具 | `contract.json`、`message.schema.json`、`folders.schema.json`、`endpoints.schema.json`、`switch.schema.json`、`reauthentication.schema.json`、`policy.schema.json`、`startup.examples.json`、`constraints.examples.json`、`fixtures.json` |
+| `backend/platform/windows/ondemand*` | Cloud Files 同步根注册、归属检查、切换所等待的按需请求闸门、已有完整文件内容的转换（含稀疏文件）、资源管理器导航窗格条目、注销，以及真实服务器按需验收程序（[按需文件](../on-demand.md)） | `OnDemandRoot`、`ownershipError`、`close`、`busy`、`unregister`、`convertExisting`、`conversionError`、`navigationClsid`、`holds`、`EngineAdapter::quiescent` |
+| `protocol/` | 协议 1.11 清单、schema 及共享恶意输入夹具 | `contract.json`、`message.schema.json`、`folders.schema.json`、`endpoints.schema.json`、`switch.schema.json`、`reauthentication.schema.json`、`policy.schema.json`、`startup.examples.json`、`constraints.examples.json`、`fixtures.json` |
 | `tools/build-syncd.ps1` | ARM64/x64 SyncD 构建与核心契约测试 | 脚本参数 |
-| `tools/pkg`、`tools/package.ps1`、`tools/package-smoke.ps1` | 带必需许可证包的 DLL 闭包暂存、安装包清单、原生架构 PE 检查、运行中 SyncD 的启动报告、测试版本安装包、更新签名以及真实安装、升级与应用内更新测试（[打包](../packaging.md)） | `stageCommand`、`requireNotices`、`reportCommand`、`signUpdateCommand`、`check`、`inspect`、`native` |
-| `packaging/windows/setup` | 按版本目录的当前用户安装、替换文件前的更新安全点、协调的双进程停止、卸载及可选的用户数据删除 | `install`、`stopApp`、`prepare`、`prepareUpdate`、`shutdown`、`uninstallApp`、`removeTree`、`admit`、`extract` |
+| `tools/pkg`、`tools/package.ps1`、`tools/package-smoke.ps1` | 带必需许可证包的 DLL 闭包暂存、安装包清单、原生架构 PE 检查（SyncD 必须带有图标资源）、运行中 SyncD 的启动报告、测试版本安装包、更新签名以及真实安装、升级与应用内更新测试（[打包](../packaging.md)） | `stageCommand`、`requireNotices`、`reportCommand`、`signUpdateCommand`、`check`、`inspect`、`hasResource`、`native` |
+| `packaging/windows/setup` | 按版本目录的当前用户安装、替换文件前的更新安全点、协调的双进程停止、卸载（先让 SyncD 释放每个按需目录并删除遗留导航窗格条目）及可选的用户数据删除 | `install`、`stopApp`、`prepare`、`prepareUpdate`、`shutdown`、`uninstallApp`、`releaseOnDemand`、`uninstallSequence`、`removeNavigation`、`removeTree`、`admit`、`extract` |
 | `internal/release` | `tools/pkg` 写入、安装器校验的安装包清单；签名更新：其归档与清单、检查、下载与签名校验、交给 setup（[打包](../packaging.md#签名更新)） | `Manifest`、`Parse`、`Verify`、`SignUpdate`、`CheckUpdate`、`Update.Download`、`StartSetup` |
 | `locales` | 界面字符串（en、zh-Hans）及生成的访问函数 | `en.json`、`In` |
 | `internal/version` | 产品版本 | `Version`、`Older` |
@@ -43,7 +44,7 @@ SyncD 连通基础已实现；完整同步尚未完成。见 [IPC](../ipc.md) �
 | `tools/licenses.ps1` | 根据安装包实际构建所用的前缀和 Go 模块生成其许可证与声明包，并指明对应源代码 | `SOURCE.txt`、`Copy-Into` |
 | `.github/workflows/` | 推送与拉取请求的 CI、带缓存的原生 x64 与 ARM64 构建，以及 `v*` 标签的预发布（[CI](../ci.md)） | `build.yml`、`ci.yml`、`release.yml` |
 | `tools/build-upstream.ps1` | 对记录中的干净上游快照执行 M0 引擎与测试构建 | 脚本参数与依赖前缀检查 |
-| `patches/nextcloud/` | 记录上游构建、生命周期、UTC 日期及测试隔离修正 | `build-lock.json` 中的有序哈希；后端进度中的证据 |
+| `patches/nextcloud/` | 记录上游构建、生命周期、UTC 日期、测试隔离、本地重命名、Cloud Files 重启标志及稀疏文件修正 | `build-lock.json` 中的有序哈希；后端进度中的证据 |
 | `tools/test-upstream.ps1` | 隔离的真实服务器 M0 测试与清理 | `Invoke-TestCycle`、`Invoke-TestDav` |
 | `tools/test-discovery-lifetime.ps1` | 发现工作线程存活超过超时夹具销毁阶段的 M0 回归测试 | 有界子进程重复执行上游超时和缺失数据用例 |
 | `tools/test-login/`, `tools/test-login.ps1` | 真实配对守护进程授权、策略、切换、重新认证、活动内容传输崩溃/取消、journal 身份及自有资源验收，分四个并行通道 | `mapFolders`、`exerciseLocal`、`exerciseEndpoints`、`exercisePolicy`、`awaitRemote`、`exerciseActiveCrash`、`exerciseActiveSwitch`、`exerciseReauthentication`、`Approve` |

@@ -52,7 +52,9 @@ M0's upstream-only build entry point is `tools/build-upstream.ps1`. From PowerSh
 `-DependencyPrefix`. Prefix arguments are absolute SDK/dependency directories; DependencyPrefix
 may contain several directories. It discovers Visual Studio's CMake, checks the recorded clean
 upstream commit, and builds into `build/<a|x><e|t>-<source fingerprint>` (architecture and mode
-initials keep generated MSBuild paths below Windows limits).
+initials keep generated MSBuild paths below Windows limits). In tests mode the SVG converter
+(`.dev/tools/inkscape/bin`) must be on PATH. On ARM64 the script also needs `PKG_CONFIG` set to the ARM64
+pkg-config (`.dev\ci-verify\tools\pkgconf-arm64\clangarm64\bin\pkg-config.exe`).
 Recorded patches are hash-checked and applied only to a generated source clone. Engine mode builds
 `nextcloudcmd` without GUI or Shell integration; tests mode enables upstream GUI test dependencies
 and runs CTest with `--no-tests=error`. It never installs or launches the official application.
@@ -275,13 +277,33 @@ Report this exclusion explicitly; this configuration does not verify startup int
 They also exclude `SyncCfApiTest`, which registers temporary sync roots and has one case that opens
 Explorer windows. Run it with `tools/test-cfapi-upstream.ps1 -Build <upstream tests tree>` (target Qt
 and dependency `bin` directories on PATH): it leaves that case out and fails if an `OC-TEST`
-registration or one of upstream's shell-extension class keys is left behind.
+registration or one of upstream's shell-extension class keys is left behind. On the 0.1.1 build (patches
+0001–0021) it passed 53 and skipped 2 on both architectures.
 
 `tools/test-ondemand.ps1 -Architecture ARM64|x64 [-Build <SyncD tree>]` is the real on-demand run
 ([on-demand](on-demand.md)). It starts a disposable server with `tools/test-server.ps1`, runs
 `syncd_ondemand_acceptance` within 150 s (every step inside has its own deadline), removes the server,
 and fails if a `Nextcloud-MyGo!` sync root registered during the run is still present. `-State` reuses
 a server that is already running. The CTest target `SyncDOnDemandContracts` needs no server.
+
+SyncD has 25 CTest targets. `SyncDEngineContracts` (`backend/engine_tests.cpp`, `syncd_engine_tests`) runs the
+restarted-cycle decisions of `EngineAdapter` and `EngineRuntime` without a server or Cloud Files, and
+needs the upstream build like the other engine targets ([on-demand](on-demand.md#verification)).
+Besides the earlier on-demand and conversion steps it runs a single deletion of an online-only file (it must reach the
+server in the automatic follow-up), a directory move that must be one rename, a deletion of 13 entries that
+must be held until approved, and the sparse cases (new, edited, changed on the server, changed on both
+sides); its conversion section converts a sparse file too ([on-demand](on-demand.md#local-deletions-and-sparse-files)).
+
+The fixture keeps upstream's info-level log (with the requesting process's image name for Cloud Files
+callbacks), cycle starts and ends, and the root's change notifications in a ring buffer in memory, and
+prints them as `LOG` lines only after a failed cycle, a failed step (`dump` command) or a hold timeout.
+`SYNCD_TEST_HOLD=<marker>` keeps the registered root served for 30 s after its checks, for inspecting
+Explorer. Its server-side rewrites wait 1.1 s each ([on-demand](on-demand.md#verification)). On ARM64 the
+run takes about 38 to 40 s.
+
+Shell-integration checks (the HKCU and HKLM keys, the navigation pane) are only valid when SyncD or the
+tests run outside a packaged (MSIX) host application: a process started from one writes to that package's
+private registry view, which Explorer never reads. Run those checks from a plain terminal.
 
 Reused build sources are checked in a temporary Git index: reverse the recorded patches in reverse
 order, then compare the result to the recorded upstream commit. This handles overlapping patches

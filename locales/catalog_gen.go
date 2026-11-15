@@ -3726,11 +3726,11 @@ func (msgs Messages) ReasonDiscovery() string {
 	return Catalog.Format(msgs.locale, "ReasonDiscovery", nil)
 }
 
-// ReasonFolderMode says "This folder cannot be synced, for example because it is end-to-end encrypted."
+// ReasonFolderMode says "This folder cannot be synced where it is, for example on a network drive, or because it holds end-to-end encrypted fi…"
 // in the language the app shows.
 func ReasonFolderMode() string { return In(i18n.Locale()).ReasonFolderMode() }
 
-// ReasonFolderMode says "This folder cannot be synced, for example because it is end-to-end encrypted."
+// ReasonFolderMode says "This folder cannot be synced where it is, for example on a network drive, or because it holds end-to-end encrypted fi…"
 // in the language of msgs.
 func (msgs Messages) ReasonFolderMode() string {
 	return Catalog.Format(msgs.locale, "ReasonFolderMode", nil)
@@ -4278,11 +4278,11 @@ func (msgs Messages) ModeFullHint() string {
 	return Catalog.Format(msgs.locale, "ModeFullHint", nil)
 }
 
-// ModeOnDemandHint says "Files show in Explorer and download when you open them. Chosen once for each folder."
+// ModeOnDemandHint says "Recommended. Files show in Explorer as placeholders and download when you open them. Chosen once for each folder."
 // in the language the app shows.
 func ModeOnDemandHint() string { return In(i18n.Locale()).ModeOnDemandHint() }
 
-// ModeOnDemandHint says "Files show in Explorer and download when you open them. Chosen once for each folder."
+// ModeOnDemandHint says "Recommended. Files show in Explorer as placeholders and download when you open them. Chosen once for each folder."
 // in the language of msgs.
 func (msgs Messages) ModeOnDemandHint() string {
 	return Catalog.Format(msgs.locale, "ModeOnDemandHint", nil)
@@ -4518,4 +4518,64 @@ func FolderQuotaDetail() string { return In(i18n.Locale()).FolderQuotaDetail() }
 // in the language of msgs.
 func (msgs Messages) FolderQuotaDetail() string {
 	return Catalog.Format(msgs.locale, "FolderQuotaDetail", nil)
+}
+
+// ConversionSoon says "This folder still downloads every file. It switches to on-demand files shortly."
+// in the language the app shows.
+func ConversionSoon() string { return In(i18n.Locale()).ConversionSoon() }
+
+// ConversionSoon says "This folder still downloads every file. It switches to on-demand files shortly."
+// in the language of msgs.
+func (msgs Messages) ConversionSoon() string {
+	return Catalog.Format(msgs.locale, "ConversionSoon", nil)
+}
+
+// ConversionUnavailable says "This folder still downloads every file: on-demand files are not available for it on this PC. Nextcloud MyGo tries aga…"
+// in the language the app shows.
+func ConversionUnavailable() string { return In(i18n.Locale()).ConversionUnavailable() }
+
+// ConversionUnavailable says "This folder still downloads every file: on-demand files are not available for it on this PC. Nextcloud MyGo tries aga…"
+// in the language of msgs.
+func (msgs Messages) ConversionUnavailable() string {
+	return Catalog.Format(msgs.locale, "ConversionUnavailable", nil)
+}
+
+// ConversionOwned says "This folder still downloads every file: it lies inside a folder another app syncs, so it cannot use on-demand files. …"
+// in the language the app shows.
+func ConversionOwned() string { return In(i18n.Locale()).ConversionOwned() }
+
+// ConversionOwned says "This folder still downloads every file: it lies inside a folder another app syncs, so it cannot use on-demand files. …"
+// in the language of msgs.
+func (msgs Messages) ConversionOwned() string {
+	return Catalog.Format(msgs.locale, "ConversionOwned", nil)
+}
+
+// ConversionWaiting says "This folder still downloads every file and has not switched to on-demand files yet. Nextcloud MyGo tries again each t…"
+// in the language the app shows.
+func ConversionWaiting() string { return In(i18n.Locale()).ConversionWaiting() }
+
+// ConversionWaiting says "This folder still downloads every file and has not switched to on-demand files yet. Nextcloud MyGo tries again each t…"
+// in the language of msgs.
+func (msgs Messages) ConversionWaiting() string {
+	return Catalog.Format(msgs.locale, "ConversionWaiting", nil)
+}
+
+// ConversionDone says "This folder now uses on-demand files. Everything already on this PC stays here; new files from the server appear as p…"
+// in the language the app shows.
+func ConversionDone() string { return In(i18n.Locale()).ConversionDone() }
+
+// ConversionDone says "This folder now uses on-demand files. Everything already on this PC stays here; new files from the server appear as p…"
+// in the language of msgs.
+func (msgs Messages) ConversionDone() string {
+	return Catalog.Format(msgs.locale, "ConversionDone", nil)
+}
+
+// ActionDismiss says "Dismiss"
+// in the language the app shows.
+func ActionDismiss() string { return In(i18n.Locale()).ActionDismiss() }
+
+// ActionDismiss says "Dismiss"
+// in the language of msgs.
+func (msgs Messages) ActionDismiss() string {
+	return Catalog.Format(msgs.locale, "ActionDismiss", nil)
 }

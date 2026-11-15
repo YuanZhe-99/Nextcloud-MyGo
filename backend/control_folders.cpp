@@ -63,7 +63,8 @@ QJsonArray Control::folderProjection() const {
   QSqlQuery q(db_);
   q.prepare("SELECT f.id,f.account_id,f.local_path,f.remote_path,f.paused,CASE "
             "WHEN r.phase IN ('waiting','prepared','discarding') THEN "
-            "'waitingSignIn' ELSE f.status END,f.reason,f.mode FROM "
+            "'waitingSignIn' ELSE f.status END,f.reason,f.mode,f.conversion,"
+            "f.conversion_reason FROM "
             "folders f JOIN accounts a ON a.id=f.account_id AND "
             "a.state='ready' LEFT JOIN reauthentication r ON "
             "r.account_id=f.account_id ORDER BY f.id");
@@ -71,7 +72,13 @@ QJsonArray Control::folderProjection() const {
   while (q.next()) {
     const auto id = q.value(0).toString();
     auto status = q.value(5).toString();
-    if (status != "syncing" && (paused_ || q.value(4).toBool()))
+    bool running = false;
+#ifdef SYNCD_WITH_ENGINE
+    running = runtime_ && runtime_->running(id);
+#endif
+    // A running cycle stays syncing while it cancels; a restarted cycle's
+    // folder waiting for its follow-up is paused like any idle one.
+    if ((status != "syncing" || !running) && (paused_ || q.value(4).toBool()))
       status = "paused";
     // Protocol 1.9: what a running cycle does now; nothing while idle.
     QString phase;
@@ -85,18 +92,25 @@ QJsonArray Control::folderProjection() const {
         phase = QStringLiteral("checking");
     }
 #endif
-    result.append(
-        QJsonObject{{"id", id},
-                    {"accountId", q.value(1).toString()},
-                    {"name", QFileInfo(q.value(2).toString()).fileName()},
-                    {"localPath", q.value(2).toString()},
-                    {"remotePath", q.value(3).toString()},
-                    {"userPaused", q.value(4).toBool()},
-                    {"state", status},
-                    {"reasonCode", q.value(6).toString()},
-                    {"mode", q.value(7).toString()},
-                    {"phase", phase},
-                    {"filesDone", qint64(filesDone)}});
+    // Protocol 1.11: a pass in progress is still pending to the interface.
+    auto conversion = q.value(8).toString();
+    if (conversion == "converting")
+      conversion = QStringLiteral("pending");
+    result.append(QJsonObject{
+        {"id", id},
+        {"accountId", q.value(1).toString()},
+        {"name", QFileInfo(q.value(2).toString()).fileName()},
+        {"localPath", q.value(2).toString()},
+        {"remotePath", q.value(3).toString()},
+        {"userPaused", q.value(4).toBool()},
+        {"state", status},
+        {"reasonCode", q.value(6).toString()},
+        {"mode", q.value(7).toString()},
+        {"phase", phase},
+        {"filesDone", qint64(filesDone)},
+        {"conversion", conversion},
+        {"conversionReason",
+         conversion == "pending" ? q.value(9).toString() : QString{}}});
   }
   return result;
 }
@@ -206,12 +220,15 @@ void Control::attachFolder(const QString &id) {
   q.prepare("SELECT "
             "f.account_id,a.base_url,a.login_name,a.uid,a.credential_ref,f."
             "local_path,f.remote_path,f.journal_path,f.local_identity,f.remote_"
-            "identity,f.paused,f.mode FROM folders f JOIN accounts a ON "
-            "a.id=f.account_id WHERE f.id=? AND a.state='ready'");
+            "identity,f.paused,f.mode,f.conversion,f.conversion_reason FROM "
+            "folders f JOIN accounts a ON a.id=f.account_id WHERE f.id=? AND "
+            "a.state='ready'");
   q.addBindValue(id);
   execute(q);
   if (!q.next())
     throw std::runtime_error("NOT_FOUND");
+  if (runtime_->contains(id))
+    throw std::logic_error("Folder already has a runtime");
   const auto account = q.value(0).toString();
   EngineAdapter::Binding binding{canonicalServer(q.value(1).toString()),
                                  q.value(2).toString(),
@@ -225,7 +242,9 @@ void Control::attachFolder(const QString &id) {
                                  q.value(8).toString(),
                                  q.value(9).toString()};
   const bool paused = q.value(10).toBool();
-  binding.onDemand = q.value(11).toString() == "onDemand";
+  auto mode = q.value(11).toString();
+  const auto conversion = q.value(12).toString(),
+             storedReason = q.value(13).toString();
   q.finish();
   if (binding.credentialReference != credentialReference(account) ||
       binding.journalPath != directory_ + "/journals/" + id + ".sqlite")
@@ -235,10 +254,75 @@ void Control::attachFolder(const QString &id) {
   binding.epoch = quint64(committed.epoch);
   if (!QFileInfo(binding.localPath).isDir())
     throw std::runtime_error("LOCAL_ROOT_UNAVAILABLE");
-  runtime_->add(id, account, binding);
-  runtime_->block(id, "userPaused", paused);
-  runtime_->block(id, "switchInProgress", SwitchState(db_).gated(account));
-  runtime_->block(id, "reauthInProgress", reauthenticating(account));
+  // Schema 12 conversion state, written as one transaction per step.
+  const auto record = [&](const QString &newMode, const QString &state,
+                          const QString &reason) {
+    accountChange([&] {
+      QSqlQuery u(db_);
+      u.prepare("UPDATE folders SET mode=?,conversion=?,conversion_reason=? "
+                "WHERE id=?");
+      u.addBindValue(newMode);
+      u.addBindValue(state);
+      // A default QString binds as SQL NULL; no reason is ''.
+      u.addBindValue(reason.isNull() ? QStringLiteral("") : reason);
+      u.addBindValue(id);
+      execute(u);
+    });
+    mode = newMode;
+  };
+  const auto block = [&] {
+    runtime_->block(id, "userPaused", paused);
+    runtime_->block(id, "switchInProgress", SwitchState(db_).gated(account));
+    runtime_->block(id, "reauthInProgress", reauthenticating(account));
+  };
+  const auto attach = [&] {
+    binding.onDemand = mode == "onDemand";
+    runtime_->add(id, account, binding);
+    block();
+  };
+  const OnDemandRoot::Identity identity{account, id, {}};
+  bool converting = mode == "onDemand" && conversion == "converting";
+  if (mode == "full" && conversion == "pending") {
+    const auto reason =
+        OnDemandRoot::conversionError(binding.localPath, identity);
+    if (!reason.isEmpty()) {
+      if (reason != storedReason)
+        record("full", "pending", reason);
+      attach();
+      return;
+    }
+    // A full-file lease refuses placeholders and an on-demand one admits a
+    // mixed tree: the mode turns before the first file does, so a crash from
+    // here on restarts as an on-demand conversion.
+    record("onDemand", "converting", {});
+    converting = true;
+  }
+  if (!converting) {
+    attach();
+    return;
+  }
+  // 'converting': no on-demand cycle ran yet, so every placeholder is
+  // hydrated; the pass is idempotent after a crash.
+  binding.onDemand = true;
+  binding.convertExisting = true;
+  try {
+    runtime_->add(id, account, binding);
+  } catch (const std::exception &error) {
+    // Nothing is deleted here: unregister deletes only online-only
+    // placeholders, and this folder has none.
+    if (!OnDemandRoot::unregister(binding.localPath, identity).isEmpty())
+      throw;
+    auto reason = attachmentReason(error);
+    record("full", "pending",
+           reason.isEmpty() ? QStringLiteral("UNSUPPORTED_FOLDER_MODE")
+                            : reason);
+    binding.convertExisting = false;
+    attach();
+    return;
+  }
+  // The pass ran in the adapter's constructor; cycles start only later.
+  block();
+  record("onDemand", "converted", {});
 #else
   Q_UNUSED(id);
 #endif
@@ -383,7 +467,9 @@ void Control::cycleFinished(const QString &id,
       QSqlQuery q(db_);
       q.prepare("UPDATE folders SET status=?,reason=?,last_sync=CASE WHEN ? "
                 "THEN ? ELSE last_sync END WHERE id=?");
-      q.addBindValue(result.success ? "upToDate"
+      // A restarted cycle is no error: its follow-up is already queued.
+      q.addBindValue(result.success     ? "upToDate"
+                     : result.restarted ? "syncing"
                      : result.reason == "DELETION_CONFIRMATION_REQUIRED"
                          ? "needsReview"
                          : "error");

@@ -75,6 +75,56 @@
     "serverTested": "35.0.2",
     "see": "doc/en-us/platform-notes.md"
   },
+  "onDemandConversion": {
+    "date": "2026-11-14",
+    "product": "0.1.1",
+    "protocol": "1.11",
+    "controlSchema": 12,
+    "upstreamPatches": 19,
+    "upstreamPatchesAdded": 0,
+    "prefix": ".dev/ci-verify",
+    "arm64SyncdTree": "build/syncd-ARM64-linked-build/cv/ae-9AD005FA79FF",
+    "x64SyncdTree": "build/syncd-x64-linked-build/cv/xe-9AD005FA79FF",
+    "syncdIcon": "RT_GROUP_ICON-present-both-architectures",
+    "arm64SyncdContracts": "passed-24-of-24-ctest-41.46s",
+    "x64SyncdContracts": "passed-emulated-24-of-24-ctest-54.89s",
+    "arm64SyncCfApiTest": "50-passed-2-skipped-0-failed-88.5s-39-of-40-cases-build/cv/at-9AD005FA79FF",
+    "x64SyncCfApiTest": "passed-emulated-50-passed-2-skipped-0-failed-91.0s-39-of-40-cases-build/cv/xt-9AD005FA79FF",
+    "realOnDemand": "passed-arm64-17.1s-and-emulated-x64-18.8s-on-35.0.3-and-17.9s-18.7s-on-34.0.6-after-one-arm64-run-failed-at-a-racy-quiesce-check-fixed-in-the-fixture",
+    "realPipe": "passed-52-of-52-arm64-36.9s-and-emulated-x64-40.1s",
+    "fastTier": "passed-arm64-59.0s-and-emulated-x64-56.2s",
+    "arm64ServerTier": "passed-473.7s-of-600s",
+    "x64ServerSmoke": "passed-emulated-150.5s",
+    "arm64Package": "build/package/Nextcloud-MyGo-0.1.1-arm64-test-setup.exe-sha256-e5c738b6b5507e64cd1c3e0446b01ea964a6233274f657af711bdc52b6777684-29-PE-native-ARM64",
+    "x64Package": "build/package/Nextcloud-MyGo-0.1.1-x64-test-setup.exe-sha256-2b21f18bd5e6efdd9753c550511fc5628ac50da621817aeb516a7de64758fdc2-30-PE-native-x64",
+    "packagesSigned": false,
+    "serverTested": "35.0.3-and-34.0.6",
+    "see": "doc/en-us/platform-notes.md"
+  },
+  "onDemandDeletionAndSparseFix": {
+    "date": "2026-11-14",
+    "product": "0.1.1",
+    "protocol": "1.11",
+    "controlSchema": 12,
+    "upstreamPatches": 21,
+    "upstreamPatchesAdded": 2,
+    "prefix": ".dev/ci-verify",
+    "arm64EngineTree": "build/cv/ae-1D235B1119EB-693.3s",
+    "x64EngineTree": "build/cv/xe-1D235B1119EB-794.6s",
+    "arm64SyncdTree": "build/syncd-ARM64-linked-build/cv/ae-1D235B1119EB",
+    "x64SyncdTree": "build/syncd-x64-linked-build/cv/xe-1D235B1119EB",
+    "arm64UpstreamTests": "passed-96-of-96-441.0s-build/cv/at-1D235B1119EB-UtilityTest-and-SyncCfApiTest-excluded",
+    "x64UpstreamTests": "passed-emulated-96-of-96-504.0s-build/cv/xt-1D235B1119EB-UtilityTest-and-SyncCfApiTest-excluded",
+    "arm64SyncCfApiTest": "53-passed-2-skipped-0-failed-92.0s-42-of-43-cases",
+    "x64SyncCfApiTest": "passed-emulated-53-passed-2-skipped-0-failed-93.6s-42-of-43-cases",
+    "arm64SyncdContracts": "passed-24-of-24-ctest-40.05s",
+    "x64SyncdContracts": "passed-emulated-24-of-24-ctest-56.78s",
+    "realOnDemand": "passed-arm64-39.7s-35.0.3-and-40.0s-34.0.6-emulated-x64-44.2s-35.0.3-and-41.9s-34.0.6-after-fixture-fixes",
+    "fastTier": "passed-arm64-58.9s-and-emulated-x64-54.3-56.9s-after-one-x64-go-test-failure-without-a-named-test",
+    "arm64ServerTier": "passed-517.0s-of-600s",
+    "serverTested": "35.0.3-and-34.0.6",
+    "see": "doc/en-us/platform-notes.md"
+  },
   "nextcloudDesktop": {
     "repository": "https://github.com/nextcloud/desktop",
     "tag": "v35.0.3",
@@ -176,6 +226,26 @@
         "path": "patches/nextcloud/0019-keep-local-rename-when-move-is-not-refused.patch",
         "sha256": "bcc0e6d204d5f4c2c34d710fceb4756ad8af3dcc7e6aee16deb5d541079b9b1b",
         "reason": "Keep a local rename whose MOVE got no answer (refused or lost connection, timeout, aborted sync) or a 502, 503 or 504, instead of renaming the file back and recording the old name: the journal keeps the old record, so the next discovery finds the same rename and sends the MOVE again, or adopts the server's copy when the lost MOVE was made. The 1-hour soak saw three renames undone by address faults. An answer about the move itself (4xx, 500, 507) is still reverted, as upstream's testMovedWithError (403), renameError (500) and the two 507 tests require; testMoveWithoutServerRefusalKeepsLocalRename covers refused, timed out, 503, 504 and made-with-reply-lost."
+      },
+      {
+        "path": "patches/nextcloud/0020-let-the-owner-carry-the-cfapi-restart-flag.patch",
+        "sha256": "fbdfe452e1df0c08d7efe016886e8970bc9931ce6dfde25ce8a6ee4de74de006",
+        "reason": "Let the owner read and set SyncEngine's _restartedSyncAfterDiscovery (restartedSyncAfterDiscovery/setRestartedSyncAfterDiscovery). Under Windows CFAPI shouldRestartSync() fails a sync once when discovery found a local removal and relies on that member so the next sync passes; SyncD creates a new engine per cycle, so the member was always false, every such cycle restarted and no local deletion in an on-demand folder ever reached the server or deletion review. SyncD carries the flag between engines, reproducing upstream's semantics exactly. Header-only accessors; testRestartAfterLocalRemovalCarriesToTheNextEngine shows a fresh flag restarting again and a carried one propagating and clearing."
+      },
+      {
+        "path": "patches/nextcloud/0021-read-only-recall-marked-placeholders-as-dehydrated.patch",
+        "sha256": "fac0cb39f88c840888f436b70fc62d71ee8af4e241321ae0d16dfbecfbfef627",
+        "reason": "VfsCfApi::isDehydratedPlaceholder and statTypeVirtualFile read a file as virtual only when it carries the cloud reparse tag and FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS, not whenever it is sparse. Probed on Windows 11 ARM64 Cloud Files: an NTFS sparse file with its content, ordinary or converted to an in-sync placeholder, keeps FILE_ATTRIBUTE_SPARSE_FILE with no recall mark and placeholder state PLACEHOLDER|IN_SYNC, while every dehydrated placeholder (created, freed, pinned awaiting download) has the tag, RECALL_ON_DATA_ACCESS and state PARTIAL. Before, a new local sparse file was wiped as a virtual file without a record and an existing one stopped uploading and diverged silently. testSparseFileSyncsLikeAnyOtherFile and testSparseFileSyncedBeforeVfsKeepsSyncing fail without the source change."
+      },
+      {
+        "path": "patches/nextcloud/0022-treat-a-server-size-change-under-the-same-etag-as-a-change.patch",
+        "sha256": "1edbf03f04fd05c6a5e889a857d12c86aef8fc07bd9174aad435145fc3409855",
+        "reason": "Discovery treats a file whose server etag equals the journal's but whose server size differs as changed on the server, through upstream's existing etag-changed path (download, or conflict when also edited locally): Nextcloud 35 kept the etag of a file rewritten twice within one second (5 of 15 probed pairs), so a local edit was uploaded over the newer server content with a passing If-Match. Folders and end-to-end encrypted files (journal size is the plaintext size) are excluded; same-size rewrites within a second stay undetectable. testServerSizeChangeUnderSameEtag (with and without a local edit, no repeat download), testEncryptedFileSizeIsNotComparedWithTheServer and testServerSizeChangeUnderSameEtagUpdatesPlaceholder."
+      },
+      {
+        "path": "patches/nextcloud/0023-store-the-file-identity-of-listed-placeholders-exactly.patch",
+        "sha256": "8afa6b5f072274f31c9aa2eeb2f9b702474a069acc946530c1309e64a2f9d70c",
+        "reason": "cfApiSendPlaceholdersTransferInfo gave the Cloud Files listing the file ID's UTF-8 bytes with a length of (length + 1) * sizeof(wchar_t), reading past the QByteArray into the stored identity; it now stores exactly the UTF-8 bytes without a terminator, as createPlaceholderInfo and createPlaceholdersInfo do. testOnDemandListingStoresTheFileIdentity lists a folder on demand from another process and compares the stored identity with the file ID."
       }
     ]
   },

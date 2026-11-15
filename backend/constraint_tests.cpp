@@ -492,8 +492,9 @@ void migrateSeven() {
             "migration started runtime owners");
   }
   QSqlQuery q(f.db);
-  require(q.exec("PRAGMA user_version") && q.next() && q.value(0).toInt() == 11,
-          "schema-7 migration did not reach schema 11");
+  require(q.exec("PRAGMA user_version") && q.next() &&
+              q.value(0).toInt() == Control::schemaVersion,
+          "schema-7 migration did not reach this schema");
   q.finish();
   // Schema 10: existing mappings keep full-file mode (§2.3).
   require(q.exec("SELECT COUNT(*) FROM pragma_table_info('folders') WHERE "
@@ -511,7 +512,7 @@ void migrateSeven() {
   q.finish();
   require(f.count() == 0 &&
               QDir(f.root.path())
-                      .entryList({"*.pre-schema-11.*"}, QDir::Files)
+                      .entryList({"*.pre-schema-12.*"}, QDir::Files)
                       .size() == 1,
           "schema-7 migration omitted its validated backup or invented "
           "constraints");

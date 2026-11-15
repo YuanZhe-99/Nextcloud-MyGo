@@ -1,0 +1,220 @@
+diff --git a/src/libsync/vfs/cfapi/vfs_cfapi.cpp b/src/libsync/vfs/cfapi/vfs_cfapi.cpp
+--- a/src/libsync/vfs/cfapi/vfs_cfapi.cpp
++++ b/src/libsync/vfs/cfapi/vfs_cfapi.cpp
+@@ -99,6 +99,17 @@ void unregisterShellExtensions()
+     }
+ }
+ 
++// A file whose content is not on disk: a placeholder (cloud reparse tag) that Cloud Files
++// marks for recall on data access. Sparse alone is no such mark: an ordinary sparse file,
++// and one converted to an in-sync placeholder, keep FILE_ATTRIBUTE_SPARSE_FILE with all
++// their content on disk.
++bool isDehydratedPlaceholder(DWORD attributes, DWORD reparseTag)
++{
++    const auto hasCloudTag = (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0
++        && (reparseTag & ~IO_REPARSE_TAG_CLOUD_MASK) == (IO_REPARSE_TAG_CLOUD & ~IO_REPARSE_TAG_CLOUD_MASK);
++    return hasCloudTag && (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0 && (attributes & FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS) != 0;
++}
++
+ }
+ 
+ namespace OCC
+@@ -315,8 +326,15 @@ bool VfsCfApi::needsMetadataUpdate(const SyncFileItem &item)
+ 
+ bool VfsCfApi::isDehydratedPlaceholder(const QString &filePath)
+ {
+-    const auto path = QDir::toNativeSeparators(filePath);
+-    return cfapi::isSparseFile(path);
++    // The directory entry gives attributes and reparse tag without opening the file.
++    const auto path = FileSystem::longWinPath(QDir::toNativeSeparators(filePath));
++    WIN32_FIND_DATA findData = {};
++    const auto handle = FindFirstFileEx(reinterpret_cast<const wchar_t *>(path.utf16()), FindExInfoBasic, &findData, FindExSearchNameMatch, nullptr, 0);
++    if (handle == INVALID_HANDLE_VALUE) {
++        return false;
++    }
++    FindClose(handle);
++    return cfapi::isDehydratedPlaceholder(findData.dwFileAttributes, findData.dwReserved0);
+ }
+ 
+ bool VfsCfApi::statTypeVirtualFile(csync_file_stat_t *stat, void *statData)
+@@ -324,7 +342,7 @@ bool VfsCfApi::statTypeVirtualFile(csync_file_stat_t *stat, void *statData)
+     const auto ffd = static_cast<WIN32_FIND_DATA *>(statData);
+ 
+     const auto isDirectory = (ffd->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+-    const auto isSparseFile = (ffd->dwFileAttributes & FILE_ATTRIBUTE_SPARSE_FILE) != 0;
++    const auto isDehydrated = cfapi::isDehydratedPlaceholder(ffd->dwFileAttributes, ffd->dwReserved0);
+     const auto isPinned = (ffd->dwFileAttributes & FILE_ATTRIBUTE_PINNED) != 0;
+     const auto isUnpinned = (ffd->dwFileAttributes & FILE_ATTRIBUTE_UNPINNED) != 0;
+     const auto hasReparsePoint = (ffd->dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+@@ -361,13 +379,13 @@ bool VfsCfApi::statTypeVirtualFile(csync_file_stat_t *stat, void *statData)
+             return true;
+         }
+         return false;
+-    } else if (isSparseFile && isPinned) {
++    } else if (isDehydrated && isPinned) {
+         stat->type = ItemTypeVirtualFileDownload;
+         return true;
+-    } else if (!isSparseFile && isUnpinned && !isExcludeFile) {
++    } else if (!isDehydrated && isUnpinned && !isExcludeFile) {
+         stat->type = ItemTypeVirtualFileDehydration;
+         return true;
+-    } else if (isSparseFile) {
++    } else if (isDehydrated) {
+         stat->type = ItemTypeVirtualFile;
+         return true;
+     }
+diff --git a/test/testsynccfapi.cpp b/test/testsynccfapi.cpp
+--- a/test/testsynccfapi.cpp
++++ b/test/testsynccfapi.cpp
+@@ -20,6 +20,8 @@
+ #include <QSettings>
+ #include <QtTest>
+ 
++#include <winioctl.h>
++
+ using namespace Qt::StringLiterals;
+ 
+ namespace cfapi {
+@@ -91,6 +93,35 @@ CF_PLACEHOLDER_STATE placeholderState(const QString &path)
+     return CfGetPlaceholderStateFromAttributeTag(findData.dwFileAttributes, findData.dwReserved0);
+ }
+ 
++// Large enough that zeroing its first half deallocates whole sparse clusters.
++constexpr qint64 sparseSize = 1024 * 1024;
++
++// Writes a sparse file whose first half is a hole and whose second half is contentChar.
++void writeSparseFile(const QString &path, char contentChar)
++{
++    const auto handle = CreateFileW(reinterpret_cast<const wchar_t *>(QDir::toNativeSeparators(path).utf16()), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
++                                    CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
++    QVERIFY(handle != INVALID_HANDLE_VALUE);
++    DWORD returned = 0;
++    QVERIFY(DeviceIoControl(handle, FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, &returned, nullptr));
++    const QByteArray content(sparseSize, contentChar);
++    QVERIFY(WriteFile(handle, content.constData(), DWORD(content.size()), &returned, nullptr));
++    FILE_ZERO_DATA_INFORMATION hole = {};
++    hole.BeyondFinalZero.QuadPart = sparseSize / 2;
++    QVERIFY(DeviceIoControl(handle, FSCTL_SET_ZERO_DATA, &hole, sizeof(hole), nullptr, 0, &returned, nullptr));
++    CloseHandle(handle);
++}
++
++// Whether a file still holds what writeSparseFile wrote.
++bool hasSparseContent(const QString &path, char contentChar)
++{
++    QFile file(path);
++    if (!file.open(QIODevice::ReadOnly)) {
++        return false;
++    }
++    return file.readAll() == QByteArray(sparseSize / 2, '\0') + QByteArray(sparseSize / 2, contentChar);
++}
++
+ void triggerDownload(FakeFolder &folder, const QByteArray &path)
+ {
+     auto &journal = folder.syncJournal();
+@@ -2140,6 +2171,106 @@ private Q_SLOTS:
+         QVERIFY(!fakeFolder.syncEngine().restartedSyncAfterDiscovery());
+     }
+ 
++    // A sparse file with all its content on disk is an ordinary file, also once it is a placeholder:
++    // it is never wiped or read as virtual, its changes upload and remote changes download.
++    void testSparseFileSyncsLikeAnyOtherFile()
++    {
++        FakeFolder fakeFolder{FileInfo{}};
++        auto vfs = setupVfs(fakeFolder);
++        ItemCompletedSpy completeSpy(fakeFolder);
++
++        // A new local sparse file is uploaded and becomes an in-sync placeholder with its content.
++        writeSparseFile(fakeFolder.localPath() + "sparse", 'S');
++        QVERIFY(cfapi::isSparseFile(fakeFolder.localPath() + "sparse"));
++        QVERIFY(!vfs->isDehydratedPlaceholder(fakeFolder.localPath() + "sparse"));
++        QVERIFY(fakeFolder.syncOnce());
++        QVERIFY(itemInstruction(completeSpy, "sparse", CSYNC_INSTRUCTION_NEW));
++        QCOMPARE(completeSpy.findItem("sparse")->_direction, SyncFileItem::Up);
++        QCOMPARE(fakeFolder.currentRemoteState().find("sparse")->size, sparseSize);
++        QCOMPARE(dbRecord(fakeFolder, "sparse")._type, ItemTypeFile);
++        QVERIFY(placeholderState(fakeFolder.localPath() + "sparse") & CF_PLACEHOLDER_STATE_PLACEHOLDER);
++        QVERIFY(cfapi::isSparseFile(fakeFolder.localPath() + "sparse"));
++        QVERIFY(!vfs->isDehydratedPlaceholder(fakeFolder.localPath() + "sparse"));
++        QVERIFY(hasSparseContent(fakeFolder.localPath() + "sparse", 'S'));
++
++        // As after any upload, the next sync only updates metadata; then nothing is left to do.
++        QVERIFY(fakeFolder.syncOnce());
++        completeSpy.clear();
++        QVERIFY(fakeFolder.syncOnce());
++        QVERIFY(completeSpy.isEmpty());
++
++        // A local edit uploads.
++        fakeFolder.localModifier().appendByte("sparse");
++        QVERIFY(fakeFolder.syncOnce());
++        QVERIFY(itemInstruction(completeSpy, "sparse", CSYNC_INSTRUCTION_SYNC));
++        QCOMPARE(completeSpy.findItem("sparse")->_direction, SyncFileItem::Up);
++        QCOMPARE(fakeFolder.currentRemoteState().find("sparse")->size, sparseSize + 1);
++        QCOMPARE(dbRecord(fakeFolder, "sparse")._type, ItemTypeFile);
++
++        // A remote change downloads.
++        completeSpy.clear();
++        fakeFolder.remoteModifier().appendByte("sparse");
++        QVERIFY(fakeFolder.syncOnce());
++        QVERIFY(itemInstruction(completeSpy, "sparse", CSYNC_INSTRUCTION_SYNC));
++        QCOMPARE(completeSpy.findItem("sparse")->_direction, SyncFileItem::Down);
++        QCOMPARE(QFileInfo(fakeFolder.localPath() + "sparse").size(), sparseSize + 2);
++        QCOMPARE(dbRecord(fakeFolder, "sparse")._type, ItemTypeFile);
++
++        // Changed on both sides, it becomes a conflict that keeps the local content.
++        completeSpy.clear();
++        writeSparseFile(fakeFolder.localPath() + "sparse", 'L');
++        fakeFolder.remoteModifier().appendByte("sparse");
++        QVERIFY(fakeFolder.syncOnce());
++        QVERIFY(itemInstruction(completeSpy, "sparse", CSYNC_INSTRUCTION_CONFLICT));
++        const auto conflicts = QDir(fakeFolder.localPath()).entryList({u"sparse (conflicted copy*"_s}, QDir::Files);
++        QCOMPARE(conflicts.size(), 1);
++        QVERIFY(hasSparseContent(fakeFolder.localPath() + conflicts.first(), 'L'));
++        QCOMPARE(QFileInfo(fakeFolder.localPath() + "sparse").size(), sparseSize + 3);
++
++        // Free up space and download again still work for a placeholder that was sparse.
++        writeSparseFile(fakeFolder.localPath() + "freed", 'F');
++        QVERIFY(fakeFolder.syncOnce());
++        ::setPinState(fakeFolder.localPath() + "freed", PinState::OnlineOnly, cfapi::Recurse);
++        QVERIFY(fakeFolder.syncOnce());
++        CFVERIFY_VIRTUAL(fakeFolder, "freed");
++        QVERIFY(vfs->isDehydratedPlaceholder(fakeFolder.localPath() + "freed"));
++        ::setPinState(fakeFolder.localPath() + "freed", PinState::AlwaysLocal, cfapi::Recurse);
++        QVERIFY(fakeFolder.syncOnce());
++        QCOMPARE(dbRecord(fakeFolder, "freed")._type, ItemTypeFile);
++        QVERIFY(!vfs->isDehydratedPlaceholder(fakeFolder.localPath() + "freed"));
++        QCOMPARE(QFileInfo(fakeFolder.localPath() + "freed").size(), sparseSize);
++        QVERIFY(fakeFolder.currentRemoteState().find("freed"));
++    }
++
++    // A sparse file synced before the folder became on-demand keeps syncing afterwards.
++    void testSparseFileSyncedBeforeVfsKeepsSyncing()
++    {
++        FakeFolder fakeFolder{FileInfo{}};
++        writeSparseFile(fakeFolder.localPath() + "sparse", 'S');
++        QVERIFY(fakeFolder.syncOnce());
++        QCOMPARE(fakeFolder.currentRemoteState().find("sparse")->size, sparseSize);
++
++        auto vfs = setupVfs(fakeFolder);
++        ItemCompletedSpy completeSpy(fakeFolder);
++        QVERIFY(fakeFolder.syncOnce());
++        QCOMPARE(dbRecord(fakeFolder, "sparse")._type, ItemTypeFile);
++        QVERIFY(placeholderState(fakeFolder.localPath() + "sparse") & CF_PLACEHOLDER_STATE_PLACEHOLDER);
++        QVERIFY(hasSparseContent(fakeFolder.localPath() + "sparse", 'S'));
++
++        completeSpy.clear();
++        fakeFolder.localModifier().appendByte("sparse");
++        QVERIFY(fakeFolder.syncOnce());
++        QVERIFY(itemInstruction(completeSpy, "sparse", CSYNC_INSTRUCTION_SYNC));
++        QCOMPARE(fakeFolder.currentRemoteState().find("sparse")->size, sparseSize + 1);
++        QCOMPARE(dbRecord(fakeFolder, "sparse")._type, ItemTypeFile);
++
++        completeSpy.clear();
++        fakeFolder.remoteModifier().appendByte("sparse");
++        QVERIFY(fakeFolder.syncOnce());
++        QCOMPARE(completeSpy.findItem("sparse")->_direction, SyncFileItem::Down);
++        QCOMPARE(QFileInfo(fakeFolder.localPath() + "sparse").size(), sparseSize + 2);
++    }
++
+     void testServer_caseClash_createConflict()
+     {
+         FakeFolder fakeFolder{ FileInfo{} };

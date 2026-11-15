@@ -63,8 +63,9 @@ Two kinds of agents work here, following `PLAN.md` §17–§19:
   (`third_party/nextcloud/`, `patches/nextcloud/`), `build-lock.json`, the protocol (`protocol/`),
   C++ tests and Windows packaging. It starts at M0 / B01. SyncD must support the platforms'
   modern cloud-file frameworks — the Windows Cloud Files API and macOS File Provider (`PLAN.md`
-  §2.3): not enabled in the first release, but the data model and the `platform/<os>/` layer
-  leave room for them from M1, and M6 delivers them.
+  §2.3): the Windows Cloud Files API is enabled from 0.1.1, macOS File Provider remains future
+  work; the data model and the `platform/<os>/` layer leave room for them from M1, and M6
+  delivers them.
 - The **frontend agent** owns the MyGo UI: the Go module at the repository root (`cmd/`,
   `internal/`, `locales/`, `resources/`), its layout and its choice of Native or Web UI.
 - The interface exists and runs against `syncd.Mock` (`doc/en-us/gui.md`). What it expects of

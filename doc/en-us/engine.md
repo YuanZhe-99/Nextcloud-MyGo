@@ -247,6 +247,35 @@ creation. Deletion proposals count descendants against the previous journal base
 each side; expiring one-use approval requires a matching rediscovery digest. Full sync stays capability-disabled until
 folder ownership, propagation safety and real daemon acceptance are connected and verified.
 
+### Local deletions in on-demand folders
+
+Under Windows Cloud Files upstream's `SyncEngine::shouldRestartSync` fails a cycle once when discovery
+found a local removal and lets the next one through, using a flag of the engine. SyncD creates one engine
+per cycle, so the `EngineAdapter` keeps the flag in its state (`restartedAfterDiscovery`), sets it into
+each new engine and reads it back after the cycle (patch 0020: `restartedSyncAfterDiscovery()` and
+`setRestartedSyncAfterDiscovery(bool)`). A cycle that upstream ended this way, with no other reason and not
+while stopping, is reported with `Result::restarted`. It is no failure: the reason is empty, `followUp` is
+set, and the connections stay (`freshConnections` is not forced). `EngineRuntime` then counts no failure,
+sets no blocker, leaves the work pending and queues the follow-up after `EngineRuntime::restartDelayMs`
+(2 s) with no backoff. `Control::cycleFinished` writes the status `syncing` with an empty reason for it,
+and the folder projection shows `paused` for a paused folder whose stored status is `syncing` but runs no
+cycle. There is no protocol or schema change. Every cycle with a local removal in an on-demand folder is
+still restarted once, as upstream does, including the one after the user approves deletions; the approval
+survives it ([on-demand](on-demand.md#local-deletions-and-sparse-files)). Without the carried flag every
+such cycle restarted and no local deletion reached the server.
+
+`restarted` has a second use, bounded to once in a row. The adapter records the failed items of a cycle
+and `EngineAdapter::failure(item, onDemand)` classifies each one as none, placeholder or other. When
+the only failures are new, downloaded-direction virtual-file items in NormalError whose path now holds a
+placeholder of the same server file ID (`OnDemandRoot::holds`), a listing request from another process
+created them first, and `EngineAdapter::excused` reports the cycle as restarted instead of failed. If the
+next cycle fails the same way it is reported as `SYNC_FAILED`; any other failed item disables the excuse
+([on-demand](on-demand.md#local-deletions)). `EngineRuntime::settle` holds the scheduling after a cycle:
+the failure count, the retry time, the backoff and the follow-up. These three decisions run without a
+server or Cloud Files in the CTest target `SyncDEngineContracts` (`backend/engine_tests.cpp`, built against
+the upstream build), on a controllable clock for the follow-up: not admitted at +1999 ms, admitted at
++2000 ms, no failure counted; a user's pause set during the cycle survives it and a global freeze holds it.
+
 ## Progress, decisions and the update hold
 
 Protocol 1.9 reads, without changing any decision, what the adapter already observes. While a
@@ -337,6 +366,15 @@ engine, gives its VFS to every cycle, and counts a running hydration as activity
 closes the account's roots and reports quiescence only when no cycle and no on-demand request runs;
 `retire` destroys an idle root before it releases the account; `rebind` connects a new one; a cycle
 after a quiesce without rebinding reconnects a closed root ([on-demand](on-demand.md)).
+
+A `Binding` with `onDemand` and `convertExisting` (a v0.1.0 full-file folder being switched,
+`Control::attachFolder`) makes the `EngineAdapter` constructor convert the folder's existing content
+after it registers and connects the root: `OnDemandRoot::convertExisting` runs on the control thread,
+before any cycle, reads the folder's journal without writing it, converts every directory and files for
+at most `EngineAdapter::conversionBudgetMs` (3 s of file work), and leaves the rest to the first cycle's
+discovery ([on-demand](on-demand.md#automatic-conversion-of-full-file-folders)). The constructor throws
+a sanitized reason code on failure and nothing of it stays connected. `attachFolder` also refuses a
+folder that already has a runtime.
 
 ## Build and acceptance
 

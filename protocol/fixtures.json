@@ -1,6 +1,8 @@
 [
   {"name":"add-on-demand-folder", "valid":true, "json":"{\"jsonrpc\":\"2.0\",\"id\":\"add\",\"method\":\"folders.add\",\"params\":{\"operationKey\":\"44444444-4444-4444-8444-444444444444\",\"expectedRevision\":\"0\",\"inspectToken\":\"55555555-5555-4555-8555-555555555555\",\"mode\":\"onDemand\"}}"},
   {"name":"duplicate-folder-mode", "valid":false, "json":"{\"method\":\"folders.add\",\"params\":{\"mode\":\"full\",\"mode\":\"onDemand\"}}"},
+  {"name":"folder-conversion", "valid":true, "json":"{\"jsonrpc\":\"2.0\",\"method\":\"event\",\"params\":{\"bootId\":\"10000000-0000-4000-8000-000000000001\",\"seq\":\"1\",\"revision\":\"1\",\"snapshot\":{\"folders\":[{\"id\":\"30000000-0000-4000-8000-000000000001\",\"mode\":\"full\",\"conversion\":\"pending\",\"conversionReason\":\"FOLDER_OWNED\"},{\"id\":\"30000000-0000-4000-8000-000000000002\",\"mode\":\"onDemand\",\"conversion\":\"converted\",\"conversionReason\":\"\"}]}}}"},
+  {"name":"duplicate-folder-conversion", "valid":false, "json":"{\"method\":\"event\",\"params\":{\"snapshot\":{\"folders\":[{\"conversion\":\"pending\",\"conversion\":\"converted\"}]}}}"},
   {"name":"fixed-policy", "valid":true, "json":"{\"jsonrpc\":\"2.0\",\"id\":\"policy\",\"method\":\"endpoints.setPolicy\",\"params\":{\"policy\":\"fixed\",\"fixedEndpointId\":\"33333333-3333-4333-8333-333333333333\"}}"},
   {"name":"duplicate-policy-target", "valid":false, "json":"{\"method\":\"endpoints.setPolicy\",\"params\":{\"fixedEndpointId\":\"one\",\"fixedEndpointId\":\"two\"}}"},
   {"name":"hello", "valid":true, "json":"{\"jsonrpc\":\"2.0\",\"id\":\"h\",\"method\":\"session.hello\",\"params\":{\"protocol\":{\"major\":1,\"minor\":1}}}"},

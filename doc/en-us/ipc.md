@@ -2,7 +2,7 @@
 
 ## Contract
 
-Protocol 1.10 uses JSON-RPC 2.0 over a local Named Pipe: a four-byte little-endian length followed
+Protocol 1.11 uses JSON-RPC 2.0 over a local Named Pipe: a four-byte little-endian length followed
 by UTF-8 JSON, at most 1 MiB and 64 nested containers. Duplicate object keys are invalid.
 `protocol/contract.json` records methods and capability gates. `protocol/fixtures.json` is shared
 by Go and C++ contract tests. The wire projection uses lower-camel-case field names.
@@ -25,6 +25,23 @@ uncertain; reconnect retries the same key. The client polls `operations.get` for
 Unsupported capabilities return `UNSUPPORTED_CAPABILITY`, never simulated success.
 
 ## Implementation scope
+
+Protocol 1.11, with Control schema 12, is additive and enables on-demand files
+([on-demand](on-demand.md#automatic-conversion-of-full-file-folders)). Each snapshot `folder` gains
+`conversion` (`""`, `pending` or `converted`) and `conversionReason`. `conversion` says where a folder
+added by 0.1.0 stands in SyncD's one-time switch from full files to on-demand files: `pending` still
+downloads every file, `converted` was switched with the files already on the PC kept, and `""` is every
+other folder, including one added under 0.1.1. The database state `converting`, a pass in progress, is
+reported as `pending`. `conversionReason` is a reason code and non-empty only with `pending`: usually
+`UNSUPPORTED_FOLDER_MODE` or `FOLDER_OWNED`, and after a rollback also others such as `JOURNAL_ERROR`,
+`AUTH_REQUIRED`, `CREDENTIALS_LOCKED`, `LOCAL_ROOT_UNAVAILABLE` or `FOLDER_ROOT_CHANGED`; SyncD tries
+again at every start. The `virtualFiles` capability is `engine && state available &&
+OnDemandRoot::available()`, so it is false on a foundation build and where Cloud Files cannot run;
+`folders.add` with `onDemand` and the conversion use the same answer. `protocol/contract.json` still
+lists `virtualFiles` false, because it describes the foundation build. The schema in `folders.schema.json`
+(`addParams`), the folder object in `protocol/message.schema.json`, the `folder-conversion` fixtures
+and the Go client (`syncd.Folder.Conversion`, `ConversionReason`) carry it; a daemon before 1.11 sends
+neither field, which reads as `""`.
 
 Protocol 1.10, with Control schema 11 unchanged, completes the history (schema `$defs/activity` in
 `protocol/message.schema.json`, examples in `protocol/state.examples.json`). Activity entries carry
@@ -93,9 +110,8 @@ Protocol 1.8 adds the folder file mode ([on-demand](on-demand.md)). `folders.add
 `onDemand` without the CFAPI plugin is `UNSUPPORTED_CAPABILITY`. The mode is fixed for the folder's
 lifetime, stored by Control schema 10 (`folders.mode`, existing rows `full`), and every folder
 projection carries it. Removing an on-demand folder first ends its Cloud Files registration and refuses
-`QUIESCE_STALLED` while one of its hydrations runs. The `virtualFiles` capability stays false: the
-on-demand path has run on native ARM64 against a real server through SyncD's engine runtime, not yet
-through the paired daemon and interface. See `protocol/folders.schema.json` (`addParams`) and
+`QUIESCE_STALLED` while one of its hydrations runs. The `virtualFiles` capability was false until
+1.11 (above). See `protocol/folders.schema.json` (`addParams`) and
 `protocol/folders.examples.json` (`addOnDemand`). The Go client decodes `Folder.Mode` and `AddFolder`
 takes an optional mode; a schema-9 mapping migrates as `full` (`testFolderModeMigration`). The interface
 offers the choice in setup only with `virtualFiles` and sends no mode without it ([interface](gui.md)).

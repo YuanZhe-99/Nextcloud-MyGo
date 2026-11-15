@@ -1,7 +1,8 @@
 #Requires -Version 7
 # Installs a built package for the current user, launches it, reinstalls it over itself, optionally
 # upgrades it to a higher version, uninstalls it twice (keeping, then removing user data) and proves
-# nothing is left behind (PLAN.md §16, R19/R20).
+# nothing is left behind, no Cloud Files sync root or Explorer navigation entry included (PLAN.md §16,
+# R19/R20).
 # Inputs: -Setup, the installer tools/package.ps1 built for this machine's architecture; -UpgradeTo, a
 # higher-version installer of the same architecture (tools/package.ps1 -TestVersion), installed over
 # the running -Setup version through daemon.prepareUpdate. -UpdateDir, with -UpgradeTo, makes that upgrade
@@ -140,14 +141,29 @@ function Assert-Installed {
     return $dir
 }
 
-# Assert-Gone checks that no process, startup entry, shortcut, Apps entry or program file is left.
+# Get-Registrations lists this user's Cloud Files sync roots of Nextcloud-MyGo (HKLM SyncRootManager,
+# "Nextcloud-MyGo!<SID>!…") and the HKCU Explorer navigation entries tagged ApplicationName=Nextcloud-MyGo
+# exactly (the official client's say "Nextcloud").
+function Get-Registrations {
+    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $roots = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\SyncRootManager'
+    if (Test-Path $roots) { (Get-ChildItem $roots).PSChildName | Where-Object { $_.StartsWith("Nextcloud-MyGo!$sid!", 'Ordinal') } | ForEach-Object { "sync root $_" } }
+    foreach ($tree in 'HKCU:\Software\Classes\CLSID', 'HKCU:\Software\Classes\Wow6432Node\CLSID', 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace') {
+        if (Test-Path $tree) { Get-ChildItem $tree -ErrorAction SilentlyContinue | Where-Object { $_.GetValue('ApplicationName') -ceq 'Nextcloud-MyGo' } | ForEach-Object { "navigation entry $($_.Name)" } }
+    }
+}
+
+# Assert-Gone checks that no process, startup entry, shortcut, Apps entry or program file is left, and no
+# sync root or navigation entry of Nextcloud-MyGo beyond those another profile had before the run.
 function Assert-Gone {
     Wait-For 'the install root to disappear' 20 { -not (Test-Path $root) }
     if (Get-Ours) { throw 'processes from the install root are still running' }
     if ((Get-ItemProperty $runKey).PSObject.Properties.Name -contains $runName) { throw 'startup entry left' }
     if (Test-Path $link) { throw 'shortcut left' }
     if (Test-Path $appsKey) { throw 'Apps entry left' }
-    Write-Host '  no process, startup entry, shortcut, Apps entry or program file left'
+    $left = @(Get-Registrations | Where-Object { $_ -notin $registrations })
+    if ($left) { throw "left registered: $($left -join '; ')" }
+    Write-Host '  no process, startup entry, shortcut, Apps entry, program file, sync root or navigation entry left'
 }
 
 # The official client's registrations and configuration must not change.
@@ -164,6 +180,9 @@ function Get-Arch([string]$Path) { switch -Regex ([IO.Path]::GetFileName($Path))
 $arch = Get-Arch $Setup
 if ($UpgradeTo -and (Get-Arch $UpgradeTo) -ne $arch) { throw '-UpgradeTo is for another architecture' }
 $official = Get-Official
+# Another (development) profile's on-demand folders may be registered already; only new ones count.
+$registrations = @(Get-Registrations)
+if ($registrations) { Write-Warning "registered before the run (another profile's, kept): $($registrations -join '; ')" }
 $dirs = { (Get-ChildItem ([Environment]::GetFolderPath('ApplicationData')), ([Environment]::GetFolderPath('LocalApplicationData'))).FullName }
 $before = & $dirs
 Write-Host "profile $profileName; package $arch"

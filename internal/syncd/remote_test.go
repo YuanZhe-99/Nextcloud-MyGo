@@ -1341,10 +1341,11 @@ func TestNonNormalStartupCannotBeHealthy(t *testing.T) {
 	}
 }
 
-// TestProtocol19StateExample decodes the 1.9 snapshot example: per-account
+// TestProtocol19StateExample decodes the 1.9–1.11 snapshot example: per-account
 // sign-in state, folder phase and progress, address latency, kind and block
 // reason, why an address was chosen, deletion groups, conflicts, the start
-// report and the 1.10 history kinds all reach the interface's types.
+// report, the 1.10 history kinds and the 1.11 folder conversion all reach
+// the interface's types.
 func TestProtocol19StateExample(t *testing.T) {
 	b, err := os.ReadFile("../../protocol/state.examples.json")
 	if err != nil {
@@ -1375,6 +1376,14 @@ func TestProtocol19StateExample(t *testing.T) {
 	}
 	if f := s.Folders[0]; f.Phase != PhaseUploading || f.FilesDone != 12 || s.Folders[1].Phase != "" {
 		t.Fatalf("folder phase and progress: %+v", s.Folders)
+	}
+	// Protocol 1.11: a 0.1.0 folder still waiting to become on-demand, with
+	// why, and one SyncD switched; a folder never eligible says nothing.
+	if f := s.Folders[1]; f.Conversion != ConversionPending || f.ConversionReason != "UNSUPPORTED_FOLDER_MODE" || f.Mode != FolderFull {
+		t.Fatalf("pending conversion: %+v", f)
+	}
+	if f := s.Folders[2]; f.Conversion != ConversionConverted || f.Mode != FolderOnDemand || s.Folders[0].Conversion != ConversionNone {
+		t.Fatalf("converted folder: %+v", s.Folders)
 	}
 	if e := s.Endpoints[1]; e.Kind != KindHome || e.LatencyMs != 6 || e.Blocked || e.BlockedReason != "" {
 		t.Fatalf("address latency and kind: %+v", e)

@@ -2,7 +2,7 @@
 
 ## 契约
 
-协议 1.10 在本地 Named Pipe 上传输 JSON-RPC 2.0：四字节小端长度后跟 UTF-8 JSON，
+协议 1.11 在本地 Named Pipe 上传输 JSON-RPC 2.0：四字节小端长度后跟 UTF-8 JSON，
 最多 1 MiB、64 层嵌套容器。重复对象键无效。`protocol/contract.json` 记录方法及能力门槛。
 `protocol/fixtures.json` 由 Go 和 C++ 契约测试共享。线上状态投影使用小驼峰字段名。
 夹具的 `valid` 表示 JSON 边界接受与否；RPC 消息外形与方法校验单独测试。
@@ -22,6 +22,18 @@
 不支持的能力返回 `UNSUPPORTED_CAPABILITY`，不模拟成功。
 
 ## 实现范围
+
+协议 1.11 搭配 Control schema 12，是增量变更并启用按需文件
+（[按需文件](on-demand.md#完整文件目录的自动转换)）。快照中的每个 `folder` 新增 `conversion`（`""`、`pending` 或
+`converted`）和 `conversionReason`。`conversion` 表示 0.1.0 添加的目录在 SyncD 一次性地从完整文件切换到按需文件的过程中
+所处的位置：`pending` 仍下载每个文件，`converted` 已切换且保留了电脑上已有的文件，`""` 是其他所有目录，包括 0.1.1 下添加的
+目录。数据库状态 `converting`（转换流程进行中）报告为 `pending`。`conversionReason` 是原因码，仅在 `pending` 时非空：通常是
+`UNSUPPORTED_FOLDER_MODE` 或 `FOLDER_OWNED`，回滚之后还可能是其他码，例如 `JOURNAL_ERROR`、`AUTH_REQUIRED`、
+`CREDENTIALS_LOCKED`、`LOCAL_ROOT_UNAVAILABLE` 或 `FOLDER_ROOT_CHANGED`；SyncD 每次启动都会重试。`virtualFiles` 能力为
+`engine && 状态可用 && OnDemandRoot::available()`，因此在基础构建以及 Cloud Files 无法运行的机器上为 false；带 `onDemand`
+的 `folders.add` 与转换使用同一个答案。`protocol/contract.json` 仍把 `virtualFiles` 列为 false，因为它描述的是基础构建。
+`folders.schema.json` 的 schema（`addParams`）、`protocol/message.schema.json` 中的 folder 对象、`folder-conversion` 夹具和
+Go 客户端（`syncd.Folder.Conversion`、`ConversionReason`）承载这些字段；1.11 之前的守护进程不发送这两个字段，读作 `""`。
 
 协议 1.10 保持 Control schema 11 不变，补全历史记录（schema 见 `protocol/message.schema.json` 的
 `$defs/activity`，示例见 `protocol/state.examples.json`）。活动条目带 `cursor`、`accountId`、`folderId`、
@@ -74,8 +86,8 @@ Go 客户端发送 `minor: 10`，把 `ACCOUNT_EXISTS` 映射为 `ErrAccountExist
 协议 1.8 增加目录文件模式（[按需文件](on-demand.md)）。`folders.add` 接受可选的 `mode`：`full`（默认）或
 `onDemand`；其他取值或非字符串为 `INVALID_PARAMS`，缺少 CFAPI 插件时 `onDemand` 为 `UNSUPPORTED_CAPABILITY`。
 模式在目录的整个生命周期内固定，由 Control schema 10 存储（`folders.mode`，既有行为 `full`），每个目录投影都携带它。
-移除按需目录时先注销其 Cloud Files 注册；其按需下载仍在运行时拒绝并返回 `QUIESCE_STALLED`。`virtualFiles` 能力仍为
-false：按需路径已在原生 ARM64 上通过 SyncD 的引擎运行时针对真实服务器运行，但尚未经过配对守护进程与界面。参见
+移除按需目录时先注销其 Cloud Files 注册；其按需下载仍在运行时拒绝并返回 `QUIESCE_STALLED`。`virtualFiles` 能力在 1.11 之前为
+false（见上）。参见
 `protocol/folders.schema.json`（`addParams`）和 `protocol/folders.examples.json`（`addOnDemand`）。Go 客户端解码
 `Folder.Mode`，`AddFolder` 接受可选的模式；schema 9 的映射迁移后为 `full`（`testFolderModeMigration`）。界面只在有
 `virtualFiles` 时在设置中提供该选择，没有它时不发送模式（[界面](gui.md)）。

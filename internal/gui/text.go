@@ -220,6 +220,31 @@ func modeWord(m syncd.FolderMode) string {
 	return L.ModeFull()
 }
 
+// conversionLine is what a folder's row says about SyncD's switch of a
+// 0.1.0 folder to on-demand files (protocol 1.11), or "".
+// Returns: why a pending folder still downloads every file, never its
+// code; or, until the user closed it (dismissed holds folder IDs), that a
+// converted folder kept its files, with dismissible true.
+func conversionLine(f syncd.Folder, dismissed []string) (text string, dismissible bool) {
+	switch f.Conversion {
+	case syncd.ConversionPending:
+		switch f.ConversionReason {
+		case "":
+			return L.ConversionSoon(), false
+		case "UNSUPPORTED_FOLDER_MODE":
+			return L.ConversionUnavailable(), false
+		case "FOLDER_OWNED":
+			return L.ConversionOwned(), false
+		}
+		return L.ConversionWaiting(), false
+	case syncd.ConversionConverted:
+		if !slices.Contains(dismissed, f.ID) {
+			return L.ConversionDone(), true
+		}
+	}
+	return "", false
+}
+
 // kindWord is where an address leads, in words.
 func kindWord(k syncd.EndpointKind) string {
 	switch k {

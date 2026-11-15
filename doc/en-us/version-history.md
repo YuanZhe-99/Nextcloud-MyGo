@@ -1,5 +1,45 @@
 # Version history
 
+## 0.1.1
+
+On-demand files for Windows, by the user's decisions of 2026-11-14.
+
+- **On-demand files.** Folders keep every remote file as a placeholder that downloads when an
+  application opens it (Windows Cloud Files). New folders default to on demand; full files stay
+  selectable. The capability is on where Cloud Files runs.
+- **Folders added by 0.1.0 switch once, automatically.** SyncD turns their files into in-sync
+  placeholders when it starts, without downloading, deleting or uploading anything and without
+  writing the journal: files that changed since their last sync and files it cannot open
+  stay ordinary until the first cycle makes them placeholders, and a folder that cannot switch (inside
+  a folder another app syncs, on a network drive) keeps full files and tries again at every start. The
+  folder's row says what happened or why not.
+- **Explorer.** Each on-demand folder has a navigation pane entry named "Nextcloud MyGo - <folder>",
+  and the sync roots show the Nextcloud icon.
+- **Uninstall releases on-demand folders first.** Downloaded files become ordinary files, online-only
+  placeholders are deleted locally (the server keeps them), and nothing is removed if a folder cannot be
+  released. Full-file folders, journals, accounts and settings stay.
+- **Two fixes found by acceptance.** A local deletion in an on-demand folder never reached the server (the folder stayed in `SYNC_FAILED`): patch 0020 lets SyncD carry upstream's restart flag between cycles, and a restarted cycle is no failure. An ordinary sparse file was read as an online-only placeholder and was deleted locally or not uploaded: patch 0021 requires the placeholder's recall flag, and sparse files convert like any other ([on-demand](on-demand.md#local-deletions-and-sparse-files)).
+- **First-cycle race.** While an on-demand folder's first cycle runs, another process can ask Cloud Files for the directory listing; the listing creates the placeholders first and the cycle used to end as `SYNC_FAILED`. SyncD now recognizes this (the placeholder holds the same server file ID) and reports a restarted cycle, excused once in a row ([on-demand](on-demand.md#local-deletions)).
+- **Same-second ETag handled.** Nextcloud 35.0.3 can keep a file's ETag when it is rewritten twice within one second, so a file also edited locally could replace newer server content. Patch 0022 treats a different server size under an equal ETag as a server change: the file is downloaded, or becomes a conflict copy when it was also edited locally. Still undetectable: a same-size rewrite within one second, and a rewrite on a server whose parent folder also keeps its ETag ([on-demand](on-demand.md#known-risks)).
+- **Listing identity.** Patch 0023 stores the file identity of placeholders created by the Cloud Files listing exactly, without the bytes read past the buffer ([upstream](upstream.md#nextcloud-desktop)).
+- Protocol 1.11 and Control schema 12 (the conversion state of each folder). Upstream patches 0020 to 0023 added (23 in all, fingerprint `CF0C68C10DD7`).
+
+Known limitations:
+
+- Downgrade: 0.1.0 refuses a schema 12 database. Remove the folders in 0.1.1 first, then reinstall 0.1.0.
+- Uninstall handles only the running profile, and a Windows registration with no folder behind it (for
+  example after the Control DB was lost) blocks it, with no remedy in the app yet.
+- Thumbnails and lock or share overlays in Explorer need upstream's shell extension, which is not
+  built.
+- Not yet verified: the shipped installers and executables against a server (installing over a real
+  0.1.0, the uninstaller's release of on-demand folders); SyncD's own navigation entry and icon in Explorer;
+  behavior where Cloud Files is unavailable; conversion timing at 10,000 and 100,000 files in the real
+  daemon ([platform notes](platform-notes.md#further-011-evidence)).
+- The 0.1.0 limitations otherwise remain.
+
+Versions, checked 2026-11-14 and unchanged: Nextcloud Desktop v35.0.3 (engine), Nextcloud servers
+35.0.3 and 34.0.6 for tests; Go 1.27.4; MyGo v0.9.0. Qt and OpenSSL as recorded in `build-lock.json`.
+
 ## 0.1.0
 
 The first release: a test build for Windows 11, one per-user installer per architecture (x64 and

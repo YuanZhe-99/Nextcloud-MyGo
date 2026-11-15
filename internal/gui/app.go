@@ -96,6 +96,10 @@ type Prefs struct {
 	CheckUpdates bool      `json:"updateChecks"`
 	AutoInstall  string    `json:"autoInstall"` // "never", "idle" or "daily"
 	CheckedAt    time.Time `json:"checkedAt"`
+
+	// ConversionNotesClosed are the folders, by ID, whose note that SyncD
+	// switched them to on-demand files was closed (protocol 1.11).
+	ConversionNotesClosed []string `json:"conversionNotesClosed"`
 }
 
 func defaultPrefs() Prefs {

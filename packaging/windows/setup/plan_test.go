@@ -95,6 +95,222 @@ func TestPrepare(t *testing.T) {
 	}
 }
 
+// TestReleaseOnDemand covers the uninstall's on-demand release: every
+// on-demand folder is removed through SyncD and no full-file folder is, a
+// busy folder is asked again until releaseLimit, and a refused or timed-out
+// folder is named by its local path. The clock is fake; refusals come from
+// the Mock where it has them.
+func TestReleaseOnDemand(t *testing.T) {
+	stalled := syncd.NewMock(true, nil)
+	if err := stalled.ResolveDecision("d-photos", "sha256:photos-142", syncd.ActionApproveDeletion); err != nil {
+		t.Fatal(err)
+	}
+	busy := stalled.PrepareUpdate("0.1.1")
+	if !errors.Is(busy, syncd.ErrBusy) {
+		t.Fatalf("Mock refusal %v is not ErrBusy", busy)
+	}
+	folders := []syncd.Folder{
+		{ID: "f-docs", LocalPath: `D:\Docs`, Mode: syncd.FolderOnDemand},
+		{ID: "f-full", LocalPath: `D:\Full`, Mode: syncd.FolderFull},
+		{ID: "f-old", LocalPath: `D:\Old`}, // a daemon before protocol 1.8: full files
+		{ID: "f-photos", LocalPath: `D:\Photos`, Mode: syncd.FolderOnDemand},
+	}
+	for _, c := range []struct {
+		name    string
+		replies map[string][]error // per folder; the last one repeats
+		failed  []string           // local paths named in the error
+		late    bool               // gave up only at releaseLimit
+	}{
+		{"released", nil, nil, false},
+		{"already gone", map[string][]error{"f-docs": {syncd.ErrNotFound}}, nil, false},
+		{"busy then released", map[string][]error{"f-docs": {busy, syncd.ErrDisconnected, context.DeadlineExceeded, syncd.ErrStale, nil}}, nil, false},
+		{"refused", map[string][]error{"f-photos": {syncd.ErrRefused}}, []string{`D:\Photos`}, false},
+		{"busy past the limit", map[string][]error{"f-docs": {busy}}, []string{`D:\Docs`}, true},
+		{"listed after its removal", map[string][]error{"f-docs": {nil}, "f-stuck": nil}, []string{`D:\Docs`}, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			clock := time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)
+			start := clock
+			listed := map[string]bool{}
+			for _, f := range folders {
+				listed[f.ID] = true
+			}
+			_, stuck := c.replies["f-stuck"]
+			asks := map[string]int{}
+			err := releaseOnDemand(func() []syncd.Folder {
+				var out []syncd.Folder
+				for _, f := range folders {
+					if listed[f.ID] {
+						out = append(out, f)
+					}
+				}
+				return out
+			}, func(id string) error {
+				if id == "f-full" || id == "f-old" {
+					t.Fatalf("full-file folder %s removed", id)
+				}
+				asks[id]++
+				err := error(nil)
+				if r := c.replies[id]; len(r) > 0 {
+					err = r[min(asks[id], len(r))-1]
+				}
+				if (err == nil || errors.Is(err, syncd.ErrNotFound)) && !stuck {
+					listed[id] = false
+				}
+				return err
+			}, func() time.Time { return clock }, func(d time.Duration) { clock = clock.Add(d) })
+			if len(c.failed) == 0 {
+				if err != nil {
+					t.Fatalf("releaseOnDemand = %v", err)
+				}
+				if listed["f-docs"] || listed["f-photos"] || !listed["f-full"] || !listed["f-old"] {
+					t.Errorf("left listed: %v", listed)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("releaseOnDemand succeeded, want a failure")
+			}
+			for _, p := range c.failed {
+				if !strings.Contains(err.Error(), p) {
+					t.Errorf("error %q does not name %s", err, p)
+				}
+			}
+			if strings.Contains(err.Error(), `D:\Full`) {
+				t.Errorf("error names a full-file folder: %q", err)
+			}
+			if took := clock.Sub(start); c.late != (took >= releaseLimit) || took > releaseLimit+2*time.Second {
+				t.Errorf("gave up after %v, want late=%v (limit %v)", took, c.late, releaseLimit)
+			}
+		})
+	}
+}
+
+// TestReleaseWaitsForConversion covers a folder of an earlier version that
+// SyncD turns on-demand just after its start: it is released too, and a
+// folder that stays full files (a reason is recorded, or it never settles)
+// does not hold the uninstall beyond settleLimit.
+func TestReleaseWaitsForConversion(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		after    time.Duration // when SyncD decides; 0 = never
+		reason   string        // the decision: "" converts, else stays full
+		released bool
+	}{
+		{"converted after the first read", 3 * time.Second, "", true},
+		{"stays full with a reason", 3 * time.Second, "FOLDER_OWNED", false},
+		{"never settles", 0, "", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			clock := time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)
+			start := clock
+			removed := false
+			err := releaseOnDemand(func() []syncd.Folder {
+				f := syncd.Folder{ID: "f-old", LocalPath: `D:\Old`, Mode: syncd.FolderFull, Conversion: syncd.ConversionPending}
+				if c.after > 0 && clock.Sub(start) >= c.after {
+					if f.ConversionReason = c.reason; c.reason == "" {
+						f.Mode, f.Conversion = syncd.FolderOnDemand, syncd.ConversionConverted
+					}
+				}
+				if removed {
+					return nil
+				}
+				return []syncd.Folder{f}
+			}, func(string) error { removed = true; return nil },
+				func() time.Time { return clock }, func(d time.Duration) { clock = clock.Add(d) })
+			if err != nil || removed != c.released {
+				t.Fatalf("releaseOnDemand = %v, removed %v, want %v", err, removed, c.released)
+			}
+			if took := clock.Sub(start); took > settleLimit+2*time.Second {
+				t.Errorf("waited %v, limit %v", took, settleLimit)
+			}
+		})
+	}
+}
+
+// TestUninstallSequence covers the uninstall's order: no program file is
+// removed until every on-demand folder is released, a failed release
+// deletes nothing, and user data that stayed is reported only after the
+// program is gone.
+func TestUninstallSequence(t *testing.T) {
+	failure := errors.New("D:\\Docs could not be released")
+	kept := errors.New("accounts and settings were kept")
+	for _, c := range []struct {
+		name       string
+		kept, fail error
+		want       string
+		err        error
+	}{
+		{"released", nil, nil, "release,backstop,program", nil},
+		{"release failed", nil, failure, "release", failure},
+		{"user data kept", kept, nil, "release,backstop,program", kept},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var order []string
+			err := uninstallSequence(func() (error, error) {
+				order = append(order, "release")
+				return c.kept, c.fail
+			}, func() error {
+				order = append(order, "backstop")
+				return nil
+			}, func() error {
+				order = append(order, "program")
+				return nil
+			})
+			if got := strings.Join(order, ","); got != c.want {
+				t.Errorf("order = %s, want %s", got, c.want)
+			}
+			if !errors.Is(err, c.err) || (c.err == nil) != (err == nil) {
+				t.Errorf("uninstallSequence = %v, want %v", err, c.err)
+			}
+		})
+	}
+}
+
+// TestOurTag keeps the navigation backstop to entries SyncD tagged: never
+// the official client's "Nextcloud", nor an untagged entry.
+func TestOurTag(t *testing.T) {
+	for _, c := range []struct {
+		v    string
+		want bool
+	}{
+		{"Nextcloud-MyGo", true},
+		{"Nextcloud", false},
+		{"", false},
+		{"nextcloud-mygo", false},
+		{"Nextcloud-MyGo ", false},
+		{"Nextcloud-MyGo-dev", false},
+	} {
+		if got := ourTag(c.v); got != c.want {
+			t.Errorf("ourTag(%q) = %v, want %v", c.v, got, c.want)
+		}
+	}
+}
+
+// TestRootAccount reads the account of this user's SyncD sync roots only:
+// never the official client's, another user's or a malformed ID.
+func TestRootAccount(t *testing.T) {
+	sid := "S-1-5-21-1-2-3-1001"
+	for _, c := range []struct {
+		id, sid, want string
+	}{
+		{"Nextcloud-MyGo!" + sid + "!acc-1!fold-1", sid, "acc-1"},
+		{"Nextcloud!" + sid + "!user@host!1", sid, ""},
+		{"Nextcloud-MyGo!S-1-5-21-1-2-3-1002!acc-1!fold-1", sid, ""},
+		{"Nextcloud-MyGo!" + sid + "!acc-1", sid, ""},
+		{"Nextcloud-MyGo!" + sid + "!!fold-1", sid, ""},
+		{"Nextcloud-MyGo!!acc-1!fold-1", "", ""},
+	} {
+		got, ok := rootAccount(c.id, c.sid)
+		if got != c.want || ok != (c.want != "") {
+			t.Errorf("rootAccount(%q) = %q, %v; want %q", c.id, got, ok, c.want)
+		}
+	}
+	if rootPath(`D:\Docs\`) != rootPath(`d:\docs`) || rootPath(`D:\Docs`) == rootPath(`D:\Docs2`) {
+		t.Error("rootPath does not compare roots as Windows does")
+	}
+}
+
 // payloadOf zips files and returns the archive with a manifest describing want.
 func payloadOf(t *testing.T, files, want map[string]string) (*zip.Reader, release.Manifest) {
 	t.Helper()

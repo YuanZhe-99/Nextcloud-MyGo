@@ -44,13 +44,14 @@ type setupState struct {
 	// remoteErr says why the server's folders could not be listed, or "".
 	remoteErr string
 	// mode is how the chosen folders keep their files, an index of
-	// folderModes; offered only with the virtualFiles capability, and fixed
+	// folderModes whose zero value is on-demand files (protocol 1.11);
+	// offered and sent only with the virtualFiles capability, and fixed
 	// for each folder's life.
 	mode int
 }
 
 // folderModes are the modes setup offers, in its order.
-var folderModes = []syncd.FolderMode{syncd.FolderFull, syncd.FolderOnDemand}
+var folderModes = []syncd.FolderMode{syncd.FolderOnDemand, syncd.FolderFull}
 
 // setupShown tells whether the window shows setup instead of the pages:
 // while it runs, and always while SyncD reports no account (an unknown
@@ -406,7 +407,7 @@ func (a *App) setupFolders(c *ui.Context) {
 				}
 				muted(c, hint, fontSmall).Wrap()
 			})
-			ui.Segmented(c.Key("setup-mode"), &st.mode, L.ModeFull(), L.ModeOnDemand()).Label(L.ModeLabel())
+			ui.Segmented(c.Key("setup-mode"), &st.mode, L.ModeOnDemand(), L.ModeFull()).Label(L.ModeLabel())
 		})
 	}
 	n := 0

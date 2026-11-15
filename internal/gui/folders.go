@@ -112,11 +112,53 @@ func (a *App) folderRow(c *ui.Context, f syncd.Folder, rule bool) {
 	p := pal(c)
 	word, col, hollow := folderWord(f, a.snap, p)
 	detail := folderDetail(f, a.snap)
-	row := ui.Grid(c.Key("fr-"+f.ID)).ColumnTracks(folderTracks...).FillWidth().Padding(12, 16).GapX(12).AlignItems(ui.Center)
+	note, closable := conversionLine(f, a.prefs.ConversionNotesClosed)
+	box := ui.Column(c.Key("fr-"+f.ID)).FillWidth().Padding(12, 16).Gap(8)
 	if rule {
-		row.BorderWidth(1, 0, 0, 0).BorderColor(p.hover)
+		box.BorderWidth(1, 0, 0, 0).BorderColor(p.hover)
 	}
-	row.Children(func() {
+	box.Children(func() {
+		a.folderGrid(c, f, word, detail, col, hollow)
+		if note == "" {
+			return
+		}
+		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Icon(c, icInfo).FontSize(14).TextColor(p.muted)
+			muted(c, note, fontSmall).Wrap().Grow(1).MinWidth(0)
+			if !closable {
+				return
+			}
+			b := ui.ButtonBase(c.Key("fr-note-close-"+f.ID)).Size(28, 28).Radius(radiusCtl).Center().Label(L.ActionDismiss()).Tooltip(L.ActionDismiss())
+			if b.Hovered() {
+				b.Background(p.hover)
+			}
+			b.Children(func() { ui.Icon(c, icClose).FontSize(14) })
+			if b.Clicked() {
+				a.closeConversionNote(f.ID)
+			}
+		})
+	})
+}
+
+// closeConversionNote keeps a converted folder's note closed in gui.json,
+// forgetting folders no longer in SyncD's list.
+func (a *App) closeConversionNote(folderID string) {
+	pr := a.prefs
+	closed := []string{folderID}
+	for _, id := range pr.ConversionNotesClosed {
+		if _, ok := a.snap.Folder(id); ok && id != folderID {
+			closed = append(closed, id)
+		}
+	}
+	pr.ConversionNotesClosed = closed
+	a.setPrefs(pr)
+}
+
+// folderGrid is a folder row's columns: name and mode, paths, state, and
+// buttons.
+func (a *App) folderGrid(c *ui.Context, f syncd.Folder, word, detail string, col ui.Color, hollow bool) {
+	p := pal(c)
+	ui.Grid(c).ColumnTracks(folderTracks...).FillWidth().GapX(12).AlignItems(ui.Center).Children(func() {
 		ui.Column(c).Gap(2).MinWidth(0).Children(func() {
 			ui.Text(c, f.Name).FontWeight(600).Ellipsis("…").MaxLines(1)
 			if modeShown(a.snap, f) {

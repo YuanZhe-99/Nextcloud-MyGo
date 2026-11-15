@@ -1,0 +1,154 @@
+diff --git a/src/libsync/discovery.cpp b/src/libsync/discovery.cpp
+--- a/src/libsync/discovery.cpp
++++ b/src/libsync/discovery.cpp
+@@ -887,6 +887,11 @@ void ProcessDirectoryJob::processFileAnalyzeRemoteInfo(const SyncFileItemPtr &it
+         const auto isVirtualE2EePlaceholder = isDbEntryAnE2EePlaceholder && serverEntry.size >= Constants::e2EeTagSize;
+         const auto sizeOnServer = isVirtualE2EePlaceholder ? serverEntry.size - Constants::e2EeTagSize : serverEntry.size;
+         const auto metaDataSizeNeedsUpdateForE2EeFilePlaceholder = isVirtualE2EePlaceholder && dbEntry._fileSize == serverEntry.size;
++        // A server can keep a file's etag when the file is rewritten twice within one second (seen with
++        // Nextcloud 35); a different size still shows that its content changed. Folder sizes and the
++        // journal sizes of end-to-end encrypted files (plaintext, without the tag) are not comparable.
++        const auto fileSizeChangedOnServer = !serverEntry.isDirectory && !dbEntry.isE2eEncrypted() && !serverEntry.isE2eEncrypted()
++            && dbEntry._e2eMangledName.isEmpty() && dbEntry._fileSize != serverEntry.size;
+ 
+         if (serverEntry.isDirectory) {
+             // Even if over quota, continue syncing as normal for now
+@@ -913,7 +918,10 @@ void ProcessDirectoryJob::processFileAnalyzeRemoteInfo(const SyncFileItemPtr &it
+         } else if (serverEntry.isValid() && !serverEntry.remotePerm.isNull() && !serverEntry.remotePerm.hasPermission(RemotePermissions::CanRead)) {
+             item->_instruction = CSYNC_INSTRUCTION_REMOVE;
+             item->_direction = SyncFileItem::Down;
+-        } else if (dbEntry._etag != serverEntry.etag) {
++        } else if (dbEntry._etag != serverEntry.etag || fileSizeChangedOnServer) {
++            if (dbEntry._etag == serverEntry.etag) {
++                qCInfo(lcDisco) << "File" << item->_file << "changed size on the server under the same etag:" << dbEntry._fileSize << serverEntry.size;
++            }
+             item->_direction = SyncFileItem::Down;
+             item->_modtime = serverEntry.modtime;
+             item->_size = sizeOnServer;
+diff --git a/test/testsynccfapi.cpp b/test/testsynccfapi.cpp
+--- a/test/testsynccfapi.cpp
++++ b/test/testsynccfapi.cpp
+@@ -2271,6 +2271,34 @@ private Q_SLOTS:
+         QCOMPARE(QFileInfo(fakeFolder.localPath() + "sparse").size(), sparseSize + 2);
+     }
+ 
++    // A dehydrated placeholder takes the server's new size when the server kept the file's etag.
++    void testServerSizeChangeUnderSameEtagUpdatesPlaceholder()
++    {
++        FakeFolder fakeFolder{FileInfo{}};
++        setupVfs(fakeFolder);
++        fakeFolder.remoteModifier().insert("a", 64);
++        QVERIFY(fakeFolder.syncOnce());
++        CFVERIFY_VIRTUAL(fakeFolder, "a");
++
++        auto &remote = fakeFolder.remoteModifier();
++        const auto etag = remote.find("a")->etag;
++        remote.appendByte("a");
++        remote.find("a")->etag = etag;
++        ItemCompletedSpy completeSpy(fakeFolder);
++        QVERIFY(fakeFolder.syncOnce());
++
++        // A server change to a local virtual file decays to a metadata update, as when the etag changes.
++        QCOMPARE(completeSpy.findItem("a")->_instruction, CSYNC_INSTRUCTION_UPDATE_METADATA);
++        CFVERIFY_VIRTUAL(fakeFolder, "a");
++        QCOMPARE(QFileInfo(fakeFolder.localPath() + "a").size(), qint64{65});
++        QCOMPARE(dbRecord(fakeFolder, "a")._fileSize, qint64{65});
++
++        // Nothing is left to do once the journal holds the server's size.
++        completeSpy.clear();
++        QVERIFY(fakeFolder.syncOnce());
++        QCOMPARE(completeSpy.findItem("a")->_instruction, CSYNC_INSTRUCTION_NONE);
++    }
++
+     void testServer_caseClash_createConflict()
+     {
+         FakeFolder fakeFolder{ FileInfo{} };
+diff --git a/test/testsyncengine.cpp b/test/testsyncengine.cpp
+--- a/test/testsyncengine.cpp
++++ b/test/testsyncengine.cpp
+@@ -985,6 +985,85 @@ private Q_SLOTS:
+ 
+     }
+ 
++    void testServerSizeChangeUnderSameEtag_data()
++    {
++        QTest::addColumn<bool>("localEdit");
++        QTest::newRow("unchanged locally") << false;
++        QTest::newRow("edited locally") << true;
++    }
++
++    // A server can keep a file's etag when the file is rewritten twice within one second; the size still differs.
++    void testServerSizeChangeUnderSameEtag()
++    {
++        QFETCH(bool, localEdit);
++        FakeFolder fakeFolder{FileInfo::A12_B12_C12_S12()};
++        ItemCompletedSpy completeSpy(fakeFolder);
++
++        // The rewrite keeps the file's etag and modification time; its folders get new etags.
++        auto &remote = fakeFolder.remoteModifier();
++        const auto etag = remote.find("A/a1")->etag;
++        const auto size = remote.find("A/a1")->size;
++        remote.appendByte("A/a1");
++        remote.find("A/a1")->etag = etag;
++        if (localEdit) {
++            fakeFolder.localModifier().appendByte("A/a1");
++            fakeFolder.localModifier().appendByte("A/a1");
++            fakeFolder.localModifier().setContents("A/a1", 'L');
++        }
++        QVERIFY(fakeFolder.syncOnce());
++
++        // The server's content is kept and downloaded; a local edit becomes a conflict copy.
++        QCOMPARE(completeSpy.findItem("A/a1")->_instruction, localEdit ? CSYNC_INSTRUCTION_CONFLICT : CSYNC_INSTRUCTION_SYNC);
++        QCOMPARE(fakeFolder.currentRemoteState().find("A/a1")->size, size + 1);
++        QCOMPARE(fakeFolder.currentRemoteState().find("A/a1")->contentChar, 'W');
++        QCOMPARE(fakeFolder.currentLocalState().find("A/a1")->size, size + 1);
++        QCOMPARE(fakeFolder.currentLocalState().find("A/a1")->contentChar, 'W');
++        const auto conflicts = fakeFolder.syncJournal().conflictRecordPaths();
++        QCOMPARE(conflicts.size(), localEdit ? 1 : 0);
++        if (localEdit) {
++            const auto copy = fakeFolder.currentLocalState().find(QString::fromUtf8(conflicts.first()));
++            QVERIFY(copy);
++            QCOMPARE(copy->size, size + 2);
++            QCOMPARE(copy->contentChar, 'L');
++        }
++
++        // The journal now holds the server's size, so the next sync downloads nothing again.
++        SyncJournalFileRecord record;
++        QVERIFY(fakeFolder.syncJournal().getFileRecord(QByteArrayLiteral("A/a1"), &record));
++        QCOMPARE(record._fileSize, size + 1);
++        QCOMPARE(record._etag, etag);
++        completeSpy.clear();
++        QVERIFY(fakeFolder.syncOnce());
++        QCOMPARE(completeSpy.findItem("A/a1")->_instruction, CSYNC_INSTRUCTION_NONE);
++        QCOMPARE(fakeFolder.currentRemoteState().find("A/a1")->size, size + 1);
++    }
++
++    // The journal of an end-to-end encrypted file holds its plaintext size, the server the encrypted one.
++    void testEncryptedFileSizeIsNotComparedWithTheServer()
++    {
++        FakeFolder fakeFolder{FileInfo::A12_B12_C12_S12()};
++        SyncJournalFileRecord record;
++        QVERIFY(fakeFolder.syncJournal().getFileRecord(QByteArrayLiteral("A/a1"), &record));
++        record._e2eMangledName = QByteArrayLiteral("A/0123456789abcdef");
++        QVERIFY(fakeFolder.syncJournal().setFileRecord(record));
++
++        // The server's size is the plaintext size plus the 16-byte tag; the etag says nothing changed.
++        auto &remote = fakeFolder.remoteModifier();
++        const auto etag = remote.find("A/a1")->etag;
++        const auto size = remote.find("A/a1")->size;
++        for (auto i = 0; i < 16; ++i) {
++            remote.appendByte("A/a1");
++        }
++        remote.find("A/a1")->etag = etag;
++        remote.appendByte("A/a2");
++
++        ItemCompletedSpy completeSpy(fakeFolder);
++        QVERIFY(fakeFolder.syncOnce());
++        QCOMPARE(completeSpy.findItem("A/a2")->_instruction, CSYNC_INSTRUCTION_SYNC);
++        QCOMPARE(completeSpy.findItem("A/a1")->_instruction, CSYNC_INSTRUCTION_NONE);
++        QCOMPARE(fakeFolder.currentLocalState().find("A/a1")->size, size);
++    }
++
+     // Check that server mtime is set on directories on initial propagation
+     void testDirectoryInitialMtime()
+     {
