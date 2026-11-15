@@ -1,5 +1,27 @@
 # Version history
 
+## 0.1.2
+
+One Explorer entry instead of one per folder, by the user's request of 2026-11-15.
+
+- **Explorer.** On-demand folders now share one navigation pane entry per folder that holds them. With
+  setup's layout that is a single entry, "Nextcloud MyGo", which opens the base folder (`Nextcloud` in
+  your user folder by default). A folder elsewhere gets an entry for the folder that holds it, named
+  "Nextcloud MyGo - <that folder>"; a folder that maps the whole account, or sits directly on a drive,
+  keeps an entry of its own. The 0.1.1 per-folder entries are removed when SyncD next starts each folder.
+  The entry goes when the last folder that uses it is removed; the uninstaller keeps an entry another
+  profile's folder still uses ([on-demand](on-demand.md#navigation-pane-entry-and-icon)).
+- **Tests.** The real-pipe tests give every pipe write a deadline and the `--version` probe a timeout,
+  and the tier log keeps the names of tests running when Go's package timeout fires: the v0.1.1
+  release run had hung in one of them on ARM64 without saying which.
+
+Known limitations: as for 0.1.1. Not yet verified: the shared entry as Explorer shows it, and an
+upgrade from an installed 0.1.1 with the shipped installers.
+
+Versions, checked 2026-11-15: MyGo moved to v0.9.1 (a patch release, no UI migration needed);
+unchanged: Nextcloud Desktop v35.0.3 (engine), Nextcloud servers 35.0.3 and 34.0.6 for tests, Go 1.27.4.
+Protocol 1.11, Control schema 12 and the 23 upstream patches (fingerprint `CF0C68C10DD7`) are unchanged.
+
 ## 0.1.1
 
 On-demand files for Windows, by the user's decisions of 2026-11-14.

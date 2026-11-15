@@ -31,7 +31,7 @@ SyncD 连通基础已实现；完整同步尚未完成。见 [IPC](../ipc.md) �
 | `backend/request_lifetime.*` | 回复完成/销毁计数及粘滞的结果不明写入观察 | `RequestLifetime`、`observe`、`Counts` |
 | `backend/resume_context.*` | 只读 ETag 下载、带校验和单 PUT 及分块 v2 会话准入；保留被阻塞轮询/v1 分块索引及损坏 journal | `resumeContextError` |
 | `backend/switch_state.*` | 事务化切换意图/epoch 存储、已提交绑定解析及重启门槛 | `SwitchState`、`begin`、`commit`、`reconciled`、`interrupt` |
-| `backend/platform/windows/ondemand*` | Cloud Files 同步根注册、归属检查、切换所等待的按需请求闸门、已有完整文件内容的转换（含稀疏文件）、资源管理器导航窗格条目、注销，以及真实服务器按需验收程序（[按需文件](../on-demand.md)） | `OnDemandRoot`、`ownershipError`、`close`、`busy`、`unregister`、`convertExisting`、`conversionError`、`navigationClsid`、`holds`、`EngineAdapter::quiescent` |
+| `backend/platform/windows/ondemand*` | Cloud Files 同步根注册、归属检查、切换所等待的按需请求闸门、已有完整文件内容的转换（含稀疏文件）、共用的资源管理器导航窗格条目、注销，以及真实服务器按需验收程序（[按需文件](../on-demand.md)） | `OnDemandRoot`、`ownershipError`、`close`、`busy`、`unregister`、`convertExisting`、`conversionError`、`navigationTarget`、`navigationClsid`、`navigationTitle`、`holds`、`EngineAdapter::quiescent` |
 | `protocol/` | 协议 1.11 清单、schema 及共享恶意输入夹具 | `contract.json`、`message.schema.json`、`folders.schema.json`、`endpoints.schema.json`、`switch.schema.json`、`reauthentication.schema.json`、`policy.schema.json`、`startup.examples.json`、`constraints.examples.json`、`fixtures.json` |
 | `tools/build-syncd.ps1` | ARM64/x64 SyncD 构建与核心契约测试 | 脚本参数 |
 | `tools/pkg`、`tools/package.ps1`、`tools/package-smoke.ps1` | 带必需许可证包的 DLL 闭包暂存、安装包清单、原生架构 PE 检查（SyncD 必须带有图标资源）、运行中 SyncD 的启动报告、测试版本安装包、更新签名以及真实安装、升级与应用内更新测试（[打包](../packaging.md)） | `stageCommand`、`requireNotices`、`reportCommand`、`signUpdateCommand`、`check`、`inspect`、`hasResource`、`native` |

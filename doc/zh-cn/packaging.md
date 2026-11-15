@@ -201,7 +201,7 @@ Nextcloud-MyGo、清单中的版本、本机架构以及比运行版本更新的
 3. 关闭 SyncD，并检查 Windows 中不再有该 profile 账号的 `Nextcloud-MyGo!<SID>!` 同步根。其他 profile 的同步根保留。
    使用 `-remove-user-data` 时，随后删除该 profile 的 SyncD 数据与界面设置。
 4. 删除遗留的、标记恰好为 `ApplicationName=Nextcloud-MyGo` 的 HKCU 导航窗格条目（绝不删除官方客户端的 `Nextcloud`）；
-   支撑另一个 profile 现存同步根的条目会保留。
+   另一个 profile 的现存同步根以 `NamespaceCLSID` 指向的条目（0.1.2 起的共用条目），或目标就是这种根的条目（0.1.1），会保留。
 5. 删除此安装的开机启动项、快捷方式、应用列表条目与安装目录。账号、设置与同步文件另行保留。
 
 若第 2 步或第 3 步失败，则不删除任何内容，界面会重新启动以便在其中移除该目录，setup 以退出码 1 结束并指出该目录的本地路径。

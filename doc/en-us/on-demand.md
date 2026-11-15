@@ -193,19 +193,31 @@ hydrated.
 
 ## Navigation pane entry and icon
 
-Each on-demand folder gets an Explorer navigation pane entry named like its sync root, with the CLSID
-`{<folder ID>}` (`OnDemandRoot::navigationClsid`; none when the folder ID is not a UUID). It is written
-under HKCU only, modelled on upstream's `src/gui/navigationpanehelper.cpp` (GUI code that cannot be
-linked): `Software\Classes\CLSID\{clsid}` and its `Wow6432Node` copy, `Explorer\Desktop\NameSpace\{clsid}`
-and the `HideDesktopIcons\NewStartPanel` value. The in-process server is the system's `shell32.dll`,
-so no DLL of this product is loaded into Explorer. Every key carries `ApplicationName=Nextcloud-MyGo`
-(the official client writes `Nextcloud`), which lets the uninstaller recognize what is left. The CLSID
-is also passed as `VfsSetupParams::navigationPaneClsid`, so patch 0017 writes it as the sync root's
-`NamespaceCLSID`.
+On-demand folders share one Explorer navigation pane entry per folder that holds them (from 0.1.2;
+0.1.1 wrote one entry per folder). Setup places every folder of an account below one base folder
+(`%USERPROFILE%\Nextcloud` by default), so normally there is exactly one entry, and it opens that base
+folder (`OnDemandRoot::navigationTarget`). The target is the root itself when the folder maps the whole
+account (remote path `/`) or when its parent is a drive root. The entry is named "Nextcloud MyGo",
+followed by " - <target folder name>" unless that name is `Nextcloud` (`OnDemandRoot::navigationTitle`).
+Its CLSID is a name-based UUID of the target path, compared case-insensitively
+(`OnDemandRoot::navigationClsid`), so every root below one folder names the same entry, across starts,
+profiles and accounts. Each sync root's own display name stays `Nextcloud MyGo - <folder name>`.
 
-The entry is rewritten at every start, because its icon is the running SyncD, which lies in a versioned
-directory, and removed on every path that ends the registration. A registration that fails the first
-time keeps no entry. A failed write of the entry only costs the sidebar item: registration goes on.
+The entry is written under HKCU only, modelled on upstream's `src/gui/navigationpanehelper.cpp` (GUI code
+that cannot be linked): `Software\Classes\CLSID\{clsid}` and its `Wow6432Node` copy,
+`Explorer\Desktop\NameSpace\{clsid}` and the `HideDesktopIcons\NewStartPanel` value. The in-process
+server is the system's `shell32.dll`, so no DLL of this product is loaded into Explorer. Every key carries
+`ApplicationName=Nextcloud-MyGo` (the official client writes `Nextcloud`), which lets the uninstaller
+recognize what is left. The CLSID is also passed as `VfsSetupParams::navigationPaneClsid`, so patch 0017
+writes it as the sync root's `NamespaceCLSID`; that value is how SyncD and the uninstaller know which
+registrations still use an entry.
+
+The entry is rewritten at every start of a root, because its icon is the running SyncD, which lies in a
+versioned directory, and every start removes the folder's 0.1.1 entry (`{<folder ID>}`). Ending a
+registration removes the entry only when no other sync root of this user still names it, and removes the
+folder's 0.1.1 entry in any case; a removal that finds no registration checks the entries of both
+location rules the same way. A registration that fails the first time leaves the entry only if another
+root names it. A failed write of the entry only costs the sidebar item: registration goes on.
 
 New Explorer windows pick up an added or removed entry without a restart and without `SHChangeNotify`
 (observed with a hand-written entry of the same layout on build 26300, ARM64); already-open windows were

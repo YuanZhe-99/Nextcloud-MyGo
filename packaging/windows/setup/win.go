@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 	"unsafe"
@@ -49,6 +50,8 @@ func userSID() (string, error) {
 // syncRoot is one Cloud Files registration of SyncD for this user.
 type syncRoot struct {
 	id, account, path string
+	// clsid is the navigation entry the registration names (NamespaceCLSID).
+	clsid string
 }
 
 // syncRoots lists the user's Nextcloud-MyGo sync root registrations, of
@@ -73,14 +76,18 @@ func syncRoots(sid string) ([]syncRoot, error) {
 		if !ok {
 			continue
 		}
-		path := "(unknown folder)"
+		path, clsid := "(unknown folder)", ""
+		if r, err := registry.OpenKey(k, id, registry.QUERY_VALUE); err == nil {
+			clsid, _, _ = r.GetStringValue("NamespaceCLSID")
+			r.Close()
+		}
 		if u, err := registry.OpenKey(k, id+`\UserSyncRoots`, registry.QUERY_VALUE); err == nil {
 			if p, _, err := u.GetStringValue(sid); err == nil && p != "" {
 				path = p
 			}
 			u.Close()
 		}
-		out = append(out, syncRoot{id, account, path})
+		out = append(out, syncRoot{id, account, path, clsid})
 	}
 	return out, nil
 }
@@ -98,9 +105,10 @@ func tagged(key string) bool {
 
 // removeNavigation deletes the user's leftover Explorer navigation entries of
 // Nextcloud-MyGo: the CLSID keys (both views) and NameSpace keys tagged
-// ApplicationName=Nextcloud-MyGo whose target folder is no longer a
-// registered sync root, and their HideDesktopIcons values. It backs up
-// SyncD's own removal, which ends each entry with its folder.
+// ApplicationName=Nextcloud-MyGo that no registered sync root names and
+// whose target folder is no longer a registered sync root (0.1.1's
+// per-folder entries), and their HideDesktopIcons values. It backs up
+// SyncD's own removal, which ends each entry with the last folder naming it.
 // Side effects: deletes HKCU keys and values; never an entry tagged
 // otherwise (the official client's say "Nextcloud"), nor one still serving a
 // root of another profile.
@@ -115,9 +123,10 @@ func removeNavigation() error {
 	if err != nil {
 		return err
 	}
-	live := map[string]bool{}
+	live, named := map[string]bool{}, map[string]bool{}
 	for _, r := range roots {
 		live[rootPath(r.path)] = true
+		named[strings.ToUpper(r.clsid)] = true
 	}
 	keep, removed := map[string]bool{}, map[string]bool{}
 	var errs []error
@@ -125,6 +134,10 @@ func removeNavigation() error {
 		for _, name := range subKeys(tree) {
 			key := tree + `\` + name
 			if name == "" || !tagged(key) || keep[name] {
+				continue
+			}
+			if named[strings.ToUpper(name)] {
+				keep[name] = true
 				continue
 			}
 			if tree != namespaceKey {

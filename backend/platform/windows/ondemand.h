@@ -42,9 +42,10 @@ public:
   /// leased local folder.
   /// Inputs: localPath is the canonical root; remotePath the mapped collection;
   /// account and journal belong to the caller's binding and outlive this root.
-  /// Side effects: writes the current user's sync root registration and its
-  /// Explorer navigation pane entry (navigationClsid, rewritten each time; a
-  /// folder registered for the first time keeps none when this throws).
+  /// Side effects: writes the current user's sync root registration and the
+  /// shared Explorer navigation pane entry it names (navigationClsid,
+  /// rewritten each time; when a first registration throws, the entry stays
+  /// only if another root names it); removes the folder's 0.1.1 entry.
   /// Notes: throws FOLDER_OWNED when the folder belongs to another provider or
   /// another folder, UNSUPPORTED_FOLDER_MODE when Cloud Files is unavailable.
   OnDemandRoot(const Identity &identity, const QString &localPath,
@@ -124,10 +125,21 @@ public:
   /// a network drive); otherwise as ownershipError.
   static QString conversionError(const QString &localPath,
                                  const Identity &identity);
-  /// navigationClsid is the CLSID of this folder's Explorer navigation pane
-  /// entry: the folder ID in registry form ("{…}").
-  /// Returns: empty when the folder ID is not a UUID (then no entry exists).
-  static QString navigationClsid(const Identity &identity);
+  /// navigationTarget is the folder the Explorer navigation pane entry of an
+  /// on-demand root opens: the folder that holds it (setup puts every folder
+  /// of an account below one base folder), or the root itself when it maps
+  /// the whole account or its parent is a drive root.
+  /// Returns: a cleaned path with native separators.
+  static QString navigationTarget(const QString &localPath,
+                                  const QString &remotePath);
+  /// navigationClsid is the CLSID of that entry, shared by every root with
+  /// the same target: a name-based UUID of the target path (case-insensitive),
+  /// in registry form ("{…}").
+  static QString navigationClsid(const QString &localPath,
+                                 const QString &remotePath);
+  /// navigationTitle is the entry's name: "Nextcloud MyGo", followed by
+  /// " - <target folder name>" unless that name is "Nextcloud".
+  static QString navigationTitle(const QString &target);
   /// ownershipReason classifies a CfGetSyncRootInfoByPath answer.
   /// Inputs: queried is its HRESULT; running is cloudFilesRunning(); provider
   /// and ownRecord describe the root found when it succeeded.
@@ -142,7 +154,8 @@ public:
   /// Side effects: files whose content is on disk become ordinary files again;
   /// online-only placeholders, which nothing could open without the provider,
   /// are deleted; the journal and other local content stay. The navigation
-  /// pane entry goes with the registration, also when none was left.
+  /// pane entry goes with the last registration that names it (checked also
+  /// when no registration was left), and so does the folder's 0.1.1 entry.
   /// Returns: empty on success, otherwise a sanitized reason code.
   static QString unregister(const QString &localPath, const Identity &identity);
 

@@ -284,6 +284,62 @@ bool writeNavigationEntry(const QString &clsid, const QString &title,
   return true;
 }
 
+/// recordedClsid reads the navigation CLSID a sync root registration names.
+/// Returns: empty when the registration or the value is missing.
+QString recordedClsid(const QString &id) {
+  const auto key = QString::fromWCharArray(syncRoots) + '\\' + id;
+  wchar_t value[64]{};
+  DWORD bytes = sizeof(value) - sizeof(wchar_t);
+  if (RegGetValueW(HKEY_LOCAL_MACHINE, reinterpret_cast<LPCWSTR>(key.utf16()),
+                   L"NamespaceCLSID", RRF_RT_REG_SZ, nullptr, value,
+                   &bytes) != ERROR_SUCCESS)
+    return {};
+  return QString::fromWCharArray(value);
+}
+
+/// navigationInUse reports whether a sync root of this provider and user,
+/// of any profile or account, still names the CLSID as its navigation entry.
+bool navigationInUse(const QString &clsid, const QString &sid) {
+  HKEY roots = nullptr;
+  if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, syncRoots, 0, KEY_READ, &roots) !=
+      ERROR_SUCCESS)
+    return false;
+  const auto close = qScopeGuard([&] { RegCloseKey(roots); });
+  const auto prefix = QString(OnDemandRoot::provider) + '!' + sid + '!';
+  wchar_t name[512];
+  for (DWORD i = 0;; ++i) {
+    DWORD length = DWORD(sizeof(name) / sizeof(name[0]));
+    const auto result =
+        RegEnumKeyExW(roots, i, name, &length, nullptr, nullptr, nullptr, nullptr);
+    if (result == ERROR_NO_MORE_ITEMS)
+      return false;
+    if (result != ERROR_SUCCESS)
+      continue;
+    const auto id = QString::fromWCharArray(name, int(length));
+    if (id.startsWith(prefix, Qt::CaseInsensitive) &&
+        recordedClsid(id).compare(clsid, Qt::CaseInsensitive) == 0)
+      return true;
+  }
+}
+
+/// releaseNavigation removes the entries among clsids that no sync root of
+/// this user still names.
+/// Returns: false when an unused entry could not be removed.
+bool releaseNavigation(const QStringList &clsids, const QString &sid) {
+  bool removed = true;
+  for (const auto &clsid : clsids)
+    if (!clsid.isEmpty() && !navigationInUse(clsid, sid))
+      removed &= removeNavigationEntry(clsid);
+  return removed;
+}
+
+/// legacyClsid is the per-folder entry 0.1.1 wrote: the folder ID in registry
+/// form, or empty when the ID is not a UUID.
+QString legacyClsid(const OnDemandRoot::Identity &identity) {
+  const QUuid id(identity.folder);
+  return id.isNull() ? QString{} : id.toString(QUuid::WithBraces);
+}
+
 /// unixTime converts a FILETIME as upstream's local discovery does
 /// (csync_vio_local_win.cpp, rounding toward negative infinity), so a size
 /// and time comparison with the journal agrees with what the next cycle sees.
@@ -360,17 +416,19 @@ OnDemandRoot::OnDemandRoot(const Identity &identity, const QString &localPath,
   const auto sid = userSid();
   const bool registered =
       !registeredRoot(syncRootId(identity, sid), sid).isEmpty();
-  const auto clsid = navigationClsid(identity);
-  if (!clsid.isEmpty() &&
-      writeNavigationEntry(
-          clsid, identity.name,
-          QDir::toNativeSeparators(QDir::cleanPath(localPath)),
+  // One entry for the folder that holds the on-demand folders, shared by
+  // every root under it (0.1.2); 0.1.1 wrote one entry per folder.
+  const auto target = navigationTarget(localPath, remotePath);
+  const auto clsid = navigationClsid(localPath, remotePath);
+  if (writeNavigationEntry(
+          clsid, navigationTitle(target), target,
           QDir::toNativeSeparators(QCoreApplication::applicationFilePath())))
     params.navigationPaneClsid = clsid;
-  // A folder that was never registered keeps no entry when this fails.
+  removeNavigationEntry(legacyClsid(identity));
+  // A folder that was never registered leaves no entry nothing else uses.
   auto forget = qScopeGuard([&] {
-    if (!registered && !params.navigationPaneClsid.isEmpty())
-      removeNavigationEntry(clsid);
+    if (!registered)
+      releaseNavigation({clsid}, sid);
   });
   vfs_->start(params);
   // Upstream only logs a failed registration; require the exact record.
@@ -382,9 +440,30 @@ OnDemandRoot::OnDemandRoot(const Identity &identity, const QString &localPath,
   forget.dismiss();
 }
 
-QString OnDemandRoot::navigationClsid(const Identity &identity) {
-  const QUuid id(identity.folder);
-  return id.isNull() ? QString{} : id.toString(QUuid::WithBraces);
+QString OnDemandRoot::navigationTarget(const QString &localPath,
+                                      const QString &remotePath) {
+  const QFileInfo folder(QDir::cleanPath(localPath));
+  const auto parent = QDir::cleanPath(folder.absolutePath());
+  const bool whole = remotePath.isEmpty() || remotePath == "/";
+  return QDir::toNativeSeparators(
+      whole || QDir(parent).isRoot() ? QDir::cleanPath(localPath) : parent);
+}
+
+QString OnDemandRoot::navigationClsid(const QString &localPath,
+                                     const QString &remotePath) {
+  // A fixed namespace keeps the ID stable across starts and versions; NTFS
+  // names compare case-insensitively for this user.
+  static const QUuid space("{6f1d2c58-3b8e-4a7e-9d0c-5e2a9b14c7f3}");
+  return QUuid::createUuidV5(space,
+                             navigationTarget(localPath, remotePath).toLower())
+      .toString(QUuid::WithBraces);
+}
+
+QString OnDemandRoot::navigationTitle(const QString &target) {
+  const auto name = QFileInfo(QDir::fromNativeSeparators(target)).fileName();
+  return name.isEmpty() || name.compare("Nextcloud", Qt::CaseInsensitive) == 0
+             ? QStringLiteral("Nextcloud MyGo")
+             : "Nextcloud MyGo - " + name;
 }
 
 QString OnDemandRoot::conversionError(const QString &localPath,
@@ -557,12 +636,20 @@ QString OnDemandRoot::unregister(const QString &localPath,
   const auto owner = ownershipError(localPath, identity);
   if (!owner.isEmpty())
     return owner;
+  // The entries this folder may have had: the one its record names, the
+  // shared entry of either location rule, and 0.1.1's own. Each is removed
+  // only when no sync root of this user names it any more.
+  const auto entries = [&](const QString &named) {
+    return QStringList{named, navigationClsid(localPath, "/"),
+                       navigationClsid(localPath, "/folder"),
+                       legacyClsid(identity)};
+  };
   // Ownership passed without a record: the folder is under no sync root, so
   // nothing of ours is left to release (removal is idempotent).
   if (recorded.isEmpty())
-    return removeNavigationEntry(navigationClsid(identity))
-               ? QString{}
-               : "UNSUPPORTED_FOLDER_MODE";
+    return releaseNavigation(entries({}), sid) ? QString{}
+                                               : "UNSUPPORTED_FOLDER_MODE";
+  const auto named = recordedClsid(syncRootId(identity, sid));
   const bool released = releaseTree(nativeRoot(localPath).chopped(1));
   // Never upstream's unregisterFolder: when no root of this provider remains
   // it deletes shell-extension classes that may belong to the official client.
@@ -571,7 +658,7 @@ QString OnDemandRoot::unregister(const QString &localPath,
     return "UNSUPPORTED_FOLDER_MODE";
   if (!registeredRoot(syncRootId(identity, sid), sid).isEmpty())
     return "UNSUPPORTED_FOLDER_MODE";
-  if (!removeNavigationEntry(navigationClsid(identity)))
+  if (!releaseNavigation(entries(named), sid))
     return "UNSUPPORTED_FOLDER_MODE";
   return released ? QString{} : "LOCAL_ROOT_UNAVAILABLE";
 }

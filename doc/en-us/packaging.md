@@ -234,7 +234,8 @@ while an on-demand folder may still be registered (its online-only files could n
    profile's accounts. Another profile's roots stay. With `-remove-user-data` the profile's SyncD data and
    interface settings are then deleted.
 4. Remove leftover HKCU navigation entries tagged exactly `ApplicationName=Nextcloud-MyGo` (never the
-   official client's `Nextcloud`); an entry that backs another profile's live root is kept.
+   official client's `Nextcloud`); an entry that a live root of another profile names as its `NamespaceCLSID`
+   (the shared entry from 0.1.2), or whose target is such a root (0.1.1), is kept.
 5. Remove this install's startup entries, the shortcut, the Apps entry and the install folder.
    Accounts, settings and synced files are otherwise kept.
 

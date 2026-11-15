@@ -198,13 +198,65 @@ void forgetNavigationEntry(const QString &clsid) {
                      reinterpret_cast<LPCWSTR>(clsid.utf16()));
 }
 
+/// plantEntry writes the tagged keys of a navigation entry, as a version that
+/// left one behind would have.
+void plantEntry(const QString &clsid) {
+  const DWORD one = 1;
+  for (const auto &key : {classKey + clsid, namespaceKey + clsid})
+    require(RegSetKeyValueW(HKEY_CURRENT_USER,
+                            reinterpret_cast<LPCWSTR>(key.utf16()),
+                            L"ApplicationName", REG_SZ, L"Nextcloud-MyGo",
+                            sizeof(L"Nextcloud-MyGo")) == ERROR_SUCCESS,
+            "fixture entry not written");
+  require(RegSetKeyValueW(HKEY_CURRENT_USER,
+                          reinterpret_cast<LPCWSTR>(hiddenIconsKey.utf16()),
+                          reinterpret_cast<LPCWSTR>(clsid.utf16()), REG_DWORD,
+                          &one, sizeof(one)) == ERROR_SUCCESS,
+          "fixture desktop value not written");
+}
+
+/// navigationTargets checks where the shared entry points and its name: the
+/// folder holding the root, the root itself for the whole account or below a
+/// drive root; one CLSID per target, whatever the case of the path.
+void navigationTargets() {
+  const struct {
+    const char *local, *remote, *target, *title;
+  } cases[] = {
+      {"C:/Users/u/Nextcloud/Photos", "/Photos", R"(C:\Users\u\Nextcloud)",
+       "Nextcloud MyGo"},
+      {"C:/Users/u/Nextcloud/Deep", "/a/b/Deep", R"(C:\Users\u\Nextcloud)",
+       "Nextcloud MyGo"},
+      {"C:/Users/u/Nextcloud", "/", R"(C:\Users\u\Nextcloud)", "Nextcloud MyGo"},
+      {"C:/Users/u/Nextcloud", "", R"(C:\Users\u\Nextcloud)", "Nextcloud MyGo"},
+      {"D:/Cloud/Work", "/Work", R"(D:\Cloud)", "Nextcloud MyGo - Cloud"},
+      {"D:/Work", "/Work", R"(D:\Work)", "Nextcloud MyGo - Work"},
+  };
+  for (const auto &c : cases) {
+    const auto target = OnDemandRoot::navigationTarget(c.local, c.remote);
+    if (target != c.target || OnDemandRoot::navigationTitle(target) != c.title)
+      std::fprintf(stderr, "case %s -> %s (%s)\n", c.local, qPrintable(target),
+                   qPrintable(OnDemandRoot::navigationTitle(target)));
+    require(target == c.target, "navigation target misplaced");
+    require(OnDemandRoot::navigationTitle(target) == c.title,
+            "navigation title misnamed");
+  }
+  require(OnDemandRoot::navigationClsid("C:/Users/u/Nextcloud/Photos", "/P") ==
+                  OnDemandRoot::navigationClsid("c:/users/U/nextcloud/Music",
+                                                "/M") &&
+              OnDemandRoot::navigationClsid("C:/Users/u/Nextcloud/Photos",
+                                            "/P") !=
+                  OnDemandRoot::navigationClsid("D:/Cloud/Work", "/W"),
+          "folders of one base folder do not share exactly one entry");
+}
+
 /// navigationEntry checks a root's Explorer navigation pane entry: the sync
-/// root record names it, and the HKCU entry opens this root under its title.
+/// root record names the shared entry, and the HKCU entry opens its target
+/// under its title.
 void navigationEntry(const OnDemandRoot::Identity &identity,
-                     const QString &root) {
-  const auto clsid = OnDemandRoot::navigationClsid(identity);
-  require(clsid == '{' + identity.folder + '}',
-          "navigation CLSID is not the folder ID");
+                     const QString &root, const QString &remote) {
+  const auto clsid = OnDemandRoot::navigationClsid(root, remote);
+  const auto target = OnDemandRoot::navigationTarget(root, remote);
+  const auto title = OnDemandRoot::navigationTitle(target);
   wchar_t recorded[64]{};
   DWORD bytes = sizeof(recorded) - sizeof(wchar_t);
   require(RegGetValueW(HKEY_LOCAL_MACHINE,
@@ -214,11 +266,11 @@ void navigationEntry(const OnDemandRoot::Identity &identity,
               QString::fromWCharArray(recorded) == clsid,
           "sync root does not name its navigation entry");
   for (const auto &prefix : {classKey, classWow64Key}) {
-    require(userValue(prefix + clsid, nullptr) == identity.name,
+    require(userValue(prefix + clsid, nullptr) == title,
             "navigation entry has no title");
     require(userValue(prefix + clsid + R"(\Instance\InitPropertyBag)",
-                      L"TargetFolderPath") == QDir::toNativeSeparators(root),
-            "navigation entry does not open the root");
+                      L"TargetFolderPath") == target,
+            "navigation entry does not open its target");
     require(userValue(prefix + clsid + R"(\Instance)", L"CLSID")
                     .compare("{0E5AAE11-A475-4c5b-AB00-C66DE400274E}",
                              Qt::CaseInsensitive) == 0,
@@ -226,7 +278,7 @@ void navigationEntry(const OnDemandRoot::Identity &identity,
     require(userValue(prefix + clsid, L"ApplicationName") == "Nextcloud-MyGo",
             "navigation entry is not tagged");
   }
-  require(userValue(namespaceKey + clsid, nullptr) == identity.name &&
+  require(userValue(namespaceKey + clsid, nullptr) == title &&
               userValue(namespaceKey + clsid, L"ApplicationName") ==
                   "Nextcloud-MyGo",
           "navigation entry not in the namespace root");
@@ -460,7 +512,7 @@ void conversionCase(const QString &fixture, const OCC::AccountPtr &account) {
   const auto cleanup = qScopeGuard([&] {
     if (underSyncRoot(root))
       OnDemandRoot::unregister(root, identity);
-    forgetNavigationEntry(OnDemandRoot::navigationClsid(identity));
+    forgetNavigationEntry(OnDemandRoot::navigationClsid(root, "/"));
   });
   require(QDir().mkpath(root + "/dir/deep"), "conversion fixture missing");
   const QStringList files{"a.txt", "dir/b.txt", "dir/deep/c.txt",
@@ -666,7 +718,9 @@ int main(int argc, char **argv) {
     // Unregister whatever a failed case left, never another provider's root.
     if (!root.isEmpty() && underSyncRoot(root))
       OnDemandRoot::unregister(root, identity);
-    forgetNavigationEntry(OnDemandRoot::navigationClsid(identity));
+    if (!root.isEmpty())
+      forgetNavigationEntry(OnDemandRoot::navigationClsid(root, "/"));
+    forgetNavigationEntry('{' + identity.folder + '}');
     if (!foreign.isEmpty() && underSyncRoot(foreign))
       CfUnregisterSyncRoot(
           reinterpret_cast<LPCWSTR>(QDir::toNativeSeparators(foreign).utf16()));
@@ -686,6 +740,8 @@ int main(int argc, char **argv) {
     }
     step("ownership answers (simulated Cloud Files results)");
     ownershipAnswers();
+    step("navigation entry target and name");
+    navigationTargets();
 
     // The registration cases need a Cloud Files that answers for this volume.
     // Where it cannot, on-demand must read as unsupported and the cases are
@@ -724,7 +780,7 @@ int main(int argc, char **argv) {
     step("a plain folder may be converted");
     require(OnDemandRoot::conversionError(root, identity).isEmpty(),
             "a plain NTFS folder was refused for conversion");
-    require(!hasUserKey(classKey + OnDemandRoot::navigationClsid(identity)),
+    require(!hasUserKey(classKey + OnDemandRoot::navigationClsid(root, "/")),
             "conversion check wrote a navigation entry");
 
     auto account = OCC::Account::create(false);
@@ -743,7 +799,7 @@ int main(int argc, char **argv) {
                   !hasValue(key, L"ThumbnailProvider"),
               "sync root names a shell handler that was not registered");
       step("navigation pane entry");
-      navigationEntry(identity, root);
+      navigationEntry(identity, root, "/");
       require(OnDemandRoot::ownershipError(root, identity).isEmpty(),
               "own registration refused");
       auto other = identity;
@@ -905,7 +961,7 @@ int main(int argc, char **argv) {
 
     step("reconnecting a registered root rewrites its navigation entry");
     {
-      const auto clsid = OnDemandRoot::navigationClsid(identity);
+      const auto clsid = OnDemandRoot::navigationClsid(root, "/");
       require(RegDeleteKeyValueW(
                   HKEY_CURRENT_USER,
                   reinterpret_cast<LPCWSTR>(
@@ -914,7 +970,7 @@ int main(int argc, char **argv) {
                   L"TargetFolderPath") == ERROR_SUCCESS,
               "fixture could not change the navigation entry");
       OnDemandRoot again(identity, root, "/", account, &journal);
-      navigationEntry(identity, root);
+      navigationEntry(identity, root, "/");
     }
 
     step("a foreign provider's root is never adopted (INV-01)");
@@ -947,7 +1003,7 @@ int main(int argc, char **argv) {
             "unregistration failed");
     require(!hasKey(syncRootKey(identity)), "registration key left behind");
     require(!underSyncRoot(root), "Cloud Files still knows the root");
-    noNavigationEntry(OnDemandRoot::navigationClsid(identity));
+    noNavigationEntry(OnDemandRoot::navigationClsid(root, "/"));
     require(!QFileInfo::exists(root + "/online.bin"),
             "online-only placeholder left without a provider");
     QFile kept(root + "/kept.txt"), plain(root + "/plain.txt");
@@ -967,28 +1023,63 @@ int main(int argc, char **argv) {
               "a sparse file was not kept as an ordinary file");
     }
     require(QFileInfo(root + "/populated").isDir(), "directory removed");
-    step("removal without a registration still removes a left entry");
-    {
-      const auto clsid = OnDemandRoot::navigationClsid(identity);
-      const DWORD one = 1;
-      for (const auto &key : {classKey + clsid, namespaceKey + clsid})
-        require(RegSetKeyValueW(HKEY_CURRENT_USER,
-                                reinterpret_cast<LPCWSTR>(key.utf16()),
-                                L"ApplicationName", REG_SZ, L"Nextcloud-MyGo",
-                                sizeof(L"Nextcloud-MyGo")) == ERROR_SUCCESS,
-                "fixture entry not written");
-      require(RegSetKeyValueW(HKEY_CURRENT_USER,
-                              reinterpret_cast<LPCWSTR>(hiddenIconsKey.utf16()),
-                              reinterpret_cast<LPCWSTR>(clsid.utf16()),
-                              REG_DWORD, &one, sizeof(one)) == ERROR_SUCCESS,
-              "fixture desktop value not written");
-    }
+    step("removal without a registration still removes left entries");
+    plantEntry(OnDemandRoot::navigationClsid(root, "/"));
+    plantEntry('{' + identity.folder + '}');
     require(OnDemandRoot::unregister(root, identity).isEmpty(),
             "repeated unregistration failed");
-    noNavigationEntry(OnDemandRoot::navigationClsid(identity));
+    noNavigationEntry(OnDemandRoot::navigationClsid(root, "/"));
+    noNavigationEntry('{' + identity.folder + '}');
     {
       RootLease lease(root);
       require(lease.validateTree(), "released folder is not a full-file root");
+    }
+
+    step("folders in one base folder share one navigation entry (0.1.2)");
+    {
+      const auto base = QDir::cleanPath(fixture.filePath("base"));
+      const OnDemandRoot::Identity first{
+          identity.account, QUuid::createUuid().toString(QUuid::WithoutBraces),
+          "Nextcloud MyGo - a"};
+      const OnDemandRoot::Identity second{
+          identity.account, QUuid::createUuid().toString(QUuid::WithoutBraces),
+          "Nextcloud MyGo - b"};
+      const auto clsid = OnDemandRoot::navigationClsid(base + "/a", "/A");
+      const auto legacy = '{' + first.folder + '}';
+      const auto release = qScopeGuard([&] {
+        for (const auto &[path, owner] :
+             {std::pair{base + "/a", first}, std::pair{base + "/b", second}})
+          if (underSyncRoot(path))
+            OnDemandRoot::unregister(path, owner);
+        forgetNavigationEntry(clsid);
+        forgetNavigationEntry(legacy);
+      });
+      require(QDir().mkpath(base + "/a") && QDir().mkpath(base + "/b"),
+              "base fixture missing");
+      plantEntry(legacy); // the first folder's entry from 0.1.1
+      OCC::SyncJournalDb journalA(fixture.filePath("a.db")),
+          journalB(fixture.filePath("b.db"));
+      {
+        OnDemandRoot a(first, base + "/a", "/A", account, &journalA);
+        OnDemandRoot b(second, base + "/b", "/B", account, &journalB);
+        require(OnDemandRoot::navigationClsid(base + "/b", "/B") == clsid,
+                "two folders of one base folder have two entries");
+        navigationEntry(first, base + "/a", "/A");
+        navigationEntry(second, base + "/b", "/B");
+        require(userValue(namespaceKey + clsid, nullptr) ==
+                        "Nextcloud MyGo - base" &&
+                    userValue(classKey + clsid + R"(\Instance\InitPropertyBag)",
+                              L"TargetFolderPath") ==
+                        QDir::toNativeSeparators(base),
+                "shared entry does not open the base folder");
+        noNavigationEntry(legacy);
+      }
+      require(OnDemandRoot::unregister(base + "/a", first).isEmpty(),
+              "first shared root not unregistered");
+      navigationEntry(second, base + "/b", "/B");
+      require(OnDemandRoot::unregister(base + "/b", second).isEmpty(),
+              "last shared root not unregistered");
+      noNavigationEntry(clsid);
     }
     conversionCase(fixture.path(), account);
     std::fprintf(stderr, "PASS ondemand contracts %lld ms\n",

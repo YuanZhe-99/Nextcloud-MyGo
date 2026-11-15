@@ -1012,6 +1012,18 @@ by the tool permission check, twice); the installers themselves; the upgrade fro
 Every figure in the tables above this paragraph (24/24, 96/96, 53 passed and 2 skipped, the tier timings,
 the packages) was measured on the 21-patch build or an earlier one and is not evidence for the 23-patch build.
 
+### Shared navigation entry (0.1.2)
+
+Measured 2026-11-15 inside the packaged host (ARM64 machine, build 26300) on the 23-patch trees, with
+MyGo v0.9.1. On-demand contracts (`syncd_ondemand_tests`, real Cloud Files): ARM64 12.9 s, x64 13.2 s,
+including the new steps: the target and name table, two roots below one base folder naming one entry
+that opens the base folder, the first root's 0.1.1 entry removed at start, the entry kept after the
+first root's removal and gone after the last. Fast tier: ARM64 55.4 s, x64 68.5 s. Real-server on-demand acceptance (ARM64, disposable 35.0.3 server):
+fixture 41.0 s, 173.9 s with the server. Packages:
+`tools/pkg check` 29 PE files native ARM64 and 30 native x64, version 0.1.2 in the manifest, SyncD and
+the interface. Not run: the entry as Explorer shows it (the packaged host's registry view is private), the
+installers, the upgrade from 0.1.1 and the uninstaller's keep rule against a second profile.
+
 ## Known limitations
 
 Upstream CTest on native Windows ARM64 passed SyncJournalDBTest, ConcatUrlTest,

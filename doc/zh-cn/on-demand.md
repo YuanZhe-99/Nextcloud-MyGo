@@ -143,16 +143,25 @@ origin。账号为切换或重新认证进入静止时，该账号的所有按�
 
 ## 导航窗格条目与图标
 
-每个按需目录在资源管理器导航窗格中都有一个条目，名称与其同步根相同，CLSID 为 `{<目录 ID>}`
-（`OnDemandRoot::navigationClsid`；目录 ID 不是 UUID 时没有条目）。它只写在 HKCU 下，仿照上游的
-`src/gui/navigationpanehelper.cpp`（无法链接的 GUI 代码）：`Software\Classes\CLSID\{clsid}` 及其 `Wow6432Node` 副本、
-`Explorer\Desktop\NameSpace\{clsid}` 和 `HideDesktopIcons\NewStartPanel` 值。进程内服务器是系统的 `shell32.dll`，
-因此本产品没有任何 DLL 被加载进资源管理器。每个键都带有 `ApplicationName=Nextcloud-MyGo`（官方客户端写入
-`Nextcloud`），卸载程序据此识别遗留项。该 CLSID 同时作为 `VfsSetupParams::navigationPaneClsid` 传入，因此补丁 0017
-把它写为同步根的 `NamespaceCLSID`。
+按需目录按其所在的上级目录共用资源管理器导航窗格条目，每个上级目录一个（自 0.1.2 起；0.1.1 为每个目录写一个条目）。
+设置向导把一个账户的所有目录都放在同一个基础目录下（默认 `%USERPROFILE%\Nextcloud`），因此通常只有一个条目，
+它打开该基础目录（`OnDemandRoot::navigationTarget`）。目录映射整个账户（远端路径 `/`）或其上级是驱动器根目录时，
+目标是根本身。条目名为“Nextcloud MyGo”，目标目录名不是 `Nextcloud` 时再加上“ - <目标目录名>”
+（`OnDemandRoot::navigationTitle`）。其 CLSID 是目标路径的基于名称的 UUID，比较时不区分大小写
+（`OnDemandRoot::navigationClsid`），因此同一目录下的每个根都指向同一个条目，跨启动、配置文件和账户都不变。
+每个同步根自身的显示名仍为 `Nextcloud MyGo - <目录名>`。
 
-该条目在每次启动时重写，因为它的图标是正在运行的 SyncD，而 SyncD 位于带版本号的目录中；凡是结束注册的路径都会移除它。
-首次注册失败时不会留下条目。条目写入失败只损失侧边栏项：注册继续进行。
+条目只写在 HKCU 下，仿照上游的 `src/gui/navigationpanehelper.cpp`（无法链接的 GUI 代码）：
+`Software\Classes\CLSID\{clsid}` 及其 `Wow6432Node` 副本、`Explorer\Desktop\NameSpace\{clsid}` 和
+`HideDesktopIcons\NewStartPanel` 值。进程内服务器是系统的 `shell32.dll`，因此本产品没有任何 DLL 被加载进资源管理器。
+每个键都带有 `ApplicationName=Nextcloud-MyGo`（官方客户端写入 `Nextcloud`），卸载程序据此识别遗留项。该 CLSID
+同时作为 `VfsSetupParams::navigationPaneClsid` 传入，因此补丁 0017 把它写为同步根的 `NamespaceCLSID`；SyncD 和卸载程序
+正是靠这个值得知哪些注册仍在使用某个条目。
+
+每次启动一个根时都会重写条目，因为它的图标是正在运行的 SyncD，而 SyncD 位于带版本号的目录中；每次启动也会移除该目录
+0.1.1 的条目（`{<目录 ID>}`）。结束注册时，只有当本用户再没有其他同步根指向该条目时才移除它，而该目录 0.1.1 的条目
+无论如何都会移除；找不到注册的移除操作以同样方式检查两种位置规则下的条目。首次注册失败时，只有另一个根指向该条目才会
+留下它。条目写入失败只损失侧边栏项：注册继续进行。
 
 新的资源管理器窗口无需重启也无需 `SHChangeNotify` 即可看到新增或移除的条目（在 build 26300 ARM64 上以同样布局的手写条目
 观察到）；已打开的窗口未测试。在打包宿主之外，验收的根注册期间打开的新资源管理器窗口，

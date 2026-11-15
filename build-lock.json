@@ -125,6 +125,24 @@
     "serverTested": "35.0.3-and-34.0.6",
     "see": "doc/en-us/platform-notes.md"
   },
+  "sharedNavigationEntry": {
+    "date": "2026-11-15",
+    "product": "0.1.2",
+    "protocol": "1.11",
+    "controlSchema": 12,
+    "upstreamPatches": 23,
+    "upstreamPatchesAdded": 0,
+    "mygo": "v0.9.1",
+    "arm64SyncdTree": "build/syncd-ARM64-linked-build/cv/ae-CF0C68C10DD7",
+    "x64SyncdTree": "build/syncd-x64-linked-build/cv/xe-CF0C68C10DD7",
+    "ondemandContracts": "passed-arm64-12.9s-and-emulated-x64-13.2s",
+    "fastTier": "passed-arm64-55.4s-and-emulated-x64-68.5s",
+    "realOnDemand": "passed-arm64-41.0s-on-35.0.3",
+    "arm64Package": "build/package/Nextcloud-MyGo-0.1.2-arm64-test-setup.exe-sha256-bc204f1fb974bfd14457bbcc8ef7907f67ee17ac6ed2f6ef4f2ed2574230845e-29-PE-native-ARM64",
+    "x64Package": "build/package/Nextcloud-MyGo-0.1.2-x64-test-setup.exe-sha256-b241a9f0aa4ec1281c46cb93534ec352e3c6ffb64943ff58b0e98ef310980cec-30-PE-native-x64",
+    "packagesSigned": false,
+    "see": "doc/en-us/platform-notes.md"
+  },
   "nextcloudDesktop": {
     "repository": "https://github.com/nextcloud/desktop",
     "tag": "v35.0.3",
